@@ -1,0 +1,130 @@
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
+from uuid import UUID, uuid4
+
+
+class InterviewStatus(StrEnum):
+    CREATED = "CREATED"
+    PREPARING = "PREPARING"
+    READY = "READY"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class InterviewDifficulty(StrEnum):
+    EASY = "EASY"
+    MEDIUM = "MEDIUM"
+    HARD = "HARD"
+
+
+class InterviewType(StrEnum):
+    TECHNICAL = "TECHNICAL"
+    BEHAVIORAL = "BEHAVIORAL"
+    MIXED = "MIXED"
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass(slots=True)
+class InterviewSession:
+    id: UUID
+    user_id: UUID
+    knowledge_base_id: UUID
+    job_title: str
+    job_description: str
+    interview_type: InterviewType
+    difficulty: InterviewDifficulty
+    question_count: int
+    status: InterviewStatus
+    current_question_index: int
+    version: int
+    request_id: str | None
+    failure_code: str | None
+    failure_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    prepared_at: datetime | None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+    @classmethod
+    def new(
+        cls,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+        job_title: str,
+        job_description: str,
+        interview_type: InterviewType,
+        difficulty: InterviewDifficulty,
+        question_count: int,
+        request_id: str | None,
+    ) -> "InterviewSession":
+        now = utc_now()
+        return cls(
+            id=uuid4(),
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            job_title=job_title,
+            job_description=job_description,
+            interview_type=interview_type,
+            difficulty=difficulty,
+            question_count=question_count,
+            status=InterviewStatus.CREATED,
+            current_question_index=0,
+            version=0,
+            request_id=request_id,
+            failure_code=None,
+            failure_message=None,
+            created_at=now,
+            updated_at=now,
+            prepared_at=None,
+            started_at=None,
+            finished_at=None,
+        )
+
+
+@dataclass(slots=True)
+class InterviewQuestion:
+    id: UUID
+    session_id: UUID
+    sequence: int
+    content: str
+    category: str
+    difficulty: InterviewDifficulty
+    expected_points: list[str]
+    source_summary: str | None
+    created_at: datetime
+    citations: list["InterviewQuestionCitation"] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class InterviewQuestionCitation:
+    id: UUID
+    question_id: UUID
+    chunk_id: UUID
+    document_id: UUID
+    source_id: str
+    page_number: int | None
+    score: float
+    excerpt: str
+    ordinal: int
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class InterviewEvent:
+    id: UUID
+    session_id: UUID
+    event_type: str
+    from_status: InterviewStatus | None
+    to_status: InterviewStatus
+    payload: dict[str, Any]
+    idempotency_key: str | None
+    created_at: datetime

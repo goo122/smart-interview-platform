@@ -138,3 +138,20 @@ uv run mypy
 
 Copy `.env.example` to `.env` for local configuration. The example contains only
 local-development placeholders and must be replaced for any shared environment.
+
+## Interview preparation
+
+Interview preparation uses the authenticated user's ready resume knowledge base and
+returns structured questions with traceable source citations. The API is available at:
+
+- `POST /api/xunzhi/v1/interview/sessions`
+- `GET /api/xunzhi/v1/interview/sessions?current=1&size=10`
+- `GET /api/xunzhi/v1/interview/sessions/{sessionId}`
+- `GET /api/xunzhi/v1/interview/sessions/{sessionId}/questions`
+- `POST /api/xunzhi/v1/interview/sessions/{sessionId}/start`
+- `POST /api/xunzhi/v1/interview/sessions/{sessionId}/cancel`
+
+Migration `0005_create_interview_tables` creates sessions, questions, status events and
+question citations. Preparation is orchestrated through `InterviewPreparationWorkflow`;
+when LangGraph is installed it uses a compiled LangGraph, while the same node sequence
+remains available for deterministic local tests. The database remains the source of truth.

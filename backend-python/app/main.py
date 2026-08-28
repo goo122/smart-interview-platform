@@ -10,6 +10,7 @@ from starlette.types import ExceptionHandler
 from app.ai.chat import UnavailableChatModel
 from app.ai.embedding import UnavailableEmbedding
 from app.api.v1.chat import router as chat_router
+from app.api.v1.interview import router as interview_router
 from app.api.v1.knowledge import router as knowledge_router
 from app.api.v1.router import router as v1_router
 from app.core.config import get_settings
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(v1_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api")
     app.include_router(knowledge_router, prefix="/api")
+    app.include_router(interview_router, prefix="/api")
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

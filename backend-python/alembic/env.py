@@ -14,6 +14,12 @@ from app.modules.chat.models import (  # noqa: F401
     MessageCitationModel,
     MessageModel,
 )
+from app.modules.interview.models import (  # noqa: F401
+    InterviewEventModel,
+    InterviewQuestionCitationModel,
+    InterviewQuestionModel,
+    InterviewSessionModel,
+)
 from app.modules.knowledge.models import (  # noqa: F401
     KnowledgeBaseModel,
     KnowledgeChunkModel,

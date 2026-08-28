@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.ai.embedding import FakeEmbedding
+from app.ai.interview import FakeInterviewQuestionGenerator
 from app.core.config import Settings
 from app.infrastructure.storage.files import LocalFileStorage
 from app.infrastructure.storage.pdf import FakePdfParser
@@ -22,7 +23,11 @@ from app.modules.chat.domain import MessageRole
 from app.modules.chat.domain import utc_now as chat_utc_now
 from app.modules.chat.models import ConversationModel, MessageCitationModel, MessageModel
 from app.modules.chat.repository import SqlAlchemyMessageRepository
-from app.modules.knowledge.context import ContextCitation
+from app.modules.interview.context import InterviewContextProvider
+from app.modules.interview.domain import InterviewDifficulty, InterviewStatus, InterviewType
+from app.modules.interview.repository import SqlAlchemyInterviewRepository
+from app.modules.interview.service import InterviewService
+from app.modules.knowledge.context import ContextAssembler, ContextCitation
 from app.modules.knowledge.domain import DocumentStatus, KnowledgeBase, PdfPage, StoredChunk
 from app.modules.knowledge.models import (
     KnowledgeBaseModel,
@@ -488,6 +493,115 @@ async def test_message_citations_persist_in_order_and_cascade_with_document(
                 MessageCitationModel.message_id == message_id
             )
         ) == 0
+    finally:
+        await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_real_interview_preparation_retrieves_resume_generates_and_persists_questions(
+    database_session: AsyncSession,
+) -> None:
+    session = database_session
+    user_id, base_id, document_id = uuid4(), uuid4(), uuid4()
+    embedding = FakeEmbedding()
+    settings = Settings(rag_similarity_threshold=0.0)
+    query_text = (
+        "岗位：Python 后端工程师\n岗位描述：负责 FastAPI 和 PostgreSQL\n"
+        "难度：MEDIUM\n题目数：3"
+    )
+    vector = embedding._embed(query_text, embedding.dimensions)
+    try:
+        session.add_all(
+            [
+                UserModel(
+                    id=user_id,
+                    username=f"interview-{user_id.hex[:8]}",
+                    email=f"interview-{user_id.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                KnowledgeBaseModel(id=base_id, user_id=user_id, name="Interview Resume"),
+                KnowledgeDocumentModel(
+                    id=document_id,
+                    knowledge_base_id=base_id,
+                    original_filename="resume.pdf",
+                    safe_filename="resume.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/interview-resume.pdf",
+                    status=DocumentStatus.READY.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add(
+            KnowledgeChunkModel(
+                document_id=document_id,
+                chunk_index=0,
+                page_number=1,
+                content="FastAPI PostgreSQL 项目经验",
+                token_count=4,
+                content_hash=uuid4().hex * 2,
+                embedding=vector,
+            )
+        )
+        await session.commit()
+        context_provider = InterviewContextProvider(
+            SqlAlchemyKnowledgeRepository(session),
+            embedding,
+            PgVectorRetriever(session),
+            ContextAssembler(200, 50),
+            settings,
+        )
+        generator = FakeInterviewQuestionGenerator()
+        service = InterviewService(
+            SqlAlchemyInterviewRepository(session),
+            context_provider,
+            generator,
+            InlineTaskQueue(),
+            settings,
+        )
+        created = await service.create_session(
+            user_id=user_id,
+            knowledge_base_id=base_id,
+            job_title="Python 后端工程师",
+            job_description="负责 FastAPI 和 PostgreSQL",
+            interview_type=InterviewType.TECHNICAL,
+            difficulty=InterviewDifficulty.MEDIUM,
+            question_count=3,
+            request_id="prepare-once",
+        )
+        assert created.status == InterviewStatus.READY
+        questions = await service.get_questions(user_id, created.id)
+        assert len(questions) == 1
+        all_questions = await SqlAlchemyInterviewRepository(session).list_questions(created.id)
+        assert len(all_questions) == 3
+        assert all_questions[0].citations[0].source_id == "[S1]"
+        events = await SqlAlchemyInterviewRepository(session).list_events(created.id)
+        assert [event.to_status for event in events] == [
+            InterviewStatus.CREATED,
+            InterviewStatus.PREPARING,
+            InterviewStatus.READY,
+        ]
+        duplicate = await service.create_session(
+            user_id=user_id,
+            knowledge_base_id=base_id,
+            job_title="Python 后端工程师",
+            job_description="负责 FastAPI 和 PostgreSQL",
+            interview_type=InterviewType.TECHNICAL,
+            difficulty=InterviewDifficulty.MEDIUM,
+            question_count=3,
+            request_id="prepare-once",
+        )
+        assert duplicate.id == created.id
+        assert generator.calls == 1
+        started = await service.start(user_id, created.id)
+        assert started.status == InterviewStatus.IN_PROGRESS
     finally:
         await session.rollback()
         await session.execute(delete(UserModel).where(UserModel.id == user_id))
