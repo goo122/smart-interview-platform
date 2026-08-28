@@ -16,6 +16,17 @@ const messages: Record<string, string> = {
   user_already_exists: "用户名或邮箱已被使用",
   validation_error: "请检查填写内容",
   internal_server_error: "服务暂时不可用，请稍后再试",
+  interview_not_found: "找不到这场面试，可能已被删除或无权访问",
+  interview_turn_not_found: "当前问题已不可用，请刷新面试房间",
+  invalid_interview_request: "面试参数不正确，请检查后重试",
+  interview_request_exists: "这次面试正在创建中，请稍候",
+  invalid_interview_transition: "面试状态已变化，请刷新页面",
+  interview_preparation_failed: "出题准备失败，请重新创建面试",
+  interview_knowledge_unavailable: "所选知识库暂不可用，请先检查简历状态",
+  invalid_interview_answer: "回答内容不符合要求，请检查长度后重试",
+  interview_answer_conflict: "这轮回答已提交，请等待评分结果",
+  interview_evaluation_failed: "本轮评分失败，请稍后重试",
+  interview_evaluation_invalid: "评分结果暂不可用，请稍后重试",
 };
 
 export class ApiError extends Error {

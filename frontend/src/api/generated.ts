@@ -169,6 +169,117 @@ export interface components {
     EmptyResponse: {
       "message": string;
     };
+    InterviewType: "TECHNICAL" | "BEHAVIORAL" | "MIXED";
+    InterviewDifficulty: "EASY" | "MEDIUM" | "HARD";
+    CreateInterviewSessionRequest: {
+      "knowledgeBaseId": string;
+      "jobTitle": string;
+      "jobDescription": string;
+      "interviewType"?: components["schemas"]["InterviewType"];
+      "difficulty"?: components["schemas"]["InterviewDifficulty"];
+      "questionCount"?: number;
+      "requestId"?: string | null;
+    };
+    InterviewSessionResponse: {
+      "id": string;
+      "sessionId": string;
+      "userId": string;
+      "knowledgeBaseId": string;
+      "jobTitle": string;
+      "interviewType": string;
+      "difficulty": string;
+      "questionCount": number;
+      "status": string;
+      "currentQuestionIndex": number;
+      "preparationProgress": number;
+      "canStart": boolean;
+      "version": number;
+      "requestId"?: string | null;
+      "failureCode"?: string | null;
+      "failureMessage"?: string | null;
+      "createdAt": string;
+      "updatedAt": string;
+      "preparedAt"?: string | null;
+      "startedAt"?: string | null;
+      "finishedAt"?: string | null;
+    };
+    InterviewQuestionResponse: {
+      "id": string;
+      "sessionId": string;
+      "sequence": number;
+      "content": string;
+      "category": string;
+      "difficulty": string;
+      "expectedPoints": Array<string>;
+      "sourceSummary"?: string | null;
+      "createdAt": string;
+      "citations"?: Array<components["schemas"]["InterviewQuestionCitationResponse"]>;
+    };
+    InterviewQuestionCitationResponse: {
+      "id": string;
+      "questionId": string;
+      "chunkId": string;
+      "documentId": string;
+      "sourceId": string;
+      "pageNumber"?: number | null;
+      "score": number;
+      "excerpt": string;
+      "ordinal": number;
+      "createdAt": string;
+    };
+    InterviewEvaluationResponse: {
+      "id": string;
+      "turnId": string;
+      "overallScore": number;
+      "technicalScore": number;
+      "relevanceScore": number;
+      "clarityScore": number;
+      "depthScore": number;
+      "strengths": Array<string>;
+      "weaknesses": Array<string>;
+      "feedback": string;
+      "suggestedImprovements": Array<string>;
+      "shouldFollowUp": boolean;
+      "followUpFocus"?: string | null;
+      "followUpQuestion"?: string | null;
+      "createdAt": string;
+    };
+    InterviewTurnResponse: {
+      "turnId": string;
+      "sessionId": string;
+      "questionId"?: string | null;
+      "parentTurnId"?: string | null;
+      "turnType": string;
+      "question": string;
+      "sequence": number;
+      "followUpDepth": number;
+      "status": string;
+      "canAnswer": boolean;
+      "answer"?: string | null;
+      "answerRequestId"?: string | null;
+      "answeredAt"?: string | null;
+      "evaluation"?: components["schemas"]["InterviewEvaluationResponse"] | null;
+      "createdAt": string;
+      "evaluatedAt"?: string | null;
+    };
+    SubmitInterviewAnswerRequest: {
+      "turnId": string;
+      "answer": string;
+      "requestId": string;
+    };
+    SubmitInterviewAnswerResponse: {
+      "sessionId": string;
+      "turnId": string;
+      "status": string;
+      "requestId": string;
+    };
+    InterviewSessionPage: {
+      "records": Array<components["schemas"]["InterviewSessionResponse"]>;
+      "total": number;
+      "size": number;
+      "current": number;
+      "pages": number;
+    };
   };
 }
 
@@ -193,3 +304,14 @@ export type ConversationPage = components["schemas"]["ConversationPage"];
 export type ChatHistoryPage = components["schemas"]["ChatHistoryPage"];
 export type DeleteResponse = components["schemas"]["DeleteResponse"];
 export type EmptyResponse = components["schemas"]["EmptyResponse"];
+export type InterviewType = components["schemas"]["InterviewType"];
+export type InterviewDifficulty = components["schemas"]["InterviewDifficulty"];
+export type CreateInterviewSessionRequest = components["schemas"]["CreateInterviewSessionRequest"];
+export type InterviewSessionResponse = components["schemas"]["InterviewSessionResponse"];
+export type InterviewQuestionResponse = components["schemas"]["InterviewQuestionResponse"];
+export type InterviewQuestionCitationResponse = components["schemas"]["InterviewQuestionCitationResponse"];
+export type InterviewEvaluationResponse = components["schemas"]["InterviewEvaluationResponse"];
+export type InterviewTurnResponse = components["schemas"]["InterviewTurnResponse"];
+export type SubmitInterviewAnswerRequest = components["schemas"]["SubmitInterviewAnswerRequest"];
+export type SubmitInterviewAnswerResponse = components["schemas"]["SubmitInterviewAnswerResponse"];
+export type InterviewSessionPage = components["schemas"]["InterviewSessionPage"];

@@ -54,6 +54,41 @@ const selected = [
   { exportName: "ChatHistoryPage", schemaName: "PageResponse_MessageResponse_" },
   { exportName: "DeleteResponse", schemaName: "DeleteResponse" },
   { exportName: "EmptyResponse", schemaName: "EmptyResponse" },
+  { exportName: "InterviewType", schemaName: "InterviewType" },
+  { exportName: "InterviewDifficulty", schemaName: "InterviewDifficulty" },
+  {
+    exportName: "CreateInterviewSessionRequest",
+    schemaName: "CreateInterviewSessionRequest",
+  },
+  {
+    exportName: "InterviewSessionResponse",
+    schemaName: "InterviewSessionResponse",
+  },
+  {
+    exportName: "InterviewQuestionResponse",
+    schemaName: "InterviewQuestionResponse",
+  },
+  {
+    exportName: "InterviewQuestionCitationResponse",
+    schemaName: "InterviewQuestionCitationResponse",
+  },
+  {
+    exportName: "InterviewEvaluationResponse",
+    schemaName: "InterviewEvaluationResponse",
+  },
+  { exportName: "InterviewTurnResponse", schemaName: "InterviewTurnResponse" },
+  {
+    exportName: "SubmitInterviewAnswerRequest",
+    schemaName: "SubmitInterviewAnswerRequest",
+  },
+  {
+    exportName: "SubmitInterviewAnswerResponse",
+    schemaName: "SubmitInterviewAnswerResponse",
+  },
+  {
+    exportName: "InterviewSessionPage",
+    schemaName: "InterviewPageResponse_InterviewSessionResponse_",
+  },
 ];
 
 const exportNameBySchema = new Map(selected.map((entry) => [entry.schemaName, entry.exportName]));

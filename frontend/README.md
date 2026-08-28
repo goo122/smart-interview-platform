@@ -37,6 +37,14 @@ Axios 客户端会自动附加 Bearer Token，并使用 single-flight 机制刷�
 
 聊天使用 POST SSE（`start`、`delta`、`complete`、`error`）而不是原生 EventSource，支持 AbortController、401 刷新重试、稳定 `requestId`、跨网络块 UTF-8 和引用展开。普通对话不会发送 `knowledgeBaseId`，RAG 对话发送 `knowledgeBaseId` 与限定范围内的 `topK`。
 
+## 模拟面试创建与面试房间
+
+`/interview` 会从 `/api/xunzhi/v1/knowledge-bases` 及其文档接口筛选至少包含一个 `READY` 文档的知识库。创建请求使用后端 OpenAPI 类型，字段包括 `knowledgeBaseId`、`jobTitle`、`jobDescription`、`interviewType`、`difficulty`、`questionCount` 和稳定的 `requestId`，成功后进入 `/interview/:sessionId`。
+
+面试房间按后端 Session/Turn 状态恢复页面：`CREATED`/`PREPARING` 轮询准备进度，`READY` 等待开始，`IN_PROGRESS` 轮询 `current-turn`。答案通过 `POST /api/xunzhi/v1/interview/sessions/{sessionId}/answers` 提交，使用 `turnId`、`answer` 和同一轮稳定的 `requestId`；评分、追问和下一道基础题均由后端状态推进。`PRIMARY` 与 `FOLLOW_UP` 使用不同提示，前端不会展示 `expectedPoints` 或内部来源字段。
+
+本轮报告入口仍是占位页，后续可复用当前 `InterviewEvaluationResponse`、Turn 历史查询和评分卡片组件接入报告列表、回放及雷达图。
+
 ## 验证
 
 ```powershell
