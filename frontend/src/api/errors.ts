@@ -27,6 +27,14 @@ const messages: Record<string, string> = {
   interview_answer_conflict: "这轮回答已提交，请等待评分结果",
   interview_evaluation_failed: "本轮评分失败，请稍后重试",
   interview_evaluation_invalid: "评分结果暂不可用，请稍后重试",
+  interview_report_not_found: "面试报告尚未生成",
+  interview_report_session_not_completed: "面试完成后才能生成报告",
+  interview_report_generation_failed: "报告生成失败，请稍后重试",
+  interview_report_queue_failed: "报告任务提交失败，请稍后重试",
+  report_not_found: "面试报告尚未生成",
+  report_session_not_completed: "面试完成后才能生成报告",
+  report_generation_failed: "报告生成失败，请稍后重试",
+  report_queue_failed: "报告任务提交失败，请稍后重试",
 };
 
 export class ApiError extends Error {

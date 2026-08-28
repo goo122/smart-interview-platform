@@ -280,6 +280,54 @@ export interface components {
       "current": number;
       "pages": number;
     };
+    InterviewReportItemResponse: {
+      "id": string;
+      "turnId": string;
+      "parentTurnId"?: string | null;
+      "sequence": number;
+      "turnType": string;
+      "question": string;
+      "answer": string;
+      "scores": Record<string, unknown>;
+      "strengths": Array<string>;
+      "weaknesses": Array<string>;
+      "feedback": string;
+      "suggestedImprovements": Array<string>;
+      "sources": Array<Record<string, unknown>>;
+      "createdAt": string;
+    };
+    InterviewReportResponse: {
+      "reportId": string;
+      "sessionId": string;
+      "status": string;
+      "jobTitle": string;
+      "interviewType": string;
+      "difficulty": string;
+      "overallScore": number;
+      "dimensionScores": Record<string, unknown>;
+      "radarData": Array<Record<string, unknown>>;
+      "summary": string;
+      "strengths": Array<string>;
+      "weaknesses": Array<string>;
+      "suggestedImprovements": Array<string>;
+      "actionPlan": Array<string>;
+      "recommendedLevel"?: string | null;
+      "items": Array<components["schemas"]["InterviewReportItemResponse"]>;
+      "aggregationVersion": string;
+      "generatedBy": string;
+      "createdAt": string;
+      "updatedAt": string;
+      "completedAt"?: string | null;
+      "failureCode"?: string | null;
+      "failureMessage"?: string | null;
+    };
+    InterviewReportPage: {
+      "records": Array<components["schemas"]["InterviewReportResponse"]>;
+      "total": number;
+      "size": number;
+      "current": number;
+      "pages": number;
+    };
   };
 }
 
@@ -315,3 +363,6 @@ export type InterviewTurnResponse = components["schemas"]["InterviewTurnResponse
 export type SubmitInterviewAnswerRequest = components["schemas"]["SubmitInterviewAnswerRequest"];
 export type SubmitInterviewAnswerResponse = components["schemas"]["SubmitInterviewAnswerResponse"];
 export type InterviewSessionPage = components["schemas"]["InterviewSessionPage"];
+export type InterviewReportItemResponse = components["schemas"]["InterviewReportItemResponse"];
+export type InterviewReportResponse = components["schemas"]["InterviewReportResponse"];
+export type InterviewReportPage = components["schemas"]["InterviewReportPage"];

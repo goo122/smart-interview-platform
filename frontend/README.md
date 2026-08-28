@@ -43,7 +43,13 @@ Axios 客户端会自动附加 Bearer Token，并使用 single-flight 机制刷�
 
 面试房间按后端 Session/Turn 状态恢复页面：`CREATED`/`PREPARING` 轮询准备进度，`READY` 等待开始，`IN_PROGRESS` 轮询 `current-turn`。答案通过 `POST /api/xunzhi/v1/interview/sessions/{sessionId}/answers` 提交，使用 `turnId`、`answer` 和同一轮稳定的 `requestId`；评分、追问和下一道基础题均由后端状态推进。`PRIMARY` 与 `FOLLOW_UP` 使用不同提示，前端不会展示 `expectedPoints` 或内部来源字段。
 
-本轮报告入口仍是占位页，后续可复用当前 `InterviewEvaluationResponse`、Turn 历史查询和评分卡片组件接入报告列表、回放及雷达图。
+## 面试报告
+
+面试完成页会进入 `/interview/:sessionId/report`，页面先查询已有报告；如果报告不存在，会幂等发起生成请求，并在 `PENDING`/`GENERATING` 状态下自动轮询。报告就绪后跳转到稳定的 `/interview/reports/:reportId` 地址。
+
+`/interview/reports` 提供当前用户的历史报告分页，详情页展示总分、四维能力雷达、优势/弱点、改进建议、行动计划、PRIMARY/FOLLOW_UP 问答回放和报告中保存的来源快照。报告内容均作为纯文本渲染，不依赖原知识库文档仍然存在，也不会展示内部路径、Prompt 或存储字段。
+
+详情页的“打印报告”调用浏览器打印能力，仅提供打印样式，不代表服务端 PDF 导出。
 
 ## 验证
 
