@@ -37,7 +37,7 @@ from app.core.config import Settings
 
 
 def test_unavailable_provider_is_safe_default() -> None:
-    bundle = AiProviderFactory.build(Settings())
+    bundle = AiProviderFactory.build(Settings(_env_file=None))
 
     assert isinstance(bundle.chat_model, UnavailableChatModel)
     assert isinstance(bundle.interview_question_generator, UnavailableInterviewQuestionGenerator)
@@ -50,6 +50,7 @@ def test_unavailable_provider_is_safe_default() -> None:
 @pytest.mark.asyncio
 async def test_fake_provider_runs_the_complete_workflow() -> None:
     settings = Settings(
+        _env_file=None,
         ai_provider="fake",
         embedding_provider="fake",
         ai_fake_mode="follow_up",
@@ -131,14 +132,14 @@ async def test_fake_provider_runs_the_complete_workflow() -> None:
 @pytest.mark.parametrize("provider", ["ai_provider", "embedding_provider"])
 def test_fake_provider_is_rejected_in_production(provider: str) -> None:
     with pytest.raises(ValidationError, match="not allowed in production"):
-        Settings(app_env="production", **{provider: "fake"})
+        Settings(_env_file=None, app_env="production", **{provider: "fake"})
 
 
 def test_provider_settings_are_loaded_from_app_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_AI_PROVIDER", "fake")
     monkeypatch.setenv("APP_EMBEDDING_PROVIDER", "fake")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.ai_provider == "fake"
     assert settings.embedding_provider == "fake"
@@ -147,7 +148,7 @@ def test_provider_settings_are_loaded_from_app_environment(monkeypatch: pytest.M
 def test_fake_provider_is_wired_into_application_lifespan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = Settings(ai_provider="fake", embedding_provider="fake")
+    settings = Settings(_env_file=None, ai_provider="fake", embedding_provider="fake")
     monkeypatch.setattr(main, "get_settings", lambda: settings)
 
     with TestClient(main.app) as client:
@@ -165,7 +166,7 @@ def test_fake_provider_is_wired_into_application_lifespan(
 )
 def test_openai_compatible_requires_complete_configuration(kwargs: dict[str, str]) -> None:
     with pytest.raises(ValidationError, match="requires API key, base URL and model"):
-        Settings(**kwargs)
+        Settings(_env_file=None, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -196,6 +197,7 @@ def test_openai_compatible_uses_one_shared_chat_model(monkeypatch: pytest.Monkey
         types.SimpleNamespace(ChatOpenAI=FakeChatOpenAI, OpenAIEmbeddings=FakeOpenAIEmbeddings),
     )
     settings = Settings(
+        _env_file=None,
         ai_provider="openai_compatible",
         embedding_provider="openai_compatible",
         llm_api_key="test-key",

@@ -216,6 +216,9 @@ class AiProviderFactory:
                 base_url=settings.embedding_base_url,
                 model=settings.embedding_model,
                 dimensions=settings.embedding_dimensions,
+                # DashScope's OpenAI-compatible endpoint expects text input;
+                # LangChain's OpenAI-specific tokenization would send token IDs.
+                check_embedding_ctx_length=False,
             )
             embedding: EmbeddingPort = LangChainEmbeddingAdapter(
                 embeddings, settings.embedding_dimensions
