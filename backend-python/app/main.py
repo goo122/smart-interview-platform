@@ -7,12 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ExceptionHandler
 
-from app.ai.chat import UnavailableChatModel
-from app.ai.embedding import UnavailableEmbedding
-from app.ai.evaluation import UnavailableInterviewAnswerEvaluator
-from app.ai.followup import UnavailableFollowUpQuestionGenerator
-from app.ai.interview import UnavailableInterviewQuestionGenerator
-from app.ai.report import RuleBasedInterviewReportNarrativeGenerator
+from app.ai.factory import AiProviderFactory
 from app.api.v1.chat import router as chat_router
 from app.api.v1.interview import router as interview_router
 from app.api.v1.knowledge import router as knowledge_router
@@ -37,16 +32,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Create and close async infrastructure clients with the application lifecycle."""
 
     settings = get_settings()
+    providers = AiProviderFactory.build(settings)
+    if settings.embedding_provider != "unavailable":
+        await AiProviderFactory.validate_embedding_dimensions(
+            providers.embedding,
+            settings.embedding_dimensions,
+        )
     engine = create_database_engine(str(settings.database_url))
     app.state.database_engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.redis = create_redis_client(str(settings.redis_url))
-    app.state.chat_model = UnavailableChatModel()
-    app.state.interview_question_generator = UnavailableInterviewQuestionGenerator()
-    app.state.interview_answer_evaluator = UnavailableInterviewAnswerEvaluator()
-    app.state.follow_up_question_generator = UnavailableFollowUpQuestionGenerator()
-    app.state.interview_report_narrative = RuleBasedInterviewReportNarrativeGenerator()
-    app.state.embedding = UnavailableEmbedding(settings.embedding_dimensions)
+    app.state.chat_model = providers.chat_model
+    app.state.interview_question_generator = providers.interview_question_generator
+    app.state.interview_answer_evaluator = providers.interview_answer_evaluator
+    app.state.follow_up_question_generator = providers.follow_up_question_generator
+    app.state.interview_report_narrative = providers.interview_report_narrative
+    app.state.embedding = providers.embedding
     app.state.file_storage = LocalFileStorage(settings.knowledge_storage_dir)
     app.state.pdf_parser = PypdfPdfParser()
     app.state.task_queue = InlineTaskQueue()

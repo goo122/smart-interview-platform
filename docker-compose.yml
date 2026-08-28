@@ -13,6 +13,8 @@ services:
   api:
     build:
       context: ./backend-python
+    env_file:
+      - ./backend-python/.env
     environment:
       APP_ENV: development
       APP_DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/ai_interview

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     debug: bool = False
+    ai_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
+    embedding_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
+    ai_fake_mode: Literal["normal", "follow_up", "failure"] = "normal"
     secret_key: str = Field(default_factory=lambda: token_urlsafe(32))
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
@@ -62,6 +65,29 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_chunking(self) -> "Settings":
+        environment = self.app_env.strip().lower()
+        if environment == "production" and (
+            self.ai_provider == "fake" or self.embedding_provider == "fake"
+        ):
+            raise ValueError("fake AI providers are not allowed in production")
+        if self.ai_provider == "openai_compatible" and not all(
+            self._has_value(value)
+            for value in (self.llm_api_key, self.llm_base_url, self.llm_model)
+        ):
+            raise ValueError(
+                "openai_compatible AI provider requires API key, base URL and model"
+            )
+        if self.embedding_provider == "openai_compatible" and not all(
+            self._has_value(value)
+            for value in (
+                self.embedding_api_key,
+                self.embedding_base_url,
+                self.embedding_model,
+            )
+        ):
+            raise ValueError(
+                "openai_compatible embedding provider requires API key, base URL and model"
+            )
         if self.rag_chunk_overlap >= self.rag_chunk_size:
             raise ValueError("rag_chunk_overlap must be smaller than rag_chunk_size")
         if self.rag_top_k > self.rag_max_top_k:
@@ -81,6 +107,10 @@ class Settings(BaseSettings):
         if self.report_primary_turn_weight == 0 and self.report_follow_up_turn_weight == 0:
             raise ValueError("at least one report turn weight must be positive")
         return self
+
+    @staticmethod
+    def _has_value(value: str | None) -> bool:
+        return value is not None and bool(value.strip())
 
 
 @lru_cache

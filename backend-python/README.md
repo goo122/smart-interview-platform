@@ -139,6 +139,27 @@ uv run mypy
 Copy `.env.example` to `.env` for local configuration. The example contains only
 local-development placeholders and must be replaced for any shared environment.
 
+## AI provider runtime configuration
+
+The application selects ports at startup through `APP_AI_PROVIDER` and
+`APP_EMBEDDING_PROVIDER`:
+
+- `unavailable`: safe default; the process starts without external model calls;
+- `fake`: deterministic development/test providers for chat, RAG embeddings,
+  interview questions, scoring, follow-up questions and report narrative;
+- `openai_compatible`: LangChain OpenAI-compatible adapters, requiring the
+  corresponding API key, base URL and model settings.
+
+`fake` is rejected in production. `openai_compatible` is rejected when any
+required credential or endpoint setting is missing. `APP_AI_FAKE_MODE` accepts
+`normal`, `follow_up` and `failure` for deterministic local workflow tests.
+Embedding startup validation probes the selected provider and rejects a vector
+dimension that does not match `APP_EMBEDDING_DIMENSIONS` (1536 by default).
+
+The root Compose file loads `backend-python/.env` with `env_file`; its explicit
+PostgreSQL and Redis environment values still override those endpoints to the
+Compose service names (`postgres` and `redis`). Never commit that `.env` file.
+
 ## Interview preparation
 
 Interview preparation uses the authenticated user's ready resume knowledge base and
