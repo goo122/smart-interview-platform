@@ -208,6 +208,7 @@ class InterviewPreparationWorkflow:
                         excerpt=citation.excerpt,
                         ordinal=ordinal,
                         created_at=utc_now(),
+                        document_name=citation.document_name,
                     )
                 )
             question_id = uuid4()
@@ -223,6 +224,7 @@ class InterviewPreparationWorkflow:
                     excerpt=citation.excerpt,
                     ordinal=citation.ordinal,
                     created_at=citation.created_at,
+                    document_name=citation.document_name,
                 )
                 for citation in selected_citations
             ]

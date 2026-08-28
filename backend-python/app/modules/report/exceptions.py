@@ -1,0 +1,16 @@
+from app.core.exceptions import AppError
+
+
+class ReportNotFoundError(AppError):
+    status_code = 404
+    code = "interview_report_not_found"
+
+
+class ReportSessionNotCompletedError(AppError):
+    status_code = 409
+    code = "interview_report_session_not_completed"
+
+
+class ReportGenerationError(AppError):
+    status_code = 422
+    code = "interview_report_generation_failed"

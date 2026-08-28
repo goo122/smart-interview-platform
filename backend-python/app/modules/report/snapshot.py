@@ -1,0 +1,48 @@
+from collections.abc import Iterable, Sequence
+from uuid import UUID
+
+from app.modules.interview.domain import (
+    InterviewEvaluation,
+    InterviewQuestion,
+    InterviewSession,
+    InterviewTurn,
+    TurnStatus,
+)
+from app.modules.report.domain import ReportTurnSnapshot
+
+
+class InterviewReportSnapshotBuilder:
+    """Validate completed interview data and produce immutable report inputs."""
+
+    def build(
+        self,
+        session: InterviewSession,
+        turns: Sequence[InterviewTurn],
+        answers: dict[UUID, str],
+        evaluations: dict[UUID, InterviewEvaluation],
+        questions: Iterable[InterviewQuestion],
+    ) -> tuple[ReportTurnSnapshot, ...]:
+        if not turns:
+            raise ValueError("Interview has no completed turns")
+        question_map = {question.id: question for question in questions}
+        snapshots: list[ReportTurnSnapshot] = []
+        for turn in sorted(turns, key=lambda item: item.sequence):
+            if turn.status != TurnStatus.COMPLETED:
+                raise ValueError("All interview turns must be completed")
+            answer = answers.get(turn.id)
+            evaluation = evaluations.get(turn.id)
+            if answer is None or evaluation is None:
+                raise ValueError("Every completed turn must have an answer and evaluation")
+            snapshots.append(
+                ReportTurnSnapshot(
+                    turn=turn,
+                    answer=answer,
+                    evaluation=evaluation,
+                    question=question_map.get(turn.question_id)
+                    if turn.question_id is not None
+                    else None,
+                )
+            )
+        if session.status.value != "COMPLETED":
+            raise ValueError("Only completed interviews can produce reports")
+        return tuple(snapshots)

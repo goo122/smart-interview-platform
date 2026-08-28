@@ -128,6 +128,7 @@ class InterviewQuestionCitation:
     excerpt: str
     ordinal: int
     created_at: datetime
+    document_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

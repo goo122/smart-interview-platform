@@ -12,6 +12,7 @@ from app.ai.embedding import UnavailableEmbedding
 from app.ai.evaluation import UnavailableInterviewAnswerEvaluator
 from app.ai.followup import UnavailableFollowUpQuestionGenerator
 from app.ai.interview import UnavailableInterviewQuestionGenerator
+from app.ai.report import RuleBasedInterviewReportNarrativeGenerator
 from app.api.v1.chat import router as chat_router
 from app.api.v1.interview import router as interview_router
 from app.api.v1.knowledge import router as knowledge_router
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.interview_question_generator = UnavailableInterviewQuestionGenerator()
     app.state.interview_answer_evaluator = UnavailableInterviewAnswerEvaluator()
     app.state.follow_up_question_generator = UnavailableFollowUpQuestionGenerator()
+    app.state.interview_report_narrative = RuleBasedInterviewReportNarrativeGenerator()
     app.state.embedding = UnavailableEmbedding(settings.embedding_dimensions)
     app.state.file_storage = LocalFileStorage(settings.knowledge_storage_dir)
     app.state.pdf_parser = PypdfPdfParser()

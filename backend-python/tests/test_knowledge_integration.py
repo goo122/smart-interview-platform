@@ -14,6 +14,7 @@ from app.ai.embedding import FakeEmbedding
 from app.ai.evaluation import FakeInterviewAnswerEvaluator, StructuredInterviewEvaluation
 from app.ai.followup import FakeFollowUpQuestionGenerator
 from app.ai.interview import FakeInterviewQuestionGenerator
+from app.ai.report import FakeInterviewReportNarrativeGenerator
 from app.core.config import Settings
 from app.infrastructure.storage.files import LocalFileStorage
 from app.infrastructure.storage.pdf import FakePdfParser
@@ -36,6 +37,13 @@ from app.modules.interview.domain import (
     InterviewType,
     TurnStatus,
 )
+from app.modules.interview.models import (
+    InterviewAnswerModel,
+    InterviewEvaluationModel,
+    InterviewQuestionModel,
+    InterviewSessionModel,
+    InterviewTurnModel,
+)
 from app.modules.interview.repository import SqlAlchemyInterviewRepository
 from app.modules.interview.service import InterviewService
 from app.modules.knowledge.context import ContextAssembler, ContextCitation
@@ -48,6 +56,9 @@ from app.modules.knowledge.models import (
 from app.modules.knowledge.repository import SqlAlchemyKnowledgeRepository
 from app.modules.knowledge.service import KnowledgeService
 from app.modules.knowledge.splitter import SimpleTextSplitter
+from app.modules.report.models import InterviewReportModel
+from app.modules.report.repository import SqlAlchemyInterviewReportRepository
+from app.modules.report.service import InterviewReportService
 from app.workers.queue import InlineTaskQueue
 
 pytestmark = pytest.mark.integration
@@ -792,6 +803,176 @@ async def test_real_langgraph_answer_evaluation_follow_up_and_completion(
         assert "INTERVIEW_COMPLETED" in event_types
     finally:
         await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_report_generation_persists_deterministic_snapshot(
+    database_session: AsyncSession,
+) -> None:
+    session = database_session
+    user_id, base_id, session_id = uuid4(), uuid4(), uuid4()
+    question_ids = [uuid4(), uuid4()]
+    turn_ids = [uuid4(), uuid4()]
+    now = chat_utc_now()
+    try:
+        session.add_all(
+            [
+                UserModel(
+                    id=user_id,
+                    username=f"report-integration-{user_id.hex[:8]}",
+                    email=f"report-integration-{user_id.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                KnowledgeBaseModel(id=base_id, user_id=user_id, name="Report Resume"),
+            ]
+        )
+        await session.flush()
+        session.add(
+            InterviewSessionModel(
+                    id=session_id,
+                    user_id=user_id,
+                    knowledge_base_id=base_id,
+                    job_title="Python 工程师",
+                    job_description="负责后端系统开发",
+                    interview_type=InterviewType.TECHNICAL.value,
+                    difficulty=InterviewDifficulty.MEDIUM.value,
+                    question_count=3,
+                    status=InterviewStatus.COMPLETED.value,
+                    current_question_index=1,
+                    version=5,
+                    created_at=now,
+                    updated_at=now,
+                    started_at=now,
+                    finished_at=now,
+            )
+        )
+        await session.flush()
+        session.add_all(
+            [
+                InterviewQuestionModel(
+                    id=question_ids[0],
+                    session_id=session_id,
+                    sequence=1,
+                    content="请说明系统方案",
+                    category="TECHNICAL",
+                    difficulty=InterviewDifficulty.MEDIUM.value,
+                    expected_points=["架构"],
+                    created_at=now,
+                ),
+                InterviewQuestionModel(
+                    id=question_ids[1],
+                    session_id=session_id,
+                    sequence=2,
+                    content="请说明上线结果",
+                    category="TECHNICAL",
+                    difficulty=InterviewDifficulty.MEDIUM.value,
+                    expected_points=["指标"],
+                    created_at=now,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                InterviewTurnModel(
+                    id=turn_ids[0],
+                    session_id=session_id,
+                    question_id=question_ids[0],
+                    sequence=1,
+                    turn_type="PRIMARY",
+                    question_content="请说明系统方案",
+                    status="COMPLETED",
+                    follow_up_depth=0,
+                    created_at=now,
+                    answered_at=now,
+                    evaluated_at=now,
+                ),
+                InterviewTurnModel(
+                    id=turn_ids[1],
+                    session_id=session_id,
+                    question_id=question_ids[1],
+                    sequence=2,
+                    turn_type="PRIMARY",
+                    question_content="请说明上线结果",
+                    status="COMPLETED",
+                    follow_up_depth=0,
+                    created_at=now,
+                    answered_at=now,
+                    evaluated_at=now,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                InterviewAnswerModel(
+                    id=uuid4(),
+                    turn_id=turn_ids[0],
+                    session_id=session_id,
+                    user_id=user_id,
+                    content="我设计了异步架构并完成验证。",
+                    request_id="report-integration-answer-1",
+                    created_at=now,
+                ),
+                InterviewAnswerModel(
+                    id=uuid4(),
+                    turn_id=turn_ids[1],
+                    session_id=session_id,
+                    user_id=user_id,
+                    content="上线后延迟降低并完成复盘。",
+                    request_id="report-integration-answer-2",
+                    created_at=now,
+                ),
+            ]
+        )
+        for turn_id, score in zip(turn_ids, (80, 60), strict=True):
+            session.add(
+                InterviewEvaluationModel(
+                    id=uuid4(),
+                    turn_id=turn_id,
+                    overall_score=score,
+                    technical_score=score,
+                    relevance_score=score,
+                    clarity_score=score,
+                    depth_score=score,
+                    strengths=["结构清晰"],
+                    weaknesses=["补充指标"],
+                    feedback="结构化反馈",
+                    suggested_improvements=["补充复盘"],
+                    llm_should_follow_up=False,
+                    created_at=now,
+                )
+            )
+        await session.commit()
+        report_repository = SqlAlchemyInterviewReportRepository(session)
+        narrative = FakeInterviewReportNarrativeGenerator()
+        service = InterviewReportService(
+            SqlAlchemyInterviewRepository(session),
+            report_repository,
+            narrative,
+            InlineTaskQueue(),
+            Settings(),
+        )
+        detail = await service.generate(user_id, session_id)
+        repeated = await service.generate(user_id, session_id)
+        assert detail.report.status.value == "READY"
+        assert detail.report.overall_score == 70
+        assert [item.sequence for item in detail.items] == [1, 2]
+        assert repeated.report.id == detail.report.id
+        assert narrative.calls == 1
+        completed = await SqlAlchemyInterviewRepository(session).get_for_user(session_id, user_id)
+        assert completed is not None
+        assert completed.status == InterviewStatus.COMPLETED
+    finally:
+        await session.rollback()
+        await session.execute(
+            delete(InterviewReportModel).where(
+                InterviewReportModel.session_id == session_id
+            )
+        )
         await session.execute(delete(UserModel).where(UserModel.id == user_id))
         await session.commit()
 

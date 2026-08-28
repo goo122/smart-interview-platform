@@ -173,3 +173,34 @@ Scores are validated with `StructuredInterviewEvaluation`; deterministic
 generator can be called. Migration `0006_create_interview_turns_answers_evaluations`
 creates turns, answers and evaluations. Interview state remains in PostgreSQL;
 Redis is available for future worker locks but is not the source of truth.
+
+## Final interview reports
+
+Only sessions with status `COMPLETED` can produce a report. The report is an
+immutable replay snapshot of completed turns, answers, evaluations and bounded
+RAG citations. Generation is idempotent per session and uses a database row lock
+to prevent concurrent duplicate generation. If a narrative provider is not
+configured or returns invalid output, deterministic rule-based narrative is used
+and the report is still marked `READY` with `generatedBy: RULES`.
+
+Endpoints (all require the authenticated user's Bearer access token):
+
+- `POST /api/xunzhi/v1/interview/sessions/{sessionId}/report`
+- `GET /api/xunzhi/v1/interview/sessions/{sessionId}/report`
+- `GET /api/xunzhi/v1/interview/reports?current=1&size=10`
+- `GET /api/xunzhi/v1/interview/reports/{reportId}`
+
+Migration `0007_create_interview_reports` creates `interview_reports` and
+`interview_report_items`, including score bounds, the one-report-per-session
+constraint and ordered replay-item uniqueness. To apply or inspect it:
+
+```powershell
+uv run alembic upgrade head
+uv run alembic heads
+uv run alembic check
+uv run alembic upgrade head --sql > migration.sql
+```
+
+The deterministic defaults are configurable with `APP_REPORT_*` settings in
+`.env.example`; no real model key or secret is required for local startup or
+tests.

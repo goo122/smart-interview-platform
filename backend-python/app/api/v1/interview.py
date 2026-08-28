@@ -20,6 +20,12 @@ from app.modules.interview.schemas import (
     SubmitInterviewAnswerResponse,
 )
 from app.modules.interview.service import InterviewService
+from app.modules.report.dependencies import get_interview_report_service
+from app.modules.report.schemas import (
+    InterviewReportPageResponse,
+    InterviewReportResponse,
+)
+from app.modules.report.service import InterviewReportService
 
 router = APIRouter(prefix="/xunzhi/v1/interview", tags=["interview"])
 
@@ -167,3 +173,58 @@ async def get_turn(
 ) -> InterviewTurnResponse:
     progress = await service.get_turn(current_user.id, turn_id, session_id)
     return InterviewTurnResponse.from_progress(progress)
+
+
+@router.post(
+    "/sessions/{session_id}/report",
+    response_model=InterviewReportResponse,
+)
+async def generate_report(
+    session_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewReportService, Depends(get_interview_report_service)],
+) -> InterviewReportResponse:
+    report = await service.generate(current_user.id, session_id)
+    return InterviewReportResponse.from_detail(report)
+
+
+@router.get(
+    "/sessions/{session_id}/report",
+    response_model=InterviewReportResponse,
+)
+async def get_session_report(
+    session_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewReportService, Depends(get_interview_report_service)],
+) -> InterviewReportResponse:
+    report = await service.get_by_session(current_user.id, session_id)
+    return InterviewReportResponse.from_detail(report)
+
+
+@router.get(
+    "/reports",
+    response_model=InterviewReportPageResponse[InterviewReportResponse],
+)
+async def list_reports(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewReportService, Depends(get_interview_report_service)],
+    current: int = Query(default=1, ge=1),
+    size: int = Query(default=10, ge=1, le=100),
+) -> InterviewReportPageResponse[InterviewReportResponse]:
+    reports, total = await service.list(current_user.id, current, size)
+    return InterviewReportPageResponse.build(
+        [InterviewReportResponse.from_detail(report) for report in reports],
+        total,
+        current,
+        size,
+    )
+
+
+@router.get("/reports/{report_id}", response_model=InterviewReportResponse)
+async def get_report(
+    report_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewReportService, Depends(get_interview_report_service)],
+) -> InterviewReportResponse:
+    report = await service.get(current_user.id, report_id)
+    return InterviewReportResponse.from_detail(report)

@@ -48,6 +48,13 @@ class Settings(BaseSettings):
     interview_max_follow_ups_per_session: int = Field(default=5, ge=0, le=50)
     interview_min_answer_length: int = Field(default=10, ge=1, le=10000)
     interview_max_answer_length: int = Field(default=10000, ge=1, le=100000)
+    report_primary_turn_weight: float = Field(default=1.0, ge=0.0)
+    report_follow_up_turn_weight: float = Field(default=0.5, ge=0.0)
+    report_technical_weight: float = Field(default=0.35, ge=0.0)
+    report_relevance_weight: float = Field(default=0.20, ge=0.0)
+    report_clarity_weight: float = Field(default=0.20, ge=0.0)
+    report_depth_weight: float = Field(default=0.25, ge=0.0)
+    report_aggregation_version: str = Field(default="v1", min_length=1, max_length=32)
     database_url: PostgresDsn = PostgresDsn(
         "postgresql+asyncpg://postgres:local-development-only@localhost:5432/ai_interview"
     )
@@ -63,6 +70,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "interview_min_answer_length must not exceed interview_max_answer_length"
             )
+        dimension_total = (
+            self.report_technical_weight
+            + self.report_relevance_weight
+            + self.report_clarity_weight
+            + self.report_depth_weight
+        )
+        if abs(dimension_total - 1.0) > 1e-6:
+            raise ValueError("report dimension weights must sum to 1")
+        if self.report_primary_turn_weight == 0 and self.report_follow_up_turn_weight == 0:
+            raise ValueError("at least one report turn weight must be positive")
         return self
 
 

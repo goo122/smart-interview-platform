@@ -37,6 +37,7 @@ from app.modules.interview.models import (
     InterviewTurnModel,
 )
 from app.modules.interview.state_machine import InterviewStateMachine
+from app.modules.knowledge.models import KnowledgeDocumentModel
 
 
 class InterviewRepository(Protocol):
@@ -881,7 +882,11 @@ class SqlAlchemyInterviewRepository:
         if not rows:
             return []
         citation_result = await self._session.execute(
-            select(InterviewQuestionCitationModel)
+            select(InterviewQuestionCitationModel, KnowledgeDocumentModel.original_filename)
+            .outerjoin(
+                KnowledgeDocumentModel,
+                KnowledgeDocumentModel.id == InterviewQuestionCitationModel.document_id,
+            )
             .where(InterviewQuestionCitationModel.question_id.in_([row.id for row in rows]))
             .order_by(
                 InterviewQuestionCitationModel.question_id,
@@ -889,8 +894,10 @@ class SqlAlchemyInterviewRepository:
             )
         )
         by_question: dict[UUID, list[InterviewQuestionCitation]] = {}
-        for citation in citation_result.scalars().all():
-            by_question.setdefault(citation.question_id, []).append(_citation_to_domain(citation))
+        for citation, document_name in citation_result.all():
+            by_question.setdefault(citation.question_id, []).append(
+                _citation_to_domain(citation, document_name)
+            )
         return [
             _question_to_domain(row, by_question.get(row.id, []))
             for row in rows
@@ -977,7 +984,9 @@ def _question_to_domain(
     )
 
 
-def _citation_to_domain(row: InterviewQuestionCitationModel) -> InterviewQuestionCitation:
+def _citation_to_domain(
+    row: InterviewQuestionCitationModel, document_name: str | None = None
+) -> InterviewQuestionCitation:
     return InterviewQuestionCitation(
         id=row.id,
         question_id=row.question_id,
@@ -989,6 +998,7 @@ def _citation_to_domain(row: InterviewQuestionCitationModel) -> InterviewQuestio
         excerpt=row.excerpt,
         ordinal=row.ordinal,
         created_at=row.created_at,
+        document_name=document_name,
     )
 
 

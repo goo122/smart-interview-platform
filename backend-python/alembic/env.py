@@ -28,6 +28,10 @@ from app.modules.knowledge.models import (  # noqa: F401
     KnowledgeChunkModel,
     KnowledgeDocumentModel,
 )
+from app.modules.report.models import (  # noqa: F401
+    InterviewReportItemModel,
+    InterviewReportModel,
+)
 
 config = context.config
 if config.config_file_name is not None:
