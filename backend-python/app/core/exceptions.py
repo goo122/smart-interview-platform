@@ -1,0 +1,55 @@
+from typing import Any
+
+from fastapi import Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+def error_response(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    details: Any | None = None,
+) -> JSONResponse:
+    """Build the single error envelope returned by this API."""
+
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details is not None:
+        error["details"] = details
+    return JSONResponse(status_code=status_code, content={"error": error})
+
+
+async def http_exception_handler(
+    _request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
+    """Convert framework HTTP errors, including 404, to the standard envelope."""
+
+    code = "not_found" if exc.status_code == 404 else "http_error"
+    message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    return error_response(status_code=exc.status_code, code=code, message=message)
+
+
+async def validation_exception_handler(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Return validation failures without exposing framework-specific response shapes."""
+
+    return error_response(
+        status_code=422,
+        code="validation_error",
+        message="Request validation failed",
+        details=exc.errors(),
+    )
+
+
+async def unhandled_exception_handler(_request: Request, _exc: Exception) -> JSONResponse:
+    """Avoid leaking internal error information to API clients."""
+
+    return error_response(
+        status_code=500,
+        code="internal_server_error",
+        message="An unexpected error occurred",
+    )
+
