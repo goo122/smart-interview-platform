@@ -9,6 +9,7 @@ from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
 from app.modules.auth.models import UserModel  # noqa: F401
+from app.modules.chat.models import ConversationModel, MessageModel  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
@@ -53,4 +54,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-

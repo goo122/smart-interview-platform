@@ -7,6 +7,8 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ExceptionHandler
 
+from app.ai.chat import UnavailableChatModel
+from app.api.v1.chat import router as chat_router
 from app.api.v1.router import router as v1_router
 from app.core.config import get_settings
 from app.core.database import create_database_engine, create_session_factory
@@ -29,6 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.database_engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.redis = create_redis_client(str(settings.redis_url))
+    app.state.chat_model = UnavailableChatModel()
     try:
         yield
     finally:
@@ -49,6 +52,7 @@ def create_app() -> FastAPI:
     )
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.include_router(v1_router, prefix="/api/v1")
+    app.include_router(chat_router, prefix="/api")
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

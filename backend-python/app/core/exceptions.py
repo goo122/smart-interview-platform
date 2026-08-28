@@ -33,6 +33,21 @@ class InvalidRefreshTokenError(AuthenticationError):
     code = "invalid_refresh_token"
 
 
+class ConversationNotFoundError(AppError):
+    status_code = 404
+    code = "conversation_not_found"
+
+
+class ConversationFinishedError(AppError):
+    status_code = 409
+    code = "conversation_finished"
+
+
+class InvalidChatRequestError(AppError):
+    status_code = 400
+    code = "invalid_chat_request"
+
+
 def error_response(
     *,
     status_code: int,
@@ -73,11 +88,19 @@ async def validation_exception_handler(
 ) -> JSONResponse:
     """Return validation failures without exposing framework-specific response shapes."""
 
+    details = [
+        {
+            "loc": error.get("loc", ()),
+            "msg": error.get("msg", "Invalid value"),
+            "type": error.get("type", "value_error"),
+        }
+        for error in exc.errors()
+    ]
     return error_response(
         status_code=422,
         code="validation_error",
         message="Request validation failed",
-        details=exc.errors(),
+        details=details,
     )
 
 

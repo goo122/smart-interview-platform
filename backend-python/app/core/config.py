@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None
     database_url: PostgresDsn = PostgresDsn(
         "postgresql+asyncpg://postgres:local-development-only@localhost:5432/ai_interview"
     )
