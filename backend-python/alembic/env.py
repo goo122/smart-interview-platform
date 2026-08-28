@@ -10,6 +10,11 @@ from app.core.config import get_settings
 from app.core.database import Base
 from app.modules.auth.models import UserModel  # noqa: F401
 from app.modules.chat.models import ConversationModel, MessageModel  # noqa: F401
+from app.modules.knowledge.models import (  # noqa: F401
+    KnowledgeBaseModel,
+    KnowledgeChunkModel,
+    KnowledgeDocumentModel,
+)
 
 config = context.config
 if config.config_file_name is not None:

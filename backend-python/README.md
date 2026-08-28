@@ -76,6 +76,42 @@ assistant message as `FAILED`. With no model configuration the application still
 starts and emits that safe failure event; tests inject `FakeChatModel` instead of
 calling a real provider.
 
+## PDF knowledge base import
+
+Knowledge base and document endpoints use the `/api/xunzhi/v1` prefix and require
+the existing Bearer access token:
+
+- `POST /api/xunzhi/v1/knowledge-bases`
+- `GET /api/xunzhi/v1/knowledge-bases?current=1&size=10`
+- `GET /api/xunzhi/v1/knowledge-bases/{id}`
+- `DELETE /api/xunzhi/v1/knowledge-bases/{id}`
+- `POST /api/xunzhi/v1/knowledge-bases/{id}/documents` (multipart field `file`)
+- `GET /api/xunzhi/v1/knowledge-bases/{id}/documents?current=1&size=10`
+- `GET /api/xunzhi/v1/knowledge-documents/{documentId}`
+- `DELETE /api/xunzhi/v1/knowledge-documents/{documentId}`
+
+Only PDF uploads are accepted. The service checks the extension, MIME type, PDF
+magic header and configurable maximum size (20 MiB by default), then generates a
+UUID-based storage filename. `pypdf` extracts page text; whitespace is normalized
+without discarding page numbers, and `APP_RAG_CHUNK_SIZE`/`APP_RAG_CHUNK_OVERLAP` control
+deterministic page-aware chunks. Empty, encrypted and image-only PDFs are marked
+`FAILED` with a safe error code and their temporary file is removed.
+
+Migration `0003_knowledge_vector_tables` enables pgvector and creates
+`knowledge_bases`, `knowledge_documents` and `knowledge_chunks`. The vector column
+is fixed at 1536 dimensions for this migration; changing `APP_EMBEDDING_DIMENSIONS`
+requires a new database migration. For local Docker verification:
+
+```powershell
+docker compose up -d postgres redis
+uv run alembic upgrade head
+uv run pytest -m integration
+```
+
+The default application uses `UnavailableEmbedding` so it starts without a real
+provider. Production can inject `LangChainEmbeddingAdapter`; tests use the stable
+`FakeEmbedding` and never call a paid embedding API.
+
 ## Quality checks
 
 ```powershell

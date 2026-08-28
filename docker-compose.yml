@@ -1,3 +1,5 @@
+name: interviewplatform
+
 services:
   api:
     build:
@@ -6,6 +8,10 @@ services:
       APP_ENV: development
       APP_DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/ai_interview
       APP_REDIS_URL: redis://redis:6379/0
+      APP_KNOWLEDGE_STORAGE_DIR: /app/storage
+      APP_EMBEDDING_DIMENSIONS: ${APP_EMBEDDING_DIMENSIONS:-1536}
+    tmpfs:
+      - /app/storage:uid=10001,gid=10001,mode=0750
     ports:
       - "8000:8000"
     depends_on:
@@ -22,7 +28,7 @@ services:
       start_period: 10s
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ai_interview
       POSTGRES_USER: postgres
