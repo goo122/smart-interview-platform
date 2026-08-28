@@ -1,9 +1,36 @@
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+class AppError(Exception):
+    """Base exception for expected application errors."""
+
+    status_code: ClassVar[int] = 400
+    code: ClassVar[str] = "application_error"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class AuthenticationError(AppError):
+    status_code = 401
+    code = "authentication_failed"
+
+
+class UserAlreadyExistsError(AppError):
+    status_code = 409
+    code = "user_already_exists"
+
+
+class InvalidRefreshTokenError(AuthenticationError):
+    """Raised when a refresh token is invalid, expired, or revoked."""
+
+    code = "invalid_refresh_token"
 
 
 def error_response(
@@ -31,6 +58,16 @@ async def http_exception_handler(
     return error_response(status_code=exc.status_code, code=code, message=message)
 
 
+async def app_exception_handler(_request: Request, exc: AppError) -> JSONResponse:
+    """Convert expected domain errors to the standard API error envelope."""
+
+    return error_response(
+        status_code=exc.status_code,
+        code=exc.code,
+        message=exc.message,
+    )
+
+
 async def validation_exception_handler(
     _request: Request, exc: RequestValidationError
 ) -> JSONResponse:
@@ -52,4 +89,3 @@ async def unhandled_exception_handler(_request: Request, _exc: Exception) -> JSO
         code="internal_server_error",
         message="An unexpected error occurred",
     )
-

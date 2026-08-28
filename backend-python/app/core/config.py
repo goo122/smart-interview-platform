@@ -1,6 +1,7 @@
 from functools import lru_cache
+from secrets import token_urlsafe
 
-from pydantic import PostgresDsn, RedisDsn
+from pydantic import Field, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,10 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     debug: bool = False
+    secret_key: str = Field(default_factory=lambda: token_urlsafe(32))
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
     database_url: PostgresDsn = PostgresDsn(
         "postgresql+asyncpg://postgres:local-development-only@localhost:5432/ai_interview"
     )
