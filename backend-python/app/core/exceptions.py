@@ -48,6 +48,21 @@ class InvalidChatRequestError(AppError):
     code = "invalid_chat_request"
 
 
+class RagRetrievalError(AppError):
+    status_code = 422
+    code = "rag_retrieval_failed"
+
+
+class InvalidRagRequestError(AppError):
+    status_code = 400
+    code = "invalid_rag_request"
+
+
+class RagNoResultsError(AppError):
+    status_code = 422
+    code = "rag_no_results"
+
+
 def error_response(
     *,
     status_code: int,

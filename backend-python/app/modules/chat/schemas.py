@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.chat.domain import Conversation, Message
+from app.modules.chat.domain import Conversation, Message, MessageCitation
 
 T = TypeVar("T")
 
@@ -32,6 +32,11 @@ class ChatRequest(BaseModel):
     image_urls: list[str] | None = Field(default=None, alias="imageUrls")
     media_list: list[object] | None = Field(default=None, alias="mediaList")
     file_urls: list[str] | None = Field(default=None, alias="fileUrls")
+    knowledge_base_id: UUID | None = Field(default=None, alias="knowledgeBaseId")
+    top_k: int | None = Field(default=None, alias="topK", ge=1, le=100)
+    similarity_threshold: float | None = Field(
+        default=None, alias="similarityThreshold", ge=0.0, le=1.0
+    )
 
     @property
     def text(self) -> str:
@@ -97,6 +102,30 @@ class CreateConversationResponse(BaseModel):
     title: str
 
 
+class CitationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_id: str = Field(alias="sourceId")
+    chunk_id: UUID = Field(alias="chunkId")
+    document_id: UUID = Field(alias="documentId")
+    document_name: str = Field(alias="documentName")
+    page_number: int | None = Field(default=None, alias="pageNumber")
+    score: float
+    excerpt: str
+
+    @classmethod
+    def from_domain(cls, citation: MessageCitation) -> "CitationResponse":
+        return cls(
+            sourceId=citation.source_id,
+            chunkId=citation.chunk_id,
+            documentId=citation.document_id,
+            documentName=citation.document_name,
+            pageNumber=citation.page_number,
+            score=citation.score,
+            excerpt=citation.excerpt,
+        )
+
+
 class MessageResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -117,6 +146,7 @@ class MessageResponse(BaseModel):
     message_seq: int = Field(alias="messageSeq")
     response_time: int | None = Field(default=None, alias="responseTime")
     token_count: int | None = Field(default=None, alias="tokenCount")
+    citations: list["CitationResponse"] = Field(default_factory=list)
 
     @classmethod
     def from_domain(cls, message: Message) -> "MessageResponse":
@@ -136,6 +166,7 @@ class MessageResponse(BaseModel):
             messageType=message_type,
             messageContent=message.content,
             messageSeq=message.sequence,
+            citations=[CitationResponse.from_domain(citation) for citation in message.citations],
         )
 
 

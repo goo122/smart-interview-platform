@@ -112,6 +112,22 @@ The default application uses `UnavailableEmbedding` so it starts without a real
 provider. Production can inject `LangChainEmbeddingAdapter`; tests use the stable
 `FakeEmbedding` and never call a paid embedding API.
 
+## RAG chat retrieval
+
+The existing chat endpoint accepts optional `knowledgeBaseId`, `topK` and
+`similarityThreshold` fields. When a knowledge base is supplied, the backend
+embeds the query, retrieves only `READY` chunks belonging to the authenticated
+user and selected base, assembles a bounded reference context, and returns
+citations in the SSE `complete` event. Without `knowledgeBaseId`, the legacy chat
+request and SSE response are unchanged. Citations are persisted in
+`message_citations` and are returned by chat history APIs.
+
+Migration `0004_create_message_citations` adds the citation table with foreign
+keys to messages, chunks and documents. `RAG_TOP_K`, `RAG_MAX_TOP_K`,
+`RAG_SIMILARITY_THRESHOLD`, `RAG_MAX_CONTEXT_TOKENS` and
+`RAG_MAX_CHUNK_TOKENS` are configurable through the corresponding `APP_`-
+prefixed settings.
+
 ## Quality checks
 
 ```powershell

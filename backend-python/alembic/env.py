@@ -9,7 +9,11 @@ from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
 from app.modules.auth.models import UserModel  # noqa: F401
-from app.modules.chat.models import ConversationModel, MessageModel  # noqa: F401
+from app.modules.chat.models import (  # noqa: F401
+    ConversationModel,
+    MessageCitationModel,
+    MessageModel,
+)
 from app.modules.knowledge.models import (  # noqa: F401
     KnowledgeBaseModel,
     KnowledgeChunkModel,

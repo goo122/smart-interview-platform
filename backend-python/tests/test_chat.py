@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import Iterator
+import json
+from collections.abc import Iterator, Sequence
 from uuid import UUID
 
 import pytest
@@ -10,8 +11,10 @@ from app.core.exceptions import UserAlreadyExistsError
 from app.main import app
 from app.modules.auth.dependencies import get_session_store, get_user_repository
 from app.modules.auth.domain import User
+from app.modules.chat.context import RagContext
 from app.modules.chat.dependencies import (
     get_chat_model,
+    get_context_provider,
     get_conversation_repository,
     get_message_repository,
 )
@@ -19,11 +22,13 @@ from app.modules.chat.domain import (
     Conversation,
     ConversationStatus,
     Message,
+    MessageCitation,
     MessageRole,
     MessageStatus,
     utc_now,
 )
 from app.modules.chat.service import ChatService
+from app.modules.knowledge.context import ContextCitation
 
 
 class ChatUserRepository:
@@ -167,6 +172,55 @@ class FakeMessageRepository:
         item.completed_at = utc_now() if status != MessageStatus.PENDING else None
         return item
 
+    async def complete_with_citations(
+        self, message_id: UUID, content: str, citations: Sequence[ContextCitation]
+    ) -> Message:
+        item = await self.update(message_id, MessageStatus.COMPLETED, content)
+        item.citations = [
+            MessageCitation(
+                id=UUID("00000000-0000-0000-0000-000000000012"),
+                message_id=message_id,
+                chunk_id=citation.chunk_id,
+                document_id=citation.document_id,
+                source_id=citation.source_id,
+                page_number=citation.page_number,
+                score=citation.score,
+                excerpt=citation.excerpt,
+                ordinal=citation.ordinal,
+                created_at=item.created_at,
+                document_name=citation.document_name,
+            )
+            for citation in citations
+        ]
+        return item
+
+
+class FakeRagContextProvider:
+    async def validate_knowledge_base(self, _user_id: UUID, _knowledge_base_id: UUID) -> None:
+        return None
+
+    async def build(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+        query: str,
+        top_k: int | None,
+        similarity_threshold: float | None,
+    ) -> RagContext:
+        del user_id, knowledge_base_id, query, top_k, similarity_threshold
+        citation = ContextCitation(
+            source_id="[S1]",
+            chunk_id=UUID("00000000-0000-0000-0000-000000000010"),
+            document_id=UUID("00000000-0000-0000-0000-000000000011"),
+            document_name="resume.pdf",
+            page_number=2,
+            score=0.91,
+            excerpt="Python experience",
+            ordinal=0,
+        )
+        return RagContext("参考资料", (citation,))
+
 
 @pytest.fixture
 def chat_client() -> Iterator[
@@ -289,6 +343,34 @@ def test_sse_persists_messages_and_emits_ordered_events(chat_client) -> None:
     assert [item.role for item in messages.items] == [MessageRole.USER, MessageRole.ASSISTANT]
     assert messages.items[1].status == MessageStatus.COMPLETED
     assert messages.items[1].content == "Hello world"
+
+
+def test_rag_sse_returns_citations_and_adds_context(chat_client) -> None:
+    client, _, _, _, model = chat_client
+    app.dependency_overrides[get_context_provider] = lambda: FakeRagContextProvider()
+    token = _register_and_login(client, username="rag-http", email="rag-http@example.com")
+    session_id = _create(client, token)
+
+    response = client.post(
+        f"/api/xunzhi/v1/ai/sessions/{session_id}/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "inputMessage": "请分析项目经验",
+            "knowledgeBaseId": str(UUID("00000000-0000-0000-0000-000000000001")),
+            "topK": 2,
+        },
+    )
+    complete_line = next(
+        line.removeprefix("data: ")
+        for line in response.text.splitlines()
+        if line.startswith("data:") and "citations" in line
+    )
+    complete = json.loads(complete_line)
+
+    assert response.status_code == 200
+    assert complete["citations"][0]["source_id"] == "[S1]"
+    assert complete["citations"][0]["document_name"] == "resume.pdf"
+    assert model.received_messages[0][0].role == "system"
 
 
 def test_model_error_is_safe_and_marks_assistant_failed(chat_client) -> None:

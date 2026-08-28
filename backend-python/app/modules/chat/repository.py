@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
@@ -8,11 +9,14 @@ from app.modules.chat.domain import (
     Conversation,
     ConversationStatus,
     Message,
+    MessageCitation,
     MessageRole,
     MessageStatus,
     utc_now,
 )
-from app.modules.chat.models import ConversationModel, MessageModel
+from app.modules.chat.models import ConversationModel, MessageCitationModel, MessageModel
+from app.modules.knowledge.context import ContextCitation
+from app.modules.knowledge.models import KnowledgeDocumentModel
 
 
 class ConversationRepository(Protocol):
@@ -56,6 +60,10 @@ class MessageRepository(Protocol):
         status: MessageStatus,
         content: str,
         error_message: str | None = None,
+    ) -> Message: ...
+
+    async def complete_with_citations(
+        self, message_id: UUID, content: str, citations: Sequence[ContextCitation]
     ) -> Message: ...
 
 
@@ -171,7 +179,27 @@ class SqlAlchemyMessageRepository:
             .where(MessageModel.conversation_id == conversation_id)
             .order_by(MessageModel.sequence.asc())
         )
-        return [_message_to_domain(row) for row in result.scalars().all()]
+        rows = result.scalars().all()
+        messages = [_message_to_domain(row) for row in rows]
+        if messages:
+            citation_result = await self._session.execute(
+                select(MessageCitationModel, KnowledgeDocumentModel.original_filename)
+                .join(
+                    KnowledgeDocumentModel,
+                    KnowledgeDocumentModel.id == MessageCitationModel.document_id,
+                    isouter=True,
+                )
+                .where(MessageCitationModel.message_id.in_([message.id for message in messages]))
+                .order_by(MessageCitationModel.message_id, MessageCitationModel.ordinal)
+            )
+            by_message: dict[UUID, list[MessageCitation]] = {}
+            for row, document_name in citation_result.all():
+                by_message.setdefault(row.message_id, []).append(
+                    _citation_to_domain(row, document_name or "")
+                )
+            for message in messages:
+                message.citations = by_message.get(message.id, [])
+        return messages
 
     async def next_sequence(self, conversation_id: UUID) -> int:
         maximum = await self._session.scalar(
@@ -192,7 +220,11 @@ class SqlAlchemyMessageRepository:
             )
         )
         row = result.scalar_one_or_none()
-        return _message_to_domain(row) if row is not None else None
+        if row is None:
+            return None
+        message = _message_to_domain(row)
+        message.citations = await self.list_citations(message.id)
+        return message
 
     async def get_assistant_message_by_request(
         self, conversation_id: UUID, request_id: str
@@ -205,7 +237,11 @@ class SqlAlchemyMessageRepository:
             )
         )
         row = result.scalar_one_or_none()
-        return _message_to_domain(row) if row is not None else None
+        if row is None:
+            return None
+        message = _message_to_domain(row)
+        message.citations = await self.list_citations(message.id)
+        return message
 
     async def update(
         self,
@@ -223,12 +259,83 @@ class SqlAlchemyMessageRepository:
         await self._session.execute(
             update(MessageModel).where(MessageModel.id == message_id).values(**values)
         )
-        await self._session.commit()
+        try:
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
         result = await self._session.execute(
             select(MessageModel).where(MessageModel.id == message_id)
         )
         row = result.scalar_one()
         return _message_to_domain(row)
+
+    async def complete_with_citations(
+        self, message_id: UUID, content: str, citations: Sequence[ContextCitation]
+    ) -> Message:
+        completed_at = utc_now()
+        await self._session.execute(
+            update(MessageModel)
+            .where(MessageModel.id == message_id)
+            .values(
+                status=MessageStatus.COMPLETED.value,
+                content=content,
+                error_message=None,
+                completed_at=completed_at,
+            )
+        )
+        self._session.add_all(
+            MessageCitationModel(
+                message_id=message_id,
+                chunk_id=citation.chunk_id,
+                document_id=citation.document_id,
+                source_id=citation.source_id,
+                page_number=citation.page_number,
+                score=citation.score,
+                excerpt=citation.excerpt,
+                ordinal=citation.ordinal,
+            )
+            for citation in citations
+        )
+        try:
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
+        result = await self._session.execute(
+            select(MessageModel).where(MessageModel.id == message_id)
+        )
+        row = result.scalar_one()
+        message = _message_to_domain(row)
+        message.citations = [
+            _citation_to_domain(row, document_name or "")
+            for row, document_name in (
+                await self._session.execute(
+                    select(MessageCitationModel, KnowledgeDocumentModel.original_filename)
+                    .join(
+                        KnowledgeDocumentModel,
+                        KnowledgeDocumentModel.id == MessageCitationModel.document_id,
+                        isouter=True,
+                    )
+                    .where(MessageCitationModel.message_id == message_id)
+                    .order_by(MessageCitationModel.ordinal)
+                )
+            ).all()
+        ]
+        return message
+
+    async def list_citations(self, message_id: UUID) -> list[MessageCitation]:
+        result = await self._session.execute(
+            select(MessageCitationModel, KnowledgeDocumentModel.original_filename)
+            .join(
+                KnowledgeDocumentModel,
+                KnowledgeDocumentModel.id == MessageCitationModel.document_id,
+                isouter=True,
+            )
+            .where(MessageCitationModel.message_id == message_id)
+            .order_by(MessageCitationModel.ordinal)
+        )
+        return [_citation_to_domain(row, name or "") for row, name in result.all()]
 
 
 def _conversation_to_domain(row: ConversationModel) -> Conversation:
@@ -256,4 +363,20 @@ def _message_to_domain(row: MessageModel) -> Message:
         error_message=row.error_message,
         created_at=row.created_at,
         completed_at=row.completed_at,
+    )
+
+
+def _citation_to_domain(row: MessageCitationModel, document_name: str = "") -> MessageCitation:
+    return MessageCitation(
+        id=row.id,
+        message_id=row.message_id,
+        chunk_id=row.chunk_id,
+        document_id=row.document_id,
+        source_id=row.source_id,
+        page_number=row.page_number,
+        score=float(row.score),
+        excerpt=row.excerpt,
+        ordinal=row.ordinal,
+        created_at=row.created_at,
+        document_name=document_name,
     )

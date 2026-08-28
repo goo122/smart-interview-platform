@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
@@ -23,6 +23,21 @@ class MessageStatus(StrEnum):
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class MessageCitation:
+    id: UUID
+    message_id: UUID
+    chunk_id: UUID
+    document_id: UUID
+    source_id: str
+    page_number: int | None
+    score: float
+    excerpt: str
+    ordinal: int
+    created_at: datetime
+    document_name: str = ""
 
 
 @dataclass(slots=True)
@@ -63,6 +78,7 @@ class Message:
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+    citations: list[MessageCitation] = field(default_factory=list)
 
     @classmethod
     def new(

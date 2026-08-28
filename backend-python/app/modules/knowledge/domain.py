@@ -104,3 +104,15 @@ class StoredChunk:
     token_count: int
     content_hash: str
     embedding: tuple[float, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedChunk:
+    """A chunk returned by a scoped vector search."""
+
+    chunk_id: UUID
+    document_id: UUID
+    document_name: str
+    page_number: int | None
+    content: str
+    score: float

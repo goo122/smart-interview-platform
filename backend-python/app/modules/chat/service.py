@@ -7,10 +7,14 @@ from uuid import UUID, uuid4
 
 from app.ai.chat import ChatMessage, ChatModelPort
 from app.core.exceptions import (
+    AppError,
     ConversationFinishedError,
     ConversationNotFoundError,
     InvalidChatRequestError,
+    InvalidRagRequestError,
+    RagRetrievalError,
 )
+from app.modules.chat.context import ContextProvider, RagContext
 from app.modules.chat.domain import (
     Conversation,
     ConversationStatus,
@@ -33,10 +37,12 @@ class ChatService:
         conversation_repository: ConversationRepository,
         message_repository: MessageRepository,
         chat_model: ChatModelPort,
+        context_provider: ContextProvider | None = None,
     ) -> None:
         self._conversations = conversation_repository
         self._messages = message_repository
         self._model = chat_model
+        self._context_provider = context_provider
 
     async def create_conversation(
         self,
@@ -90,6 +96,9 @@ class ChatService:
         conversation_id: UUID,
         content: str,
         request_id: str | None = None,
+        knowledge_base_id: UUID | None = None,
+        top_k: int | None = None,
+        similarity_threshold: float | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Prepare a persisted request and return an async event stream.
 
@@ -103,6 +112,14 @@ class ChatService:
         text = content.strip()
         if not text:
             raise InvalidChatRequestError("Message content is required")
+        if top_k is not None and top_k < 1:
+            raise InvalidRagRequestError("topK must be positive")
+        if similarity_threshold is not None and not 0 <= similarity_threshold <= 1:
+            raise InvalidRagRequestError("similarityThreshold must be between 0 and 1")
+        if knowledge_base_id is not None:
+            if self._context_provider is None:
+                raise InvalidRagRequestError("Knowledge base retrieval is unavailable")
+            await self._context_provider.validate_knowledge_base(user_id, knowledge_base_id)
 
         request_key = request_id or str(uuid4())
         existing_user = await self._messages.get_user_message_by_request(
@@ -135,19 +152,27 @@ class ChatService:
             )
         )
         history = await self._messages.list_for_conversation(conversation_id)
-        return self._generate(history, user_message, assistant_message)
+        return self._generate(
+            history,
+            user_message,
+            assistant_message,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+        )
 
     async def _generate(
         self,
         history: list[Message],
         user_message: Message,
         assistant_message: Message,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID | None,
+        top_k: int | None,
+        similarity_threshold: float | None,
     ) -> AsyncIterator[ChatEvent]:
-        messages = [
-            ChatMessage(role=message.role.value.lower(), content=message.content)
-            for message in history
-            if message.content and message.status != MessageStatus.FAILED
-        ]
         yield ChatEvent(
             "start",
             {
@@ -157,7 +182,28 @@ class ChatService:
         )
         parts: list[str] = []
         stream: AsyncIterator[Any] | None = None
+        rag_requested = knowledge_base_id is not None
+        building_context = rag_requested
         try:
+            rag_context = RagContext(prompt="", citations=())
+            if knowledge_base_id is not None:
+                if self._context_provider is None:
+                    raise InvalidRagRequestError("Knowledge base retrieval is unavailable")
+                rag_context = await self._context_provider.build(
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    query=user_message.content,
+                    top_k=top_k,
+                    similarity_threshold=similarity_threshold,
+                )
+            building_context = False
+            messages = [
+                ChatMessage(role=message.role.value.lower(), content=message.content)
+                for message in history
+                if message.content and message.status != MessageStatus.FAILED
+            ]
+            if rag_context.prompt:
+                messages.insert(0, ChatMessage(role="system", content=rag_context.prompt))
             stream = self._model.stream(messages)
             async for chunk in stream:
                 value = getattr(chunk, "content", chunk)
@@ -166,12 +212,26 @@ class ChatService:
                 parts.append(value)
                 yield ChatEvent("delta", {"content": value})
             complete = "".join(parts)
-            await self._messages.update(
-                assistant_message.id, MessageStatus.COMPLETED, complete
-            )
-            yield ChatEvent(
-                "complete", {"message_id": str(assistant_message.id), "content": complete}
-            )
+            if rag_requested and rag_context.citations:
+                complete_with_citations = getattr(self._messages, "complete_with_citations", None)
+                if complete_with_citations is None:
+                    raise RagRetrievalError("Citation persistence is unavailable")
+                await complete_with_citations(
+                    assistant_message.id, complete, rag_context.citations
+                )
+            else:
+                await self._messages.update(
+                    assistant_message.id, MessageStatus.COMPLETED, complete
+                )
+            complete_data: dict[str, Any] = {
+                "message_id": str(assistant_message.id),
+                "content": complete,
+            }
+            if rag_requested:
+                complete_data["citations"] = [
+                    _citation_data(citation) for citation in rag_context.citations
+                ]
+            yield ChatEvent("complete", complete_data)
         except asyncio.CancelledError:
             await self._messages.update(
                 assistant_message.id,
@@ -180,16 +240,33 @@ class ChatService:
                 error_message="AI response cancelled",
             )
             raise
+        except AppError as exc:
+            await self._messages.update(
+                assistant_message.id,
+                MessageStatus.FAILED,
+                "".join(parts),
+                error_message=exc.message,
+            )
+            yield ChatEvent(
+                "error",
+                {
+                    "code": exc.code if building_context else "AI_GENERATION_FAILED",
+                    "message": "RAG 检索失败" if building_context else "AI 回复失败",
+                },
+            )
         except Exception:
             await self._messages.update(
                 assistant_message.id,
                 MessageStatus.FAILED,
                 "".join(parts),
-                error_message="AI response failed",
+                error_message="RAG retrieval failed" if building_context else "AI response failed",
             )
             yield ChatEvent(
                 "error",
-                {"code": "AI_GENERATION_FAILED", "message": "AI 回复失败"},
+                {
+                    "code": "RAG_RETRIEVAL_FAILED" if building_context else "AI_GENERATION_FAILED",
+                    "message": "RAG 检索失败" if building_context else "AI 回复失败",
+                },
             )
         finally:
             if stream is not None:
@@ -218,12 +295,28 @@ class ChatService:
             return
         if assistant_message.content:
             yield ChatEvent("delta", {"content": assistant_message.content})
-        yield ChatEvent(
-            "complete",
-            {"message_id": str(assistant_message.id), "content": assistant_message.content},
-        )
+        complete_data: dict[str, Any] = {
+            "message_id": str(assistant_message.id),
+            "content": assistant_message.content,
+        }
+        if assistant_message.citations:
+            complete_data["citations"] = [
+                _citation_data(citation) for citation in assistant_message.citations
+            ]
+        yield ChatEvent("complete", complete_data)
 
     @staticmethod
     def _title_from_message(first_message: str | None) -> str:
         text = (first_message or "").strip()
         return text[:80] or "New conversation"
+
+
+def _citation_data(citation: Any) -> dict[str, Any]:
+    return {
+        "source_id": citation.source_id,
+        "document_id": str(citation.document_id),
+        "document_name": citation.document_name,
+        "page_number": citation.page_number,
+        "chunk_id": str(citation.chunk_id),
+        "score": citation.score,
+    }

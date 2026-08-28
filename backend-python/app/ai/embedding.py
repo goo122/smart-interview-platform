@@ -34,6 +34,8 @@ class FakeEmbedding:
 
     async def embed_query(self, text: str) -> Sequence[float]:
         self.query_calls.append(text)
+        if self.error is not None:
+            raise self.error
         return self._embed(text, self._dimensions)
 
     @staticmethod

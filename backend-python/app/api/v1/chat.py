@@ -144,6 +144,9 @@ async def chat(
         session_id,
         payload.text,
         request_id=payload.request_id,
+        knowledge_base_id=payload.knowledge_base_id,
+        top_k=payload.top_k,
+        similarity_threshold=payload.similarity_threshold,
     )
 
     async def encode() -> AsyncIterator[str]:

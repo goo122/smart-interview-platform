@@ -14,10 +14,16 @@ from app.ai.embedding import FakeEmbedding
 from app.core.config import Settings
 from app.infrastructure.storage.files import LocalFileStorage
 from app.infrastructure.storage.pdf import FakePdfParser
+from app.infrastructure.vectorstore.retriever import PgVectorRetriever
 from app.infrastructure.vectorstore.sqlalchemy import SqlAlchemyVectorStore
 from app.modules.auth.models import UserModel
 from app.modules.auth.session_store import RedisSessionStore
-from app.modules.knowledge.domain import KnowledgeBase, PdfPage, StoredChunk
+from app.modules.chat.domain import MessageRole
+from app.modules.chat.domain import utc_now as chat_utc_now
+from app.modules.chat.models import ConversationModel, MessageCitationModel, MessageModel
+from app.modules.chat.repository import SqlAlchemyMessageRepository
+from app.modules.knowledge.context import ContextCitation
+from app.modules.knowledge.domain import DocumentStatus, KnowledgeBase, PdfPage, StoredChunk
 from app.modules.knowledge.models import (
     KnowledgeBaseModel,
     KnowledgeChunkModel,
@@ -180,6 +186,164 @@ async def test_postgres_unique_constraints_and_transaction_rollback(
 
 
 @pytest.mark.asyncio
+async def test_pgvector_retrieval_scopes_user_base_status_topk_and_threshold(
+    database_session: AsyncSession,
+) -> None:
+    session = database_session
+    user_one, user_two = uuid4(), uuid4()
+    base_one, base_two = uuid4(), uuid4()
+    ready_one, ready_two, pending = uuid4(), uuid4(), uuid4()
+    vector_a = [0.0] * 1536
+    vector_a[0] = 1.0
+    vector_b = [0.0] * 1536
+    vector_b[0], vector_b[1] = 0.8, 0.6
+    vector_other = [0.0] * 1536
+    vector_other[0] = 1.0
+    try:
+        session.add_all(
+            [
+                UserModel(
+                    id=user_one,
+                    username=f"retrieve-{user_one.hex[:8]}",
+                    email=f"retrieve-{user_one.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                UserModel(
+                    id=user_two,
+                    username=f"retrieve-{user_two.hex[:8]}",
+                    email=f"retrieve-{user_two.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                KnowledgeBaseModel(id=base_one, user_id=user_one, name="One"),
+                KnowledgeBaseModel(id=base_two, user_id=user_two, name="Two"),
+            ]
+        )
+        session.add_all(
+            [
+                KnowledgeDocumentModel(
+                    id=ready_one,
+                    knowledge_base_id=base_one,
+                    original_filename="one-best.pdf",
+                    safe_filename="one-best.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/one-best.pdf",
+                    status=DocumentStatus.READY.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+                KnowledgeDocumentModel(
+                    id=ready_two,
+                    knowledge_base_id=base_one,
+                    original_filename="one-second.pdf",
+                    safe_filename="one-second.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/one-second.pdf",
+                    status=DocumentStatus.READY.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+                KnowledgeDocumentModel(
+                    id=pending,
+                    knowledge_base_id=base_one,
+                    original_filename="pending.pdf",
+                    safe_filename="pending.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/pending.pdf",
+                    status=DocumentStatus.PROCESSING.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                KnowledgeChunkModel(
+                    document_id=ready_one,
+                    chunk_index=0,
+                    page_number=1,
+                    content="best",
+                    token_count=1,
+                    content_hash=uuid4().hex * 2,
+                    embedding=vector_a,
+                ),
+                KnowledgeChunkModel(
+                    document_id=ready_two,
+                    chunk_index=0,
+                    page_number=1,
+                    content="second",
+                    token_count=1,
+                    content_hash=uuid4().hex * 2,
+                    embedding=vector_b,
+                ),
+                KnowledgeChunkModel(
+                    document_id=pending,
+                    chunk_index=0,
+                    page_number=1,
+                    content="pending",
+                    token_count=1,
+                    content_hash=uuid4().hex * 2,
+                    embedding=vector_other,
+                ),
+            ]
+        )
+        await session.commit()
+        retriever = PgVectorRetriever(session)
+        result = await retriever.retrieve(
+            user_id=user_one,
+            knowledge_base_id=base_one,
+            query_vector=vector_a,
+            top_k=5,
+            similarity_threshold=0.75,
+        )
+        assert [item.content for item in result] == ["best", "second"]
+        assert result[0].score > result[1].score
+        strict = await retriever.retrieve(
+            user_id=user_one,
+            knowledge_base_id=base_one,
+            query_vector=vector_a,
+            top_k=5,
+            similarity_threshold=0.85,
+        )
+        assert [item.content for item in strict] == ["best"]
+        assert len(
+            await retriever.retrieve(
+                user_id=user_one,
+                knowledge_base_id=base_one,
+                query_vector=vector_a,
+                top_k=1,
+                similarity_threshold=0,
+            )
+        ) == 1
+        assert not await retriever.retrieve(
+            user_id=user_two,
+            knowledge_base_id=base_one,
+            query_vector=vector_a,
+            top_k=5,
+            similarity_threshold=0,
+        )
+        assert not await retriever.retrieve(
+            user_id=user_two,
+            knowledge_base_id=base_two,
+            query_vector=vector_a,
+            top_k=5,
+            similarity_threshold=0,
+        )
+    finally:
+        await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id.in_([user_one, user_two])))
+        await session.commit()
+
+
+@pytest.mark.asyncio
 async def test_real_postgres_import_pipeline_with_fake_parser_and_embedding(
     database_session: AsyncSession,
 ) -> None:
@@ -233,6 +397,101 @@ async def test_real_postgres_import_pipeline_with_fake_parser_and_embedding(
         await session.execute(delete(UserModel).where(UserModel.id == user_id))
         await session.commit()
         storage_dir.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_message_citations_persist_in_order_and_cascade_with_document(
+    database_session: AsyncSession,
+) -> None:
+    session = database_session
+    user_id, base_id, document_id, chunk_id = uuid4(), uuid4(), uuid4(), uuid4()
+    conversation_id, message_id = uuid4(), uuid4()
+    try:
+        session.add_all(
+            [
+                UserModel(
+                    id=user_id,
+                    username=f"citation-{user_id.hex[:8]}",
+                    email=f"citation-{user_id.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                KnowledgeBaseModel(id=base_id, user_id=user_id, name="Citations"),
+                KnowledgeDocumentModel(
+                    id=document_id,
+                    knowledge_base_id=base_id,
+                    original_filename="resume.pdf",
+                    safe_filename="resume.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/resume.pdf",
+                    status=DocumentStatus.READY.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+                ConversationModel(
+                    id=conversation_id,
+                    user_id=user_id,
+                    title="citation chat",
+                    status="ACTIVE",
+                    created_at=chat_utc_now(),
+                    updated_at=chat_utc_now(),
+                ),
+                MessageModel(
+                    id=message_id,
+                    conversation_id=conversation_id,
+                    role=MessageRole.ASSISTANT.value,
+                    content="pending",
+                    status="PENDING",
+                    sequence=1,
+                    created_at=chat_utc_now(),
+                ),
+            ]
+        )
+        await session.commit()
+        session.add(
+            KnowledgeChunkModel(
+                id=chunk_id,
+                document_id=document_id,
+                chunk_index=0,
+                page_number=3,
+                content="citation content",
+                token_count=2,
+                content_hash=uuid4().hex * 2,
+                embedding=[0.0] * 1535 + [1.0],
+            )
+        )
+        await session.commit()
+        repository = SqlAlchemyMessageRepository(session)
+        citation = ContextCitation(
+            source_id="[S1]",
+            chunk_id=chunk_id,
+            document_id=document_id,
+            document_name="resume.pdf",
+            page_number=3,
+            score=0.91,
+            excerpt="citation content",
+            ordinal=0,
+        )
+        completed = await repository.complete_with_citations(message_id, "answer", [citation])
+        assert completed.status.value == "COMPLETED"
+        assert completed.citations[0].document_name == "resume.pdf"
+        history = await repository.list_for_conversation(conversation_id)
+        assert history[0].citations[0].source_id == "[S1]"
+        await session.execute(
+            delete(KnowledgeDocumentModel).where(KnowledgeDocumentModel.id == document_id)
+        )
+        await session.commit()
+        assert await session.scalar(
+            select(func.count()).select_from(MessageCitationModel).where(
+                MessageCitationModel.message_id == message_id
+            )
+        ) == 0
+    finally:
+        await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
+        await session.commit()
 
 
 @pytest.mark.asyncio
