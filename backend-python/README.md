@@ -152,6 +152,24 @@ returns structured questions with traceable source citations. The API is availab
 - `POST /api/xunzhi/v1/interview/sessions/{sessionId}/cancel`
 
 Migration `0005_create_interview_tables` creates sessions, questions, status events and
-question citations. Preparation is orchestrated through `InterviewPreparationWorkflow`;
-when LangGraph is installed it uses a compiled LangGraph, while the same node sequence
-remains available for deterministic local tests. The database remains the source of truth.
+question citations. Preparation is orchestrated through the compiled
+`InterviewPreparationWorkflow` LangGraph; LangGraph is a required runtime dependency
+and the database remains the source of truth.
+
+## Interview answers, evaluation and follow-up
+
+After a session is started, the first `PRIMARY` turn is persisted as
+`WAITING_ANSWER`. Authenticated clients use:
+
+- `GET /api/xunzhi/v1/interview/sessions/{sessionId}/current-turn`
+- `POST /api/xunzhi/v1/interview/sessions/{sessionId}/answers`
+- `GET /api/xunzhi/v1/interview/sessions/{sessionId}/turns`
+- `GET /api/xunzhi/v1/interview/sessions/{sessionId}/turns/{turnId}`
+
+Answers are accepted with `turnId`, `answer` and an idempotent `requestId`. The
+answer is stored before the asynchronous LangGraph evaluation workflow runs.
+Scores are validated with `StructuredInterviewEvaluation`; deterministic
+`FollowUpPolicy` enforces depth, score and per-session limits before a follow-up
+generator can be called. Migration `0006_create_interview_turns_answers_evaluations`
+creates turns, answers and evaluations. Interview state remains in PostgreSQL;
+Redis is available for future worker locks but is not the source of truth.

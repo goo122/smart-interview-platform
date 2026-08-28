@@ -27,6 +27,18 @@ class InterviewType(StrEnum):
     MIXED = "MIXED"
 
 
+class TurnType(StrEnum):
+    PRIMARY = "PRIMARY"
+    FOLLOW_UP = "FOLLOW_UP"
+
+
+class TurnStatus(StrEnum):
+    WAITING_ANSWER = "WAITING_ANSWER"
+    EVALUATING = "EVALUATING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
 def utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -128,3 +140,63 @@ class InterviewEvent:
     payload: dict[str, Any]
     idempotency_key: str | None
     created_at: datetime
+
+
+@dataclass(slots=True)
+class InterviewTurn:
+    id: UUID
+    session_id: UUID
+    question_id: UUID | None
+    parent_turn_id: UUID | None
+    sequence: int
+    turn_type: TurnType
+    question_content: str
+    status: TurnStatus
+    follow_up_depth: int
+    created_at: datetime
+    answered_at: datetime | None
+    evaluated_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class InterviewAnswer:
+    id: UUID
+    turn_id: UUID
+    session_id: UUID
+    user_id: UUID
+    content: str
+    request_id: str
+    created_at: datetime
+
+
+@dataclass(slots=True)
+class InterviewEvaluation:
+    id: UUID
+    turn_id: UUID
+    overall_score: int
+    technical_score: int
+    relevance_score: int
+    clarity_score: int
+    depth_score: int
+    strengths: list[str]
+    weaknesses: list[str]
+    feedback: str
+    suggested_improvements: list[str]
+    llm_should_follow_up: bool
+    follow_up_focus: str | None
+    follow_up_question: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class InterviewProgress:
+    session: InterviewSession
+    turn: InterviewTurn
+    answer: InterviewAnswer | None = None
+    evaluation: InterviewEvaluation | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FollowUpDecision:
+    should_follow_up: bool
+    reason: str

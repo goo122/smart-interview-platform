@@ -1,4 +1,4 @@
-from app.modules.interview.domain import InterviewStatus
+from app.modules.interview.domain import InterviewStatus, TurnStatus
 from app.modules.interview.exceptions import InvalidInterviewTransitionError
 
 
@@ -23,6 +23,13 @@ class InterviewStateMachine:
         InterviewStatus.CANCELLED: frozenset(),
     }
 
+    _allowed_turn: dict[TurnStatus, frozenset[TurnStatus]] = {
+        TurnStatus.WAITING_ANSWER: frozenset({TurnStatus.EVALUATING}),
+        TurnStatus.EVALUATING: frozenset({TurnStatus.COMPLETED, TurnStatus.FAILED}),
+        TurnStatus.COMPLETED: frozenset(),
+        TurnStatus.FAILED: frozenset(),
+    }
+
     def transition(self, current: InterviewStatus, target: InterviewStatus) -> None:
         if target not in self._allowed.get(current, frozenset()):
             raise InvalidInterviewTransitionError(
@@ -34,3 +41,12 @@ class InterviewStateMachine:
 
     def can_start(self, current: InterviewStatus) -> bool:
         return current == InterviewStatus.READY
+
+    def transition_turn(self, current: TurnStatus, target: TurnStatus) -> None:
+        if target not in self._allowed_turn.get(current, frozenset()):
+            raise InvalidInterviewTransitionError(
+                f"Cannot transition interview turn from {current.value} to {target.value}"
+            )
+
+    def can_answer(self, current: TurnStatus) -> bool:
+        return current == TurnStatus.WAITING_ANSWER

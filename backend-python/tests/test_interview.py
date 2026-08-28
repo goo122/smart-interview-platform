@@ -16,12 +16,18 @@ from app.modules.auth.domain import User
 from app.modules.interview.context import InterviewContext
 from app.modules.interview.dependencies import get_interview_service
 from app.modules.interview.domain import (
+    InterviewAnswer,
     InterviewDifficulty,
+    InterviewEvaluation,
     InterviewEvent,
+    InterviewProgress,
     InterviewQuestion,
     InterviewSession,
     InterviewStatus,
+    InterviewTurn,
     InterviewType,
+    TurnStatus,
+    TurnType,
     utc_now,
 )
 from app.modules.interview.exceptions import (
@@ -39,6 +45,9 @@ class InMemoryInterviewRepository:
         self.sessions: dict[UUID, InterviewSession] = {}
         self.questions: dict[UUID, list[InterviewQuestion]] = {}
         self.events: dict[UUID, list[InterviewEvent]] = {}
+        self.turns: dict[UUID, list[InterviewTurn]] = {}
+        self.answers: dict[UUID, InterviewAnswer] = {}
+        self.evaluations: dict[UUID, InterviewEvaluation] = {}
 
     async def create(self, session: InterviewSession) -> InterviewSession:
         self.sessions[session.id] = session
@@ -54,6 +63,7 @@ class InMemoryInterviewRepository:
                 created_at=utc_now(),
             )
         ]
+        self.turns[session.id] = []
         return session
 
     async def find_by_request(self, user_id: UUID, request_id: str) -> InterviewSession | None:
@@ -128,6 +138,24 @@ class InMemoryInterviewRepository:
         session = self.sessions[session_id]
         assert session.user_id == user_id
         if session.status == InterviewStatus.IN_PROGRESS:
+            if not self.turns[session.id]:
+                question = self.questions[session_id][0]
+                self.turns[session.id].append(
+                    InterviewTurn(
+                        id=uuid4(),
+                        session_id=session_id,
+                        question_id=question.id,
+                        parent_turn_id=None,
+                        sequence=1,
+                        turn_type=TurnType.PRIMARY,
+                        question_content=question.content,
+                        status=TurnStatus.WAITING_ANSWER,
+                        follow_up_depth=0,
+                        created_at=utc_now(),
+                        answered_at=None,
+                        evaluated_at=None,
+                    )
+                )
             return session
         if session.status != InterviewStatus.READY:
             raise InvalidInterviewTransitionError("not ready")
@@ -137,6 +165,23 @@ class InMemoryInterviewRepository:
         session.version += 1
         session.updated_at = session.started_at
         self.events[session.id].append(self._event(session, previous, session.status))
+        question = self.questions[session_id][0]
+        self.turns[session.id].append(
+            InterviewTurn(
+                id=uuid4(),
+                session_id=session_id,
+                question_id=question.id,
+                parent_turn_id=None,
+                sequence=1,
+                turn_type=TurnType.PRIMARY,
+                question_content=question.content,
+                status=TurnStatus.WAITING_ANSWER,
+                follow_up_depth=0,
+                created_at=utc_now(),
+                answered_at=None,
+                evaluated_at=None,
+            )
+        )
         return session
 
     async def cancel(self, session_id: UUID, user_id: UUID) -> InterviewSession:
@@ -163,6 +208,189 @@ class InMemoryInterviewRepository:
 
     async def list_events(self, session_id: UUID) -> list[InterviewEvent]:
         return self.events.get(session_id, [])
+
+    async def get_current_turn(self, session_id: UUID, user_id: UUID) -> InterviewTurn | None:
+        session = await self.get_for_user(session_id, user_id)
+        if session is None:
+            return None
+        active = [
+            turn
+            for turn in self.turns[session_id]
+            if turn.status in {TurnStatus.WAITING_ANSWER, TurnStatus.EVALUATING}
+        ]
+        return max(active, key=lambda turn: turn.sequence) if active else None
+
+    async def get_turn_for_user(self, turn_id: UUID, user_id: UUID) -> InterviewTurn | None:
+        for turns in self.turns.values():
+            for turn in turns:
+                if turn.id == turn_id:
+                    session = await self.get_for_user(turn.session_id, user_id)
+                    return turn if session else None
+        return None
+
+    async def list_turns(self, session_id: UUID, user_id: UUID) -> list[InterviewTurn]:
+        if await self.get_for_user(session_id, user_id) is None:
+            return []
+        return sorted(self.turns[session_id], key=lambda turn: turn.sequence)
+
+    async def find_answer_by_request(
+        self, session_id: UUID, user_id: UUID, request_id: str
+    ) -> InterviewProgress | None:
+        for answer in self.answers.values():
+            if (
+                answer.session_id == session_id
+                and answer.user_id == user_id
+                and answer.request_id == request_id
+            ):
+                turn = next(turn for turn in self.turns[session_id] if turn.id == answer.turn_id)
+                return InterviewProgress(
+                    session=self.sessions[session_id],
+                    turn=turn,
+                    answer=answer,
+                    evaluation=self.evaluations.get(turn.id),
+                )
+        return None
+
+    async def get_answer_for_turn(
+        self, turn_id: UUID, user_id: UUID
+    ) -> InterviewAnswer | None:
+        answer = self.answers.get(turn_id)
+        if answer is None or await self.get_for_user(answer.session_id, user_id) is None:
+            return None
+        return answer
+
+    async def get_evaluation_for_turn(
+        self, turn_id: UUID, user_id: UUID
+    ) -> InterviewEvaluation | None:
+        evaluation = self.evaluations.get(turn_id)
+        if evaluation is None:
+            return None
+        turn = await self.get_turn_for_user(turn_id, user_id)
+        return evaluation if turn else None
+
+    async def submit_answer(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        user_id: UUID,
+        content: str,
+        request_id: str,
+    ) -> InterviewProgress:
+        existing = await self.find_answer_by_request(session_id, user_id, request_id)
+        if existing:
+            return existing
+        turn = next(turn for turn in self.turns[session_id] if turn.id == turn_id)
+        if turn.status != TurnStatus.WAITING_ANSWER:
+            raise InvalidInterviewTransitionError("turn is not waiting")
+        answer = InterviewAnswer(
+            id=uuid4(),
+            turn_id=turn_id,
+            session_id=session_id,
+            user_id=user_id,
+            content=content,
+            request_id=request_id,
+            created_at=utc_now(),
+        )
+        turn.status = TurnStatus.EVALUATING
+        turn.answered_at = answer.created_at
+        self.answers[turn_id] = answer
+        return InterviewProgress(self.sessions[session_id], turn, answer, None)
+
+    async def count_follow_ups(self, session_id: UUID) -> int:
+        return sum(
+            turn.turn_type == TurnType.FOLLOW_UP for turn in self.turns[session_id]
+        )
+
+    async def recent_answers(self, session_id: UUID, before_sequence: int) -> list[str]:
+        values = [
+            self.answers[turn.id].content
+            for turn in sorted(self.turns[session_id], key=lambda item: item.sequence)
+            if turn.sequence < before_sequence and turn.id in self.answers
+        ]
+        return values[-3:]
+
+    async def persist_evaluation_and_progress(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        user_id: UUID,
+        evaluation: InterviewEvaluation,
+        decision_reason: str,
+        should_follow_up: bool,
+    ) -> InterviewSession:
+        del decision_reason
+        session = self.sessions[session_id]
+        turn = next(turn for turn in self.turns[session_id] if turn.id == turn_id)
+        if turn.id in self.evaluations:
+            return session
+        self.evaluations[turn_id] = evaluation
+        turn.status = TurnStatus.COMPLETED
+        turn.evaluated_at = utc_now()
+        if should_follow_up:
+            self.turns[session_id].append(
+                InterviewTurn(
+                    id=uuid4(),
+                    session_id=session_id,
+                    question_id=None,
+                    parent_turn_id=turn_id,
+                    sequence=len(self.turns[session_id]) + 1,
+                    turn_type=TurnType.FOLLOW_UP,
+                    question_content=evaluation.follow_up_question or "请进一步说明。",
+                    status=TurnStatus.WAITING_ANSWER,
+                    follow_up_depth=turn.follow_up_depth + 1,
+                    created_at=utc_now(),
+                    answered_at=None,
+                    evaluated_at=None,
+                )
+            )
+        else:
+            next_question = next(
+                (
+                    question
+                    for question in self.questions[session_id]
+                    if question.sequence == session.current_question_index + 2
+                ),
+                None,
+            )
+            if next_question is None:
+                session.status = InterviewStatus.COMPLETED
+                session.finished_at = utc_now()
+            else:
+                session.current_question_index += 1
+                self.turns[session_id].append(
+                    InterviewTurn(
+                        id=uuid4(),
+                        session_id=session_id,
+                        question_id=next_question.id,
+                        parent_turn_id=None,
+                        sequence=len(self.turns[session_id]) + 1,
+                        turn_type=TurnType.PRIMARY,
+                        question_content=next_question.content,
+                        status=TurnStatus.WAITING_ANSWER,
+                        follow_up_depth=0,
+                        created_at=utc_now(),
+                        answered_at=None,
+                        evaluated_at=None,
+                    )
+                )
+        return session
+
+    async def fail_evaluation(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        user_id: UUID,
+        failure_code: str,
+        failure_message: str,
+    ) -> InterviewSession:
+        del user_id
+        session = self.sessions[session_id]
+        turn = next(turn for turn in self.turns[session_id] if turn.id == turn_id)
+        turn.status = TurnStatus.FAILED
+        session.status = InterviewStatus.FAILED
+        session.failure_code = failure_code
+        session.failure_message = failure_message
+        return session
 
     @staticmethod
     def _event(

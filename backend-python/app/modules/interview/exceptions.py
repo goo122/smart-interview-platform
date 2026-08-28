@@ -36,3 +36,27 @@ class InterviewQuestionValidationError(InterviewPreparationError):
 
 class InterviewPreparationInProgressError(InvalidInterviewTransitionError):
     code = "interview_preparation_in_progress"
+
+
+class InterviewTurnNotFoundError(AppError):
+    status_code = 404
+    code = "interview_turn_not_found"
+
+
+class InterviewAnswerError(AppError):
+    status_code = 400
+    code = "invalid_interview_answer"
+
+
+class InterviewAnswerConflictError(AppError):
+    status_code = 409
+    code = "interview_answer_conflict"
+
+
+class InterviewEvaluationError(AppError):
+    status_code = 422
+    code = "interview_evaluation_failed"
+
+
+class InterviewEvaluationValidationError(InterviewEvaluationError):
+    code = "interview_evaluation_invalid"

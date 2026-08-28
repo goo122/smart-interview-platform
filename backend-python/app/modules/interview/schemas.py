@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.interview.domain import (
     InterviewDifficulty,
+    InterviewEvaluation,
+    InterviewProgress,
     InterviewQuestion,
     InterviewQuestionCitation,
     InterviewSession,
@@ -172,4 +174,107 @@ class InterviewPageResponse[T](BaseModel):
             size=size,
             current=current,
             pages=(total + size - 1) // size if size else 0,
+        )
+
+
+class SubmitInterviewAnswerRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    turn_id: UUID = Field(alias="turnId")
+    answer: str = Field(min_length=1)
+    request_id: str = Field(alias="requestId", min_length=1, max_length=128)
+
+
+class SubmitInterviewAnswerResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: UUID = Field(alias="sessionId")
+    turn_id: UUID = Field(alias="turnId")
+    status: str
+    request_id: str = Field(alias="requestId")
+
+
+class InterviewEvaluationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    turn_id: UUID = Field(alias="turnId")
+    overall_score: int = Field(alias="overallScore")
+    technical_score: int = Field(alias="technicalScore")
+    relevance_score: int = Field(alias="relevanceScore")
+    clarity_score: int = Field(alias="clarityScore")
+    depth_score: int = Field(alias="depthScore")
+    strengths: list[str]
+    weaknesses: list[str]
+    feedback: str
+    suggested_improvements: list[str] = Field(alias="suggestedImprovements")
+    should_follow_up: bool = Field(alias="shouldFollowUp")
+    follow_up_focus: str | None = Field(default=None, alias="followUpFocus")
+    follow_up_question: str | None = Field(default=None, alias="followUpQuestion")
+    created_at: datetime = Field(alias="createdAt")
+
+    @classmethod
+    def from_domain(cls, evaluation: InterviewEvaluation) -> "InterviewEvaluationResponse":
+        return cls(
+            id=evaluation.id,
+            turnId=evaluation.turn_id,
+            overallScore=evaluation.overall_score,
+            technicalScore=evaluation.technical_score,
+            relevanceScore=evaluation.relevance_score,
+            clarityScore=evaluation.clarity_score,
+            depthScore=evaluation.depth_score,
+            strengths=list(evaluation.strengths),
+            weaknesses=list(evaluation.weaknesses),
+            feedback=evaluation.feedback,
+            suggestedImprovements=list(evaluation.suggested_improvements),
+            shouldFollowUp=evaluation.llm_should_follow_up,
+            followUpFocus=evaluation.follow_up_focus,
+            followUpQuestion=evaluation.follow_up_question,
+            createdAt=evaluation.created_at,
+        )
+
+
+class InterviewTurnResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    turn_id: UUID = Field(alias="turnId")
+    session_id: UUID = Field(alias="sessionId")
+    question_id: UUID | None = Field(default=None, alias="questionId")
+    parent_turn_id: UUID | None = Field(default=None, alias="parentTurnId")
+    turn_type: str = Field(alias="turnType")
+    question: str
+    sequence: int
+    follow_up_depth: int = Field(alias="followUpDepth")
+    status: str
+    can_answer: bool = Field(alias="canAnswer")
+    answer: str | None = None
+    answer_request_id: str | None = Field(default=None, alias="answerRequestId")
+    answered_at: datetime | None = Field(default=None, alias="answeredAt")
+    evaluation: InterviewEvaluationResponse | None = None
+    created_at: datetime = Field(alias="createdAt")
+    evaluated_at: datetime | None = Field(default=None, alias="evaluatedAt")
+
+    @classmethod
+    def from_progress(cls, progress: InterviewProgress) -> "InterviewTurnResponse":
+        answer = progress.answer
+        evaluation = progress.evaluation
+        return cls(
+            turnId=progress.turn.id,
+            sessionId=progress.turn.session_id,
+            questionId=progress.turn.question_id,
+            parentTurnId=progress.turn.parent_turn_id,
+            turnType=progress.turn.turn_type.value,
+            question=progress.turn.question_content,
+            sequence=progress.turn.sequence,
+            followUpDepth=progress.turn.follow_up_depth,
+            status=progress.turn.status.value,
+            canAnswer=progress.turn.status.value == "WAITING_ANSWER",
+            answer=answer.content if answer else None,
+            answerRequestId=answer.request_id if answer else None,
+            answeredAt=progress.turn.answered_at,
+            evaluation=InterviewEvaluationResponse.from_domain(evaluation)
+            if evaluation
+            else None,
+            createdAt=progress.turn.created_at,
+            evaluatedAt=progress.turn.evaluated_at,
         )

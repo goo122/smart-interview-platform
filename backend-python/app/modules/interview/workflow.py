@@ -2,6 +2,8 @@ import asyncio
 from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
+from langgraph.graph import END, START, StateGraph
+
 from app.ai.interview import (
     GeneratedQuestionSet,
     InterviewQuestionGeneratorPort,
@@ -22,12 +24,6 @@ from app.modules.interview.exceptions import (
 )
 from app.modules.interview.repository import InterviewRepository
 
-try:
-    from langgraph.graph import END, START, StateGraph  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - exercised only when optional dependency is absent
-    END = START = None
-    StateGraph = None
-
 
 class InterviewGraphState(TypedDict, total=False):
     user_id: UUID
@@ -41,7 +37,7 @@ class InterviewGraphState(TypedDict, total=False):
 
 
 class InterviewPreparationWorkflow:
-    """LangGraph-backed preparation orchestration with a deterministic fallback."""
+    """LangGraph-backed preparation orchestration."""
 
     def __init__(
         self,
@@ -57,10 +53,7 @@ class InterviewPreparationWorkflow:
     async def prepare(self, user_id: UUID, session_id: UUID) -> InterviewSession:
         state: InterviewGraphState = {"user_id": user_id, "session_id": session_id}
         try:
-            if self._graph is None:
-                await self._run_fallback(state)
-            else:
-                await self._graph.ainvoke(state)
+            await self._graph.ainvoke(state)
         except asyncio.CancelledError:
             try:
                 await self._repository.cancel(session_id, user_id)
@@ -81,8 +74,6 @@ class InterviewPreparationWorkflow:
         return result
 
     def _build_graph(self) -> Any:
-        if StateGraph is None or START is None or END is None:
-            return None
         builder = StateGraph(InterviewGraphState)
         builder.add_node("load_session", self._load_session)
         builder.add_node("validate_knowledge_base", self._validate_knowledge_base)
@@ -108,25 +99,6 @@ class InterviewPreparationWorkflow:
         builder.add_edge("persist_questions_and_citations", "mark_ready")
         builder.add_edge("mark_ready", END)
         return builder.compile()
-
-    async def _run_fallback(self, state: InterviewGraphState) -> None:
-        for node in (
-            self._load_session,
-            self._validate_knowledge_base,
-            self._mark_preparing,
-        ):
-            await node(state)
-        if state.get("skip"):
-            return
-        for node in (
-            self._retrieve_resume_context,
-            self._build_generation_context,
-            self._generate_questions,
-            self._validate_questions,
-            self._persist_questions,
-            self._mark_ready,
-        ):
-            await node(state)
 
     async def _load_session(self, state: InterviewGraphState) -> InterviewGraphState:
         session = await self._repository.get_for_user(state["session_id"], state["user_id"])

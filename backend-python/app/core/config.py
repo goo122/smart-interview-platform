@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     embedding_api_key: str | None = None
     embedding_base_url: str | None = None
     embedding_model: str | None = None
+    interview_max_follow_up_depth: int = Field(default=2, ge=0, le=10)
+    interview_follow_up_score_threshold: int = Field(default=70, ge=0, le=100)
+    interview_max_follow_ups_per_session: int = Field(default=5, ge=0, le=50)
+    interview_min_answer_length: int = Field(default=10, ge=1, le=10000)
+    interview_max_answer_length: int = Field(default=10000, ge=1, le=100000)
     database_url: PostgresDsn = PostgresDsn(
         "postgresql+asyncpg://postgres:local-development-only@localhost:5432/ai_interview"
     )
@@ -54,6 +59,10 @@ class Settings(BaseSettings):
             raise ValueError("rag_chunk_overlap must be smaller than rag_chunk_size")
         if self.rag_top_k > self.rag_max_top_k:
             raise ValueError("rag_top_k must not exceed rag_max_top_k")
+        if self.interview_min_answer_length > self.interview_max_answer_length:
+            raise ValueError(
+                "interview_min_answer_length must not exceed interview_max_answer_length"
+            )
         return self
 
 

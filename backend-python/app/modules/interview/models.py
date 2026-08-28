@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -128,6 +129,104 @@ class InterviewQuestionCitationModel(Base):
     score: Mapped[float] = mapped_column(Float, nullable=False)
     excerpt: Mapped[str] = mapped_column(Text, nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class InterviewTurnModel(Base):
+    __tablename__ = "interview_turns"
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence", name="uq_interview_turns_session_sequence"),
+        Index("ix_interview_turns_session_status_sequence", "session_id", "status", "sequence"),
+        CheckConstraint("follow_up_depth >= 0", name="ck_interview_turns_follow_up_depth"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    session_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    question_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_questions.id", ondelete="SET NULL"), nullable=True
+    )
+    parent_turn_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_turns.id", ondelete="SET NULL"), nullable=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    turn_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    question_content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    follow_up_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InterviewAnswerModel(Base):
+    __tablename__ = "interview_answers"
+    __table_args__ = (
+        UniqueConstraint("session_id", "request_id", name="uq_interview_answers_session_request"),
+        UniqueConstraint("turn_id", name="uq_interview_answers_turn"),
+        Index("ix_interview_answers_session_created_at", "session_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    turn_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class InterviewEvaluationModel(Base):
+    __tablename__ = "interview_evaluations"
+    __table_args__ = (
+        UniqueConstraint("turn_id", name="uq_interview_evaluations_turn"),
+        CheckConstraint(
+            "overall_score BETWEEN 0 AND 100", name="ck_interview_evaluations_overall_score"
+        ),
+        CheckConstraint(
+            "technical_score BETWEEN 0 AND 100", name="ck_interview_evaluations_technical_score"
+        ),
+        CheckConstraint(
+            "relevance_score BETWEEN 0 AND 100", name="ck_interview_evaluations_relevance_score"
+        ),
+        CheckConstraint(
+            "clarity_score BETWEEN 0 AND 100", name="ck_interview_evaluations_clarity_score"
+        ),
+        CheckConstraint(
+            "depth_score BETWEEN 0 AND 100", name="ck_interview_evaluations_depth_score"
+        ),
+        Index("ix_interview_evaluations_turn_created_at", "turn_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    turn_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_turns.id", ondelete="CASCADE"), nullable=False
+    )
+    overall_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    technical_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    relevance_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    clarity_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    depth_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    strengths: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    weaknesses: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    feedback: Mapped[str] = mapped_column(Text, nullable=False)
+    suggested_improvements: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    llm_should_follow_up: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    follow_up_focus: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    follow_up_question: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

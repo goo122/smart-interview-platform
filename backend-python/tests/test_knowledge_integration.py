@@ -11,6 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.ai.embedding import FakeEmbedding
+from app.ai.evaluation import FakeInterviewAnswerEvaluator, StructuredInterviewEvaluation
+from app.ai.followup import FakeFollowUpQuestionGenerator
 from app.ai.interview import FakeInterviewQuestionGenerator
 from app.core.config import Settings
 from app.infrastructure.storage.files import LocalFileStorage
@@ -23,8 +25,17 @@ from app.modules.chat.domain import MessageRole
 from app.modules.chat.domain import utc_now as chat_utc_now
 from app.modules.chat.models import ConversationModel, MessageCitationModel, MessageModel
 from app.modules.chat.repository import SqlAlchemyMessageRepository
-from app.modules.interview.context import InterviewContextProvider
-from app.modules.interview.domain import InterviewDifficulty, InterviewStatus, InterviewType
+from app.modules.interview.answer_service import InterviewAnswerService
+from app.modules.interview.context import (
+    InterviewContextProvider,
+    InterviewEvaluationContextProvider,
+)
+from app.modules.interview.domain import (
+    InterviewDifficulty,
+    InterviewStatus,
+    InterviewType,
+    TurnStatus,
+)
 from app.modules.interview.repository import SqlAlchemyInterviewRepository
 from app.modules.interview.service import InterviewService
 from app.modules.knowledge.context import ContextAssembler, ContextCitation
@@ -602,6 +613,183 @@ async def test_real_interview_preparation_retrieves_resume_generates_and_persist
         assert generator.calls == 1
         started = await service.start(user_id, created.id)
         assert started.status == InterviewStatus.IN_PROGRESS
+    finally:
+        await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_real_langgraph_answer_evaluation_follow_up_and_completion(
+    database_session: AsyncSession,
+) -> None:
+    session = database_session
+    user_id, base_id, document_id = uuid4(), uuid4(), uuid4()
+    embedding = FakeEmbedding()
+    settings = Settings(rag_similarity_threshold=0.0, interview_min_answer_length=3)
+    query_text = (
+        "岗位：Python 后端工程师\n岗位描述：负责 FastAPI 和 PostgreSQL\n"
+        "难度：MEDIUM\n题目数：3"
+    )
+    vector = embedding._embed(query_text, embedding.dimensions)
+    try:
+        session.add_all(
+            [
+                UserModel(
+                    id=user_id,
+                    username=f"answer-integration-{user_id.hex[:8]}",
+                    email=f"answer-integration-{user_id.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                KnowledgeBaseModel(id=base_id, user_id=user_id, name="Answer Resume"),
+                KnowledgeDocumentModel(
+                    id=document_id,
+                    knowledge_base_id=base_id,
+                    original_filename="resume.pdf",
+                    safe_filename="answer-resume.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/answer-resume.pdf",
+                    status=DocumentStatus.READY.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add(
+            KnowledgeChunkModel(
+                document_id=document_id,
+                chunk_index=0,
+                page_number=1,
+                content="FastAPI PostgreSQL 项目经验和性能指标",
+                token_count=6,
+                content_hash=uuid4().hex * 2,
+                embedding=vector,
+            )
+        )
+        await session.commit()
+        retriever = PgVectorRetriever(session)
+        context_provider = InterviewContextProvider(
+            SqlAlchemyKnowledgeRepository(session),
+            embedding,
+            retriever,
+            ContextAssembler(200, 50),
+            settings,
+        )
+        interview_repository = SqlAlchemyInterviewRepository(session)
+        prep_service = InterviewService(
+            interview_repository,
+            context_provider,
+            FakeInterviewQuestionGenerator(),
+            InlineTaskQueue(),
+            settings,
+        )
+        created = await prep_service.create_session(
+            user_id=user_id,
+            knowledge_base_id=base_id,
+            job_title="Python 后端工程师",
+            job_description="负责 FastAPI 和 PostgreSQL",
+            interview_type=InterviewType.TECHNICAL,
+            difficulty=InterviewDifficulty.MEDIUM,
+            question_count=3,
+            request_id="answer-flow",
+        )
+        await prep_service.start(user_id, created.id)
+        answer_service = InterviewAnswerService(
+            interview_repository,
+            InterviewEvaluationContextProvider(
+                SqlAlchemyKnowledgeRepository(session),
+                embedding,
+                retriever,
+                ContextAssembler(200, 50),
+                settings,
+            ),
+            FakeInterviewAnswerEvaluator(
+                output=StructuredInterviewEvaluation(
+                    overall_score=40,
+                    technical_score=40,
+                    relevance_score=50,
+                    clarity_score=50,
+                    depth_score=30,
+                    strengths=["有初步方案"],
+                    weaknesses=["缺少取舍说明"],
+                    feedback="需要进一步澄清技术取舍。",
+                    suggested_improvements=["补充指标"],
+                    should_follow_up=True,
+                    follow_up_focus="技术取舍",
+                )
+            ),
+            FakeFollowUpQuestionGenerator(),
+            InlineTaskQueue(),
+            settings,
+        )
+        first_turn = await answer_service.current_turn(user_id, created.id)
+        await answer_service.submit_answer(
+            user_id=user_id,
+            session_id=created.id,
+            turn_id=first_turn.turn.id,
+            answer="我负责异步架构设计并验证了性能指标。",
+            request_id="answer-flow-1",
+        )
+        follow_up = await answer_service.current_turn(user_id, created.id)
+        assert follow_up.turn.status == TurnStatus.WAITING_ANSWER
+        assert follow_up.turn.parent_turn_id == first_turn.turn.id
+        first_completed = await answer_service.get_turn(user_id, first_turn.turn.id)
+        assert first_completed.evaluation is not None
+
+        evaluator = answer_service._workflow._evaluator
+        assert isinstance(evaluator, FakeInterviewAnswerEvaluator)
+        evaluator.output = StructuredInterviewEvaluation(
+            overall_score=90,
+            technical_score=90,
+            relevance_score=90,
+            clarity_score=90,
+            depth_score=90,
+            strengths=["回答完整"],
+            weaknesses=["可继续量化"],
+            feedback="回答完整。",
+            suggested_improvements=["补充复盘"],
+            should_follow_up=False,
+        )
+        await answer_service.submit_answer(
+            user_id=user_id,
+            session_id=created.id,
+            turn_id=follow_up.turn.id,
+            answer="我补充了技术取舍、边界和上线结果。",
+            request_id="answer-flow-2",
+        )
+        next_turn = await answer_service.current_turn(user_id, created.id)
+        assert next_turn.turn.question_id is not None
+        await answer_service.submit_answer(
+            user_id=user_id,
+            session_id=created.id,
+            turn_id=next_turn.turn.id,
+            answer="第二题也完成了设计、实现和性能复盘。",
+            request_id="answer-flow-3",
+        )
+        completed = await interview_repository.get_for_user(created.id, user_id)
+        assert completed is not None
+        assert completed.status == InterviewStatus.IN_PROGRESS
+        final_turn = await answer_service.current_turn(user_id, created.id)
+        await answer_service.submit_answer(
+            user_id=user_id,
+            session_id=created.id,
+            turn_id=final_turn.turn.id,
+            answer="我完成了最后一个方案并总结了风险与收益。",
+            request_id="answer-flow-4",
+        )
+        completed = await interview_repository.get_for_user(created.id, user_id)
+        assert completed is not None
+        assert completed.status == InterviewStatus.COMPLETED
+        events = await interview_repository.list_events(created.id)
+        event_types = [event.event_type for event in events]
+        assert "ANSWER_SUBMITTED" in event_types
+        assert "ANSWER_EVALUATED" in event_types
+        assert "FOLLOW_UP_CREATED" in event_types
+        assert "INTERVIEW_COMPLETED" in event_types
     finally:
         await session.rollback()
         await session.execute(delete(UserModel).where(UserModel.id == user_id))

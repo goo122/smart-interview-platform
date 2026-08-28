@@ -15,10 +15,13 @@ from app.modules.chat.models import (  # noqa: F401
     MessageModel,
 )
 from app.modules.interview.models import (  # noqa: F401
+    InterviewAnswerModel,
+    InterviewEvaluationModel,
     InterviewEventModel,
     InterviewQuestionCitationModel,
     InterviewQuestionModel,
     InterviewSessionModel,
+    InterviewTurnModel,
 )
 from app.modules.knowledge.models import (  # noqa: F401
     KnowledgeBaseModel,
