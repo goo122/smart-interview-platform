@@ -31,6 +31,12 @@ OpenAPI 类型由后端应用生成，输出为 `src/api/generated.ts`，不要�
 
 Axios 客户端会自动附加 Bearer Token，并使用 single-flight 机制刷新过期 Access Token。Refresh Token 仅存储在浏览器本地存储中，密码不会写入状态管理或日志。
 
+## 知识库与 RAG 聊天
+
+`/chat` 页面接入 `/api/xunzhi/v1/knowledge-bases`、文档上传和 `/api/xunzhi/v1/ai` 会话接口。知识库文档处于 `READY` 后才会出现在 RAG 选择器中；`PENDING`/`PROCESSING` 会自动轮询，`FAILED` 会停止轮询并展示安全错误。
+
+聊天使用 POST SSE（`start`、`delta`、`complete`、`error`）而不是原生 EventSource，支持 AbortController、401 刷新重试、稳定 `requestId`、跨网络块 UTF-8 和引用展开。普通对话不会发送 `knowledgeBaseId`，RAG 对话发送 `knowledgeBaseId` 与限定范围内的 `topK`。
+
 ## 验证
 
 ```powershell

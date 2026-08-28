@@ -39,9 +39,29 @@ const selected = [
   { exportName: "RegisterRequest", schemaName: "RegisterRequest" },
   { exportName: "TokenResponse", schemaName: "TokenResponse" },
   { exportName: "UserResponse", schemaName: "UserResponse" },
+  { exportName: "KnowledgeBaseCreateRequest", schemaName: "KnowledgeBaseCreateRequest" },
+  { exportName: "KnowledgeBaseResponse", schemaName: "KnowledgeBaseResponse" },
+  { exportName: "KnowledgeDocumentResponse", schemaName: "KnowledgeDocumentResponse" },
+  { exportName: "KnowledgeBasePage", schemaName: "PageResponse_KnowledgeBaseResponse_" },
+  { exportName: "KnowledgeDocumentPage", schemaName: "PageResponse_KnowledgeDocumentResponse_" },
+  { exportName: "ChatRequest", schemaName: "ChatRequest" },
+  { exportName: "CreateConversationRequest", schemaName: "CreateConversationRequest" },
+  { exportName: "CreateConversationResponse", schemaName: "CreateConversationResponse" },
+  { exportName: "ConversationResponse", schemaName: "ConversationResponse" },
+  { exportName: "ChatMessageResponse", schemaName: "app__modules__chat__schemas__MessageResponse" },
+  { exportName: "CitationResponse", schemaName: "CitationResponse" },
+  { exportName: "ConversationPage", schemaName: "PageResponse_ConversationResponse_" },
+  { exportName: "ChatHistoryPage", schemaName: "PageResponse_MessageResponse_" },
+  { exportName: "DeleteResponse", schemaName: "DeleteResponse" },
+  { exportName: "EmptyResponse", schemaName: "EmptyResponse" },
 ];
 
-const refName = (ref) => `components["schemas"]["${ref.split("/").at(-1)}"]`;
+const exportNameBySchema = new Map(selected.map((entry) => [entry.schemaName, entry.exportName]));
+const refName = (ref) => {
+  const schemaName = ref.split("/").at(-1);
+  const exportName = exportNameBySchema.get(schemaName) ?? schemaName;
+  return `components["schemas"]["${exportName}"]`;
+};
 const schemaType = (schema) => {
   if (!schema) return "unknown";
   if (schema.$ref) return refName(schema.$ref);
@@ -51,6 +71,7 @@ const schemaType = (schema) => {
     return (schema.anyOf ?? schema.oneOf).map(schemaType).join(" | ");
   }
   if (schema.type === "array") return `Array<${schemaType(schema.items)}>`;
+  if (schema.type === "null") return "null";
   if (schema.type === "object" || schema.properties) {
     const required = new Set(schema.required ?? []);
     const properties = Object.entries(schema.properties ?? {}).map(

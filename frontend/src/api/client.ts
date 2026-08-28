@@ -59,6 +59,8 @@ const refreshAccessToken = async (): Promise<string | null> => {
   return refreshPromise;
 };
 
+export const refreshAccessTokenForSse = refreshAccessToken;
+
 apiClient.interceptors.request.use((config) => {
   const token = tokenStore.getAccessToken();
   if (token && !config.headers.Authorization && !isPublicAuthRequest(config)) {

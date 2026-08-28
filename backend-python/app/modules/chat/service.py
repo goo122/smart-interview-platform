@@ -319,4 +319,5 @@ def _citation_data(citation: Any) -> dict[str, Any]:
         "page_number": citation.page_number,
         "chunk_id": str(citation.chunk_id),
         "score": citation.score,
+        "excerpt": citation.excerpt,
     }
