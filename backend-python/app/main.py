@@ -4,6 +4,8 @@ from typing import cast
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ExceptionHandler
 
@@ -77,8 +79,31 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
-        """Return process liveness; dependency readiness checks will be added separately."""
+        """Keep the original health endpoint as a liveness-compatible alias."""
 
+        return {"status": "ok"}
+
+    @app.get("/health/live", tags=["system"])
+    async def health_live() -> dict[str, str]:
+        """Return process liveness without contacting external dependencies."""
+
+        return {"status": "ok"}
+
+    @app.get("/health/ready", response_model=None, tags=["system"])
+    async def health_ready() -> JSONResponse | dict[str, str]:
+        """Verify database and Redis connectivity without exposing configuration."""
+
+        database_engine = getattr(app.state, "database_engine", None)
+        redis = getattr(app.state, "redis", None)
+        if database_engine is None or redis is None:
+            return JSONResponse(status_code=503, content={"status": "not_ready"})
+        try:
+            async with database_engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+            if not await redis.ping():
+                raise RuntimeError("Redis did not respond")
+        except Exception:
+            return JSONResponse(status_code=503, content={"status": "not_ready"})
         return {"status": "ok"}
 
     return app

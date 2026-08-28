@@ -1,0 +1,52 @@
+name: interviewplatform-e2e
+
+services:
+  migrate:
+    env_file:
+      - ./backend-python/.env.example
+    environment:
+      APP_ENV: test
+      APP_AI_PROVIDER: fake
+      APP_EMBEDDING_PROVIDER: fake
+      APP_AI_FAKE_MODE: follow_up
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:e2e-only@postgres:5432/ai_interview
+      APP_REDIS_URL: redis://redis:6379/0
+
+  api:
+    env_file:
+      - ./backend-python/.env.example
+    environment:
+      APP_ENV: test
+      APP_AI_PROVIDER: fake
+      APP_EMBEDDING_PROVIDER: fake
+      APP_AI_FAKE_MODE: follow_up
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:e2e-only@postgres:5432/ai_interview
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_KNOWLEDGE_STORAGE_DIR: /app/storage
+    volumes:
+      - knowledge-storage-e2e:/app/storage
+    ports:
+      - "18000:8000"
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: e2e-only
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres-data-e2e:/var/lib/postgresql/data
+
+  redis:
+    ports:
+      - "56379:6379"
+    volumes:
+      - redis-data-e2e:/data
+
+  frontend:
+    ports:
+      - "18080:80"
+
+volumes:
+  postgres-data-e2e:
+  redis-data-e2e:
+  knowledge-storage-e2e:

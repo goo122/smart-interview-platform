@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test": "vitest",
     "test:run": "vitest --run",
+    "test:e2e": "playwright test",
     "api:generate": "node scripts/generate-openapi.mjs",
     "check": "npm run lint && npm run typecheck && npm run test:run && npm run build"
   },
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^24.10.13",

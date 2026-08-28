@@ -5,3 +5,6 @@ dist/
 !.env.example
 *.log
 .vite/
+test-results/
+playwright-report/
+blob-report/

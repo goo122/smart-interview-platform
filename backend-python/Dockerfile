@@ -6,10 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md alembic.ini ./
 RUN pip install .
 
 COPY app ./app
+COPY alembic ./alembic
 
 RUN useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
@@ -19,7 +20,6 @@ USER appuser
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health')"
+    CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready')"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-

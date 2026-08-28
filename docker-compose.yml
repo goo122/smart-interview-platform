@@ -1,12 +1,31 @@
 name: interviewplatform
 
 services:
+  migrate:
+    build:
+      context: ./backend-python
+    env_file:
+      - ./backend-python/.env
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/ai_interview
+      APP_REDIS_URL: redis://redis:6379/0
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
   frontend:
     build:
       context: ./frontend
     ports:
       - "8080:80"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
 
@@ -21,18 +40,20 @@ services:
       APP_REDIS_URL: redis://redis:6379/0
       APP_KNOWLEDGE_STORAGE_DIR: /app/storage
       APP_EMBEDDING_DIMENSIONS: ${APP_EMBEDDING_DIMENSIONS:-1536}
-    tmpfs:
-      - /app/storage:uid=10001,gid=10001,mode=0750
+    volumes:
+      - knowledge-storage:/app/storage
     ports:
       - "8000:8000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
       test:
-        ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health')"]
+        ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -69,3 +90,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  knowledge-storage:
