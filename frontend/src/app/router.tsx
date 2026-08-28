@@ -1,39 +1,94 @@
-import { lazy, Suspense } from "react";
-import { createBrowserRouter, Navigate } from "react-router-dom";
-import { AppLayout } from "@/components/AppLayout";
-import { AuthGuard } from "@/features/auth/AuthGuard";
-import { AuthPage } from "@/pages/AuthPage";
-import { HomePage } from "@/pages/HomePage";
-import { ChatPage } from "@/pages/chat/ChatPage";
-import { InterviewSetupPage } from "@/pages/interview/InterviewSetupPage";
-import { InterviewSessionPage } from "@/pages/interview/InterviewSessionPage";
+import { Suspense, lazy, type ReactNode } from "react";
+import {
+  Navigate,
+  createBrowserRouter,
+  type RouteObject,
+} from "react-router-dom";
+import { Loader2 } from "lucide-react";
+import AuthGuard from "@/components/auth/AuthGuard";
+import AppLayout from "@/layouts/AppLayout";
+import { ROUTES } from "@/lib/constants";
 
-const InterviewReportsPage = lazy(() => import("@/pages/interview/InterviewReportsPage").then((module) => ({ default: module.InterviewReportsPage })));
-const InterviewReportDetailPage = lazy(() => import("@/pages/interview/InterviewReportDetailPage").then((module) => ({ default: module.InterviewReportDetailPage })));
-const InterviewSessionReportPage = lazy(() => import("@/pages/interview/InterviewSessionReportPage").then((module) => ({ default: module.InterviewSessionReportPage })));
+const AuthPage = lazy(() => import("@/pages/auth/AuthPage"));
+const MarketingHomePage = lazy(
+  () => import("@/pages/marketing/MarketingHomePage"),
+);
+const ChatPage = lazy(() => import("@/pages/chat/ChatPage"));
+const InterviewIntroPage = lazy(
+  () => import("@/pages/interview/InterviewIntroPage"),
+);
+const InterviewPage = lazy(() => import("@/pages/interview/InterviewPage"));
+const InterviewReportPage = lazy(
+  () => import("@/pages/interview/InterviewReportPage"),
+);
+const InterviewReportDetailPage = lazy(
+  () => import("@/pages/interview/InterviewReportDetailPage"),
+);
 
-function LazyReportPage({ children }: { children: React.ReactNode }) {
-  return <Suspense fallback={<div className="loading-screen"><span className="spinner" />正在加载报告页面…</div>}>{children}</Suspense>;
+function RouteLoadingScreen() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center bg-white">
+      <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+    </div>
+  );
 }
 
-export const appRouter = createBrowserRouter([
+const withRouteSuspense = (node: ReactNode) => (
+  <Suspense fallback={<RouteLoadingScreen />}>{node}</Suspense>
+);
+
+export const appRoutes: RouteObject[] = [
   {
+    path: ROUTES.home,
     element: <AppLayout />,
     children: [
-      { path: "/", element: <HomePage /> },
-      { path: "/auth", element: <AuthPage /> },
+      {
+        index: true,
+        element: withRouteSuspense(<MarketingHomePage />),
+      },
+      {
+        path: ROUTES.auth,
+        element: withRouteSuspense(<AuthPage />),
+      },
       {
         element: <AuthGuard />,
         children: [
-          { path: "/chat", element: <ChatPage /> },
-          { path: "/interview", element: <InterviewSetupPage /> },
-          { path: "/interview/:sessionId", element: <InterviewSessionPage /> },
-          { path: "/interview/reports", element: <LazyReportPage><InterviewReportsPage /></LazyReportPage> },
-          { path: "/interview/reports/:reportId", element: <LazyReportPage><InterviewReportDetailPage /></LazyReportPage> },
-          { path: "/interview/:sessionId/report", element: <LazyReportPage><InterviewSessionReportPage /></LazyReportPage> },
+          {
+            path: ROUTES.interviewIntro,
+            element: withRouteSuspense(<InterviewIntroPage />),
+          },
+          {
+            path: ROUTES.interviewRoom,
+            element: withRouteSuspense(<InterviewPage />),
+          },
+          {
+            path: `${ROUTES.interviewRoom}/:sessionId`,
+            element: withRouteSuspense(<InterviewPage />),
+          },
+          {
+            path: ROUTES.interviewReport,
+            element: withRouteSuspense(<InterviewReportPage />),
+          },
+          {
+            path: ROUTES.interviewReportDetail,
+            element: withRouteSuspense(<InterviewReportDetailPage />),
+          },
+          {
+            path: `${ROUTES.chat}/:sessionId?`,
+            element: withRouteSuspense(<ChatPage />),
+          },
+          {
+            path: ROUTES.questionBank,
+            element: <Navigate to={ROUTES.chat} replace />,
+          },
+          {
+            path: ROUTES.questionBankManage,
+            element: <Navigate to={ROUTES.chat} replace />,
+          },
         ],
       },
-      { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
-]);
+];
+
+export const appRouter = createBrowserRouter(appRoutes);

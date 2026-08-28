@@ -1,16 +1,21 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const backendRoot = path.resolve(frontendRoot, "..", "backend-python");
-const python =
-  process.env.PYTHON ||
-  process.env.PYTHON3 ||
-  (process.platform === "win32"
-    ? path.join(backendRoot, ".venv312", "Scripts", "python.exe")
-    : path.join(backendRoot, ".venv312", "bin", "python"));
+const backendCandidates = [
+  path.resolve(frontendRoot, "..", "backend-python"),
+  path.resolve(frontendRoot, "..", "..", "backend-python"),
+];
+const backendRoot = backendCandidates.find((candidate) => existsSync(candidate)) ?? backendCandidates[0];
+const projectPython = process.platform === "win32"
+  ? path.join(backendRoot, ".venv312", "Scripts", "python.exe")
+  : path.join(backendRoot, ".venv312", "bin", "python");
+const python = existsSync(projectPython)
+  ? projectPython
+  : process.env.PYTHON || process.env.PYTHON3 || "python";
 const exportCode = [
   "import json",
   "from app.main import app",
@@ -22,12 +27,27 @@ const result = spawnSync(python, ["-c", exportCode], {
   encoding: "utf8",
 });
 
-if (result.status !== 0) {
-  process.stderr.write(result.stderr || "Unable to export FastAPI OpenAPI schema.\n");
-  process.exit(result.status ?? 1);
+let spec;
+if (result.status === 0) {
+  spec = JSON.parse(result.stdout);
+} else {
+  const schemaUrl = process.env.OPENAPI_URL || "http://127.0.0.1:8000/openapi.json";
+  try {
+    const response = await fetch(schemaUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    spec = await response.json();
+    console.warn(`Python environment unavailable; generated types from ${schemaUrl}.`);
+  } catch (error) {
+    process.stderr.write(
+      result.stderr ||
+        `Unable to export FastAPI OpenAPI schema locally or fetch ${schemaUrl}: ${error.message}\n`,
+    );
+    process.exit(result.status ?? 1);
+  }
 }
 
-const spec = JSON.parse(result.stdout);
 const schemas = spec.components?.schemas ?? {};
 const selected = [
   { exportName: "LoginRequest", schemaName: "LoginRequest" },
