@@ -1,10 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { AppError, ErrorCode } from "@/lib/errors";
 import {
+  buildResumeKnowledgeBaseName,
   type AnswerInterviewQuestionResult,
   interviewService,
   normalizeInterviewAnswer,
 } from "@/services/interviewService";
+
+describe("buildResumeKnowledgeBaseName", () => {
+  it("uses the stable request id to avoid knowledge-base name conflicts", () => {
+    const first = buildResumeKnowledgeBaseName(
+      "AI应用开发工程师简历.pdf",
+      "request-1234567890",
+    );
+    const repeated = buildResumeKnowledgeBaseName(
+      "AI应用开发工程师简历.pdf",
+      "request-1234567890",
+    );
+    const next = buildResumeKnowledgeBaseName(
+      "AI应用开发工程师简历.pdf",
+      "request-abcdefghij",
+    );
+
+    expect(first).toBe(repeated);
+    expect(first).not.toBe(next);
+  });
+});
 
 describe("normalizeInterviewAnswer", () => {
   it("keeps isFollowUp and followUpNeeded independent", () => {

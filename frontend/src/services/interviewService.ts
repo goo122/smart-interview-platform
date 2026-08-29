@@ -289,6 +289,16 @@ const createRequestId = () => {
   return `interview-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
+export const buildResumeKnowledgeBaseName = (
+  filename: string,
+  requestId?: string,
+) => {
+  const suffix = (requestId || createRequestId())
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 10);
+  return `简历-${toSafeResumeBaseName(filename)}-${suffix}`;
+};
+
 const toRecord = (value: unknown): UnknownRecord =>
   value && typeof value === "object" ? (value as UnknownRecord) : {};
 
@@ -818,7 +828,7 @@ export const interviewService = {
     options: PrepareInterviewSessionOptions = {},
   ): Promise<InterviewSessionResponse> => {
     const knowledgeBase = await knowledgeApi.createBase({
-      name: `简历-${toSafeResumeBaseName(file.name)}`,
+      name: buildResumeKnowledgeBaseName(file.name, options.requestId),
       description: "由面试页上传的简历知识库",
     });
 
