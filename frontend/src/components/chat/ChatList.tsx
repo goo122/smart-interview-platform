@@ -51,6 +51,7 @@ function ChatList({
                 }
                 progressSteps={msg.progressSteps}
                 activeProgressStep={msg.activeProgressStep}
+                citations={msg.citations}
                 assistantAvatarSrc={assistantAvatarSrc}
               />
             </motion.div>

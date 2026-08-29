@@ -31,6 +31,8 @@ export default function SidebarUserMenu({
     <Popover>
       <PopoverTrigger asChild>
         <button
+          type="button"
+          aria-label="用户菜单"
           className={cn(
             "w-full flex items-center p-2 rounded-lg transition-colors hover:bg-slate-100 outline-none",
             isCollapsed ? "justify-center" : "gap-3",

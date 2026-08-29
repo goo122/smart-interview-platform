@@ -1,4 +1,5 @@
 import { type ChatRole } from "@/lib/constants";
+import type { AiCitation } from "@/types/ai";
 
 export const CHAT_MESSAGE_STATUS = {
   idle: "idle",
@@ -38,4 +39,5 @@ export type ChatMessage = {
   tts?: ChatMessageTts;
   progressSteps?: string[];
   activeProgressStep?: number;
+  citations?: AiCitation[];
 };

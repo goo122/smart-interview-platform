@@ -6,7 +6,7 @@ import { useChatRouteState } from "@/hooks/chat/useChatRouteState";
 import { useChatSendFlow } from "@/hooks/chat/useChatSendFlow";
 import { resetChatRuntime } from "@/store/slices/chatSlice";
 
-export function useChatPageController() {
+export function useChatPageController(options?: { knowledgeBaseId?: string | null }) {
   const dispatch = useAppDispatch();
   const {
     routeSessionId,
@@ -22,6 +22,7 @@ export function useChatPageController() {
     useChatSendFlow({
       routeSessionId,
       navigateToSession,
+      knowledgeBaseId: options?.knowledgeBaseId,
     });
   const { selectedModel, setSelectedModel, models } = useModelList(initialModel);
   const { isHistoryLoading } = useChatHistoryLoader({

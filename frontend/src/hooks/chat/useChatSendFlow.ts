@@ -20,6 +20,7 @@ import {
   appendAssistantChunk,
   appendAssistantPlaceholder,
   appendAssistantReasoningChunk,
+  setAssistantCitations,
   appendUserMessage,
   failAssistantMessage,
   finishAssistantMessage,
@@ -35,6 +36,7 @@ type SendMessageOptions = {
 
 type UseChatSendFlowOptions = {
   routeSessionId: string | null;
+  knowledgeBaseId?: string | null;
   navigateToSession: (
     sessionId: string,
     options?: { replace?: boolean },
@@ -43,6 +45,7 @@ type UseChatSendFlowOptions = {
 
 export function useChatSendFlow({
   routeSessionId,
+  knowledgeBaseId,
   navigateToSession,
 }: UseChatSendFlowOptions) {
   const dispatch = useAppDispatch();
@@ -134,9 +137,13 @@ export function useChatSendFlow({
         await aiService.streamChat(
           {
             sessionId: outbound.sessionId,
+            requestId: outbound.requestId,
             inputMessage: outbound.content,
             userName: currentUser?.username || "Guest",
             aiId: outbound.aiId,
+            knowledgeBaseId: outbound.knowledgeBaseId,
+            topK: 5,
+            similarityThreshold: 0,
           },
           abortController.signal,
           {
@@ -151,6 +158,17 @@ export function useChatSendFlow({
                 return;
               }
               reasoningLimiter?.push(chunk);
+            },
+            onComplete: ({ citations }) => {
+              if (!isActiveRequest() || !citations) {
+                return;
+              }
+              dispatch(
+                setAssistantCitations({
+                  id: outbound.assistantMessageId,
+                  citations,
+                }),
+              );
             },
             onDone: () => {
               if (!isActiveRequest()) {
@@ -291,6 +309,7 @@ export function useChatSendFlow({
               assistantMessageId: assistantMessage.id,
               content: nextContent,
               aiId,
+              knowledgeBaseId,
             }),
           );
           return;
@@ -302,6 +321,7 @@ export function useChatSendFlow({
           assistantMessageId: assistantMessage.id,
           content: nextContent,
           aiId,
+          knowledgeBaseId,
         });
       } catch (error: unknown) {
         console.error("Chat error:", error);
@@ -325,6 +345,7 @@ export function useChatSendFlow({
       pendingOutbound,
       queryClient,
       routeSessionId,
+      knowledgeBaseId,
       streamMessage,
     ],
   );

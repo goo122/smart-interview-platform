@@ -1,6 +1,6 @@
 import { CHAT_ROLES, ROUTES } from "@/lib/constants";
 import { CHAT_MESSAGE_STATUS, type ChatMessage } from "@/lib/chat";
-import type { AiMessageHistory, AiProperty } from "@/types/ai";
+import type { AiMessageHistoryWithCitations, AiProperty } from "@/types/ai";
 
 export type ChatPageLocationState = {
   initialQuery?: string;
@@ -23,7 +23,7 @@ export const normalizeInitialQuery = (value: unknown) => {
 };
 
 export const normalizeHistoryMessages = (
-  messages: AiMessageHistory[] | null | undefined,
+  messages: AiMessageHistoryWithCitations[] | null | undefined,
 ): ChatMessage[] => {
   return (messages ?? [])
     .map((message) => ({
@@ -36,6 +36,7 @@ export const normalizeHistoryMessages = (
       status: message.errorMessage
         ? CHAT_MESSAGE_STATUS.error
         : CHAT_MESSAGE_STATUS.done,
+      citations: message.citations,
     }))
     .sort((a, b) => a.timestamp - b.timestamp);
 };

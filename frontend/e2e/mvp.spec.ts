@@ -1,22 +1,25 @@
 import { expect, test } from "@playwright/test";
 
 const createSyntheticPdf = () => {
+  const content = "BT /F1 18 Tf 72 720 Td (Synthetic resume for E2E testing) Tj ET";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    "<< /Length 62 >>\nstream\nBT /F1 18 Tf 72 720 Td (Synthetic resume for E2E testing) Tj ET\nendstream",
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
   ];
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
   objects.forEach((object, index) => {
-    offsets.push(pdf.length);
+    offsets.push(Buffer.byteLength(pdf, "ascii"));
     pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
   });
-  const xrefOffset = pdf.length;
+  const xrefOffset = Buffer.byteLength(pdf, "ascii");
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  offsets.slice(1).forEach((offset) => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  });
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
   return Buffer.from(pdf, "ascii");
 };
@@ -28,41 +31,44 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   const knowledgeBase = `E2E 简历 ${unique}`;
 
   await page.goto("/auth");
-  await page.getByRole("tab", { name: "注册" }).click();
-  await page.getByLabel("用户名").fill(username);
-  await page.getByLabel("邮箱").fill(email);
-  await page.getByLabel("密码", { exact: true }).fill("safe-password-123");
-  await page.getByLabel("确认密码").fill("safe-password-123");
+  await page.getByRole("button", { name: "注册", exact: true }).click();
+  await page.locator('input[name="username"]').fill(username);
+  await page.locator('input[name="email"]').fill(email);
+  await page.locator('input[name="password"]').fill("safe-password-123");
+  await page.getByPlaceholder("再次输入密码").fill("safe-password-123");
   await page.getByRole("button", { name: "注册并开始" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("button", { name: "登录进入" })).toBeVisible();
 
-  await page.getByRole("button", { name: "退出" }).click();
-  await expect(page).toHaveURL(/\/auth$/);
-  await page.getByLabel("邮箱或用户名").fill(email);
-  await page.getByLabel("密码", { exact: true }).fill("safe-password-123");
+  await page.locator('input[name="username"]').fill(email);
+  await page.locator('input[name="password"]').fill("safe-password-123");
   await page.getByRole("button", { name: "登录进入" }).click();
   await expect(page).toHaveURL(/\/$/);
 
   await page.goto("/chat");
   await page.getByPlaceholder("新知识库名称").fill(knowledgeBase);
-  await page.getByRole("button", { name: "+ 创建知识库" }).click();
-  await expect(page.getByRole("button", { name: new RegExp(knowledgeBase) })).toBeVisible();
-  await page.getByRole("button", { name: new RegExp(knowledgeBase) }).click();
+  await page.getByRole("button", { name: "创建知识库" }).click();
+  const knowledgeBaseButton = page.getByRole("button", {
+    name: new RegExp(`${knowledgeBase} (?:待上传|已就绪)$`),
+  });
+  await expect(knowledgeBaseButton).toBeVisible();
+  await knowledgeBaseButton.click();
   await page.locator('label.upload-button input[type="file"]').setInputFiles({
     name: "synthetic-resume.pdf",
     mimeType: "application/pdf",
     buffer: createSyntheticPdf(),
   });
-  await expect(page.getByText("已就绪")).toBeVisible({ timeout: 60_000 });
+  await expect(
+    page.getByRole("button", { name: new RegExp(`${knowledgeBase} 已就绪$`) }),
+  ).toBeVisible({ timeout: 60_000 });
   await page.reload();
   await expect(page.getByText("synthetic-resume.pdf")).toBeVisible();
 
-  await page.getByLabel("知识库").selectOption({ label: knowledgeBase });
   const streamResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST" && response.url().includes("/chat"),
   );
-  await page.locator('textarea[placeholder^="输入你的问题"]').fill("请根据简历总结我的技术经历");
-  await page.getByRole("button", { name: "发送" }).click();
+  const composer = page.locator('textarea[placeholder="今天我能怎么帮助你？"]');
+  await composer.fill("Synthetic resume for E2E testing");
+  await composer.press("Enter");
   const streamResponse = await streamResponsePromise;
   expect(streamResponse.ok()).toBeTruthy();
   const streamBody = (await streamResponse.body()).toString("utf8");
@@ -75,35 +81,128 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   await page.reload();
   await expect(page.getByText("这是开发环境的模拟回答。", { exact: false })).toBeVisible({ timeout: 30_000 });
 
-  await page.goto("/interview");
-  await page.getByLabel("简历知识库").selectOption({ label: knowledgeBase });
-  await page.getByLabel("岗位名称").fill("后端工程师");
-  await page.getByLabel("岗位描述").fill("负责服务端开发、稳定性建设和性能优化。");
-  await page.getByRole("button", { name: "创建面试" }).click();
-  await expect(page).toHaveURL(/\/interview\/[^/]+$/);
-  await expect(page.getByRole("button", { name: "开始面试" })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("button", { name: "开始面试" }).click();
-  await expect(page.getByText("PRIMARY · 基础题")).toBeVisible({ timeout: 30_000 });
+  const token = await page.evaluate(() => localStorage.getItem("token"));
+  expect(token).toBeTruthy();
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  const apiUrl = (path: string) =>
+    new URL(path, process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5174").toString();
+  const apiGet = async (path: string) => {
+    const response = await page.request.get(apiUrl(path), { headers });
+    expect(response.ok()).toBeTruthy();
+    return response.json() as Promise<Record<string, unknown>>;
+  };
+  const apiPost = async (path: string, data?: Record<string, unknown>) => {
+    const response = await page.request.post(apiUrl(path), {
+      headers,
+      data,
+    });
+    return { response, body: (await response.json()) as Record<string, unknown> };
+  };
 
+  const knowledgeBases = await apiGet("/api/xunzhi/v1/knowledge-bases?current=1&size=50");
+  const selectedBase = knowledgeBases.records.find(
+    (base: Record<string, string>) => base.name === knowledgeBase,
+  );
+  expect(selectedBase?.id).toBeTruthy();
+
+  const { response: createInterviewResponse, body: createdSession } = await apiPost(
+    "/api/xunzhi/v1/interview/sessions",
+    {
+      knowledgeBaseId: selectedBase.id,
+      jobTitle: "后端工程师",
+      jobDescription: "负责服务端开发、稳定性建设和性能优化。",
+      interviewType: "TECHNICAL",
+      difficulty: "MEDIUM",
+      questionCount: 3,
+      requestId: `interview-${unique}`,
+    },
+  );
+  expect(createInterviewResponse.status()).toBe(201);
+  const sessionId = createdSession.sessionId as string;
+  expect(sessionId).toBeTruthy();
+  await expect
+    .poll(async () => (await apiGet(`/api/xunzhi/v1/interview/sessions/${sessionId}`)).status, {
+      timeout: 60_000,
+      intervals: [500, 1000, 2000],
+    })
+    .toBe("READY");
+
+  const { response: startResponse, body: startedSession } = await apiPost(
+    `/api/xunzhi/v1/interview/sessions/${sessionId}/start`,
+  );
+  expect(startResponse.ok()).toBeTruthy();
+  expect(startedSession.status).toBe("IN_PROGRESS");
+
+  const seenTurns = new Set<string>();
+  let completedSession = false;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (await page.getByText("面试完成").isVisible().catch(() => false)) break;
-    const editor = page.locator('textarea[placeholder^="写下你的回答"]');
-    await expect(editor).toBeVisible({ timeout: 30_000 });
-    await editor.fill("这是一次合成的端到端测试回答，包含方案、取舍和验证结果。");
-    await page.getByRole("button", { name: "提交回答" }).click();
-    await expect(page.getByText(/正在评分|PRIMARY · 基础题|FOLLOW_UP · 动态追问|面试完成/).first()).toBeVisible({ timeout: 60_000 });
-  }
-  await expect(page.getByText("面试完成")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("link", { name: "生成面试报告" }).click();
-  await expect(page).toHaveURL(/\/interview\/reports\/[^/]+$/, { timeout: 60_000 });
-  await expect(page.getByText("能力雷达")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText("问答回放")).toBeVisible();
-  await page.reload();
-  await expect(page.getByText("面试报告")).toBeVisible({ timeout: 30_000 });
-  await page.goto("/interview/reports");
-  await expect(page.getByText("后端工程师")).toBeVisible({ timeout: 30_000 });
+    const session = await apiGet(`/api/xunzhi/v1/interview/sessions/${sessionId}`);
+    if (session.status === "COMPLETED") {
+      completedSession = true;
+      break;
+    }
+    expect(session.status).toBe("IN_PROGRESS");
 
-  await page.getByRole("button", { name: "退出" }).click();
+    const turn = await apiGet(
+      `/api/xunzhi/v1/interview/sessions/${sessionId}/current-turn`,
+    );
+    const turnId = turn.turnId as string;
+    if (seenTurns.has(turnId)) {
+      throw new Error("Current turn did not advance");
+    }
+    seenTurns.add(turnId);
+    expect(["PRIMARY", "FOLLOW_UP"]).toContain(turn.turnType);
+    const answerRequestId = `answer-${unique}-${attempt}`;
+    const answerPayload = {
+      turnId,
+      answer: "这是一次合成的端到端测试回答，包含方案、取舍和验证结果。",
+      requestId: answerRequestId,
+    };
+    const { response: answerResponse, body: answerBody } = await apiPost(
+      `/api/xunzhi/v1/interview/sessions/${sessionId}/answers`,
+      answerPayload,
+    );
+    expect(answerResponse.status()).toBe(202);
+    expect(answerBody.status).toBe("EVALUATING");
+    await expect
+      .poll(async () => (await apiGet(`/api/xunzhi/v1/interview/sessions/${sessionId}/turns/${turnId}`)).status, {
+        timeout: 60_000,
+        intervals: [500, 1000, 2000],
+      })
+      .toBe("COMPLETED");
+    const evaluatedTurn = await apiGet(
+      `/api/xunzhi/v1/interview/sessions/${sessionId}/turns/${turnId}`,
+    );
+    expect(evaluatedTurn.evaluation.overallScore).toBeGreaterThanOrEqual(0);
+    expect(evaluatedTurn.evaluation.overallScore).toBeLessThanOrEqual(100);
+
+    const { response: duplicateAnswerResponse, body: duplicateAnswer } = await apiPost(
+      `/api/xunzhi/v1/interview/sessions/${sessionId}/answers`,
+      answerPayload,
+    );
+    expect([202, 409]).toContain(duplicateAnswerResponse.status());
+    if (duplicateAnswerResponse.status() === 202) {
+      expect(duplicateAnswer.turnId).toBe(turnId);
+    }
+  }
+  expect(completedSession).toBeTruthy();
+
+  const { response: reportResponse, body: report } = await apiPost(
+    `/api/xunzhi/v1/interview/sessions/${sessionId}/report`,
+  );
+  expect(reportResponse.ok()).toBeTruthy();
+  expect(report.status).toBe("READY");
+  expect(report.overallScore).toBeGreaterThanOrEqual(0);
+  expect(report.radarData.length).toBeGreaterThan(0);
+  expect(report.items.length).toBeGreaterThan(0);
+  const reports = await apiGet("/api/xunzhi/v1/interview/reports?current=1&size=20");
+  expect(reports.records.some((item: Record<string, string>) => item.sessionId === sessionId)).toBeTruthy();
+
+  await page.getByRole("button", { name: "用户菜单" }).click();
+  await page.getByRole("button", { name: "退出登录" }).click();
   await expect(page).toHaveURL(/\/auth$/);
   await page.goto("/chat");
   await expect(page).toHaveURL(/\/auth$/);

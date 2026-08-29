@@ -74,6 +74,25 @@ export interface AiMessageEntity {
 
 export type AiMessageHistory = AiMessageEntity & { id: string };
 
+export interface AiCitation {
+  sourceId?: string;
+  source_id?: string;
+  chunkId?: string;
+  chunk_id?: string;
+  documentId?: string;
+  document_id?: string;
+  documentName?: string;
+  document_name?: string;
+  pageNumber?: number | null;
+  page_number?: number | null;
+  score?: number;
+  excerpt?: string;
+}
+
+export type AiMessageHistoryWithCitations = AiMessageHistory & {
+  citations?: AiCitation[];
+};
+
 export type AiMessageHistoryListResult = AiMessageHistory[];
 export type AiMessageHistoryPageResult = PageResult<AiMessageHistory>;
 
@@ -154,11 +173,16 @@ export interface ChatStreamParams {
   messageSeq?: number;
   imageUrls?: string[];
   mediaList?: AiMessageMediaReqDTO[];
+  requestId?: string;
+  knowledgeBaseId?: string | null;
+  topK?: number;
+  similarityThreshold?: number;
 }
 
 export interface StreamCallbacks {
   onMessage: (content: string) => void;
   onReasoning?: (content: string) => void;
   onDone?: () => void;
+  onComplete?: (data: { content?: string; citations?: AiCitation[] }) => void;
   onError?: (error: Error) => void;
 }

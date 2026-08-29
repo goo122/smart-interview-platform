@@ -11,6 +11,7 @@ import type {
   GetConversationsParams,
   GetHistoryMessagesPageParams,
   StreamCallbacks,
+  AiCitation,
 } from "@/types/ai";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
@@ -18,6 +19,8 @@ type StreamParseResult = {
   content?: string;
   reasoning?: string;
   done?: boolean;
+  complete?: boolean;
+  citations?: AiCitation[];
 };
 
 const STREAM_DONE_MARKERS = new Set([
@@ -66,6 +69,16 @@ const parseAiStreamChunk = (raw: string): StreamParseResult => {
         : null;
     const source = nestedData ?? parsed;
     const type = normalizeStreamMarker(source.type);
+
+    if (type === "complete") {
+      return {
+        complete: true,
+        content: typeof source.content === "string" ? source.content : undefined,
+        citations: Array.isArray(source.citations)
+          ? (source.citations as AiCitation[])
+          : undefined,
+      };
+    }
 
     if (
       source.done === true ||
@@ -188,6 +201,10 @@ export const aiService = {
       messageSeq,
       imageUrls,
       mediaList,
+      requestId,
+      knowledgeBaseId,
+      topK,
+      similarityThreshold,
     } = params;
     const url = buildApiUrl(
       `/xunzhi/v1/ai/sessions/${encodeURIComponent(sessionId)}/chat`,
@@ -215,6 +232,10 @@ export const aiService = {
         messageSeq,
         imageUrls,
         mediaList,
+        requestId,
+        knowledgeBaseId,
+        topK,
+        similarityThreshold,
       }),
       signal,
       openWhenHidden: true,
@@ -234,6 +255,22 @@ export const aiService = {
       },
 
       onmessage(msg) {
+        if (normalizeStreamMarker(msg.event) === "complete") {
+          try {
+            const payload = JSON.parse(msg.data) as Record<string, unknown>;
+            callbacks.onComplete?.({
+              content: typeof payload.content === "string" ? payload.content : undefined,
+              citations: Array.isArray(payload.citations)
+                ? (payload.citations as AiCitation[])
+                : undefined,
+            });
+          } catch {
+            callbacks.onComplete?.({});
+          }
+          isComplete = true;
+          callbacks.onDone?.();
+          return;
+        }
         if (
           isDoneStreamEvent(msg.event) ||
           msg.data.trim().toUpperCase() === "[DONE]"
@@ -245,6 +282,15 @@ export const aiService = {
 
         const parsed = parseAiStreamChunk(msg.data);
         if (parsed.done) {
+          isComplete = true;
+          callbacks.onDone?.();
+          return;
+        }
+        if (parsed.complete) {
+          callbacks.onComplete?.({
+            content: parsed.content,
+            citations: parsed.citations,
+          });
           isComplete = true;
           callbacks.onDone?.();
           return;

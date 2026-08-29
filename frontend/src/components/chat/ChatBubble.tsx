@@ -7,6 +7,7 @@ import {
   type ChatMessageStatus,
   type ChatMessageVariant,
 } from "@/lib/chat";
+import type { AiCitation } from "@/types/ai";
 import ChatReasoningPanel from "@/components/chat/ChatReasoningPanel";
 import ChatMessageContent from "@/components/chat/ChatMessageContent";
 import ChatProgressBubble from "@/components/chat/ChatProgressBubble";
@@ -26,6 +27,7 @@ type ChatBubbleProps = {
   onTtsToggle?: () => void;
   progressSteps?: string[];
   activeProgressStep?: number;
+  citations?: AiCitation[];
 };
 
 export default function ChatBubble({
@@ -40,6 +42,7 @@ export default function ChatBubble({
   onTtsToggle,
   progressSteps,
   activeProgressStep = 0,
+  citations,
 }: ChatBubbleProps) {
   const isUser = role === CHAT_ROLES.user;
   const isStreaming = status === CHAT_MESSAGE_STATUS.streaming;
@@ -135,6 +138,22 @@ export default function ChatBubble({
                   isStreaming={isStreaming}
                   showStreamingCursor={Boolean(content) || !reasoning}
                 />
+                {!isUser && citations && citations.length > 0 ? (
+                  <div className="mt-3 border-t border-slate-200/80 pt-2" aria-label="参考来源">
+                    <p className="mb-1 text-[11px] font-semibold text-slate-500">参考来源</p>
+                    <ul className="space-y-1">
+                      {citations.slice(0, 5).map((citation, index) => {
+                        const name = citation.documentName ?? citation.document_name ?? "简历文档";
+                        const page = citation.pageNumber ?? citation.page_number;
+                        return (
+                          <li key={`${citation.chunkId ?? citation.chunk_id ?? index}`} className="text-[11px] text-slate-500">
+                            {name}{page ? ` · 第 ${page} 页` : ""}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : null}
               </div>
             </div>
           )

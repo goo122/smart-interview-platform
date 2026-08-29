@@ -1,5 +1,6 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { ChatMessage } from "@/lib/chat";
+import type { AiCitation } from "@/types/ai";
 import { checkAuthStatus, logoutUser } from "@/store/slices/userSlice";
 
 export interface PendingOutbound {
@@ -8,6 +9,7 @@ export interface PendingOutbound {
   assistantMessageId: string;
   content: string;
   aiId?: number;
+  knowledgeBaseId?: string | null;
 }
 
 export interface ChatState {
@@ -119,6 +121,17 @@ export const chatSlice = createSlice({
       message.reasoning = action.payload.reasoning;
       message.status = "streaming";
     },
+    setAssistantCitations: (
+      state,
+      action: PayloadAction<{ id: string; citations: AiCitation[] }>,
+    ) => {
+      const message = state.messages.find(
+        (item) => item.id === action.payload.id,
+      );
+      if (message) {
+        message.citations = action.payload.citations;
+      }
+    },
     finishAssistantMessage: (state, action: PayloadAction<{ id: string }>) => {
       const message = state.messages.find(
         (item) => item.id === action.payload.id,
@@ -181,6 +194,7 @@ export const {
   appendAssistantPlaceholder,
   appendAssistantChunk,
   appendAssistantReasoningChunk,
+  setAssistantCitations,
   finishAssistantMessage,
   failAssistantMessage,
   setActiveStream,
