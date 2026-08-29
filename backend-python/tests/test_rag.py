@@ -15,7 +15,7 @@ from app.modules.chat.domain import (
     MessageRole,
     MessageStatus,
 )
-from app.modules.chat.service import ChatEvent, ChatService
+from app.modules.chat.service import CHAT_SYSTEM_PROMPT, ChatEvent, ChatService
 from app.modules.knowledge.context import ContextAssembler, ContextCitation
 from app.modules.knowledge.domain import KnowledgeBase, RetrievedChunk
 from app.modules.knowledge.exceptions import KnowledgeBaseNotFoundError
@@ -206,7 +206,8 @@ async def test_rag_sse_injects_context_citations_and_request_id_is_idempotent() 
     assert second[-1].data["citations"][0]["document_name"] == "resume.pdf"
     assert provider.build_calls == 1
     assert model.calls == 1
-    assert model.received_messages[0][0] == ChatMessage(role="system", content="参考资料")
+    assert model.received_messages[0][0] == ChatMessage(role="system", content=CHAT_SYSTEM_PROMPT)
+    assert model.received_messages[0][1] == ChatMessage(role="system", content="参考资料")
     assert messages.items[-1].citations
 
 
@@ -223,6 +224,7 @@ async def test_non_rag_chat_keeps_legacy_complete_shape() -> None:
 
     assert events[-1].data == {"message_id": str(messages.items[-1].id), "content": "plain"}
     assert model.received_messages[0] == (
+        ChatMessage(role="system", content=CHAT_SYSTEM_PROMPT),
         ChatMessage(role="user", content="question"),
     )
 
@@ -281,7 +283,10 @@ async def test_rag_no_results_falls_back_to_plain_chat() -> None:
 
     assert [event.event for event in events] == ["start", "delta", "complete"]
     assert events[-1].data["citations"] == []
-    assert model.received_messages[0] == (ChatMessage(role="user", content="question"),)
+    assert model.received_messages[0] == (
+        ChatMessage(role="system", content=CHAT_SYSTEM_PROMPT),
+        ChatMessage(role="user", content="question"),
+    )
 
 
 @pytest.mark.asyncio

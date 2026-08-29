@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from app.ai.chat import FakeChatModel
+from app.ai.chat import ChatMessage, FakeChatModel
 from app.core.exceptions import UserAlreadyExistsError
 from app.main import app
 from app.modules.auth.dependencies import get_session_store, get_user_repository
@@ -27,7 +27,7 @@ from app.modules.chat.domain import (
     MessageStatus,
     utc_now,
 )
-from app.modules.chat.service import ChatService
+from app.modules.chat.service import CHAT_SYSTEM_PROMPT, ChatService
 from app.modules.knowledge.context import ContextCitation
 
 
@@ -343,6 +343,9 @@ def test_sse_persists_messages_and_emits_ordered_events(chat_client) -> None:
     assert [item.role for item in messages.items] == [MessageRole.USER, MessageRole.ASSISTANT]
     assert messages.items[1].status == MessageStatus.COMPLETED
     assert messages.items[1].content == "Hello world"
+    assert model.received_messages[0][0] == ChatMessage(role="system", content=CHAT_SYSTEM_PROMPT)
+    assert "寻知面试小助手" in model.received_messages[0][0].content
+    assert "不要自称通义千问" in model.received_messages[0][0].content
 
 
 def test_rag_sse_returns_citations_and_adds_context(chat_client) -> None:
