@@ -100,7 +100,7 @@ export default function InterviewResumeUploadCard({
 
       {resumeUploadError ? (
         <div className="mt-3">
-          <ErrorNotice title="简历上传失败" description={resumeUploadError} />
+          <ErrorNotice title="面试准备失败" description={resumeUploadError} />
         </div>
       ) : null}
 

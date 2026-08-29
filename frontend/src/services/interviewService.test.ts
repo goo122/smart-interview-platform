@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import service from "@/lib/request";
 import { AppError, ErrorCode } from "@/lib/errors";
 import {
   buildResumeKnowledgeBaseName,
@@ -66,6 +67,36 @@ describe("normalizeInterviewAnswer", () => {
     expect(normalized.nextQuestionNumber).toBe("2-F2");
     expect(normalized.followUpCount).toBe(2);
     expect(normalized.finished).toBe(false);
+  });
+});
+
+describe("interviewService.createInterviewSession", () => {
+  it("uses the long timeout while the backend generates questions", async () => {
+    const payload = {
+      knowledgeBaseId: "knowledge-base-1",
+      jobTitle: "Java 高级开发工程师",
+      jobDescription: "负责后端系统设计与开发",
+      interviewType: "TECHNICAL" as const,
+      difficulty: "MEDIUM" as const,
+      questionCount: 5,
+      requestId: "request-1",
+    };
+    const postSpy = vi.spyOn(service, "post").mockResolvedValue({
+      sessionId: "session-1",
+      status: "READY",
+    });
+
+    try {
+      await interviewService.createInterviewSession(payload);
+
+      expect(postSpy).toHaveBeenCalledWith(
+        "/xunzhi/v1/interview/sessions",
+        payload,
+        { timeout: 180_000 },
+      );
+    } finally {
+      postSpy.mockRestore();
+    }
   });
 });
 

@@ -821,6 +821,9 @@ export const interviewService = {
     >(
       "/xunzhi/v1/interview/sessions",
       payload ?? {},
+      {
+        timeout: INTERVIEW_LONG_TIMEOUT_MS,
+      },
     );
   },
   prepareInterviewSessionFromResume: async (
