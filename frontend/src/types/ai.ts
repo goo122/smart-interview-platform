@@ -1,3 +1,5 @@
+import type { AiPropertyResponse } from "@/api/generated";
+
 export interface PageResult<T> {
   records: T[];
   total: number;
@@ -28,8 +30,9 @@ export interface AiPropertyEntity {
   organizationId?: string | null;
 }
 
-// Frontend-safe DTO (apiKey/apiSecret removed)
-export type AiProperty = Omit<AiPropertyEntity, "apiKey" | "apiSecret">;
+// Frontend-safe DTO generated from the backend response schema. Sensitive
+// provider configuration is intentionally not part of the model selector type.
+export type AiProperty = AiPropertyResponse;
 export type AiPropertiesPageResult = PageResult<AiProperty>;
 
 // Backend collection mapping: ai_conversation
@@ -37,7 +40,8 @@ export interface AiConversationEntity {
   _id?: string;
   sessionId: string;
   username: string;
-  aiId: number;
+  aiId?: number | null;
+  modelName?: string | null;
   title?: string;
   status: number; // 1=in progress, 2=finished
   messageCount?: number;
@@ -49,7 +53,7 @@ export interface AiConversationEntity {
 }
 
 export type AiConversation = AiConversationEntity & {
-  aiName?: string;
+  aiName?: string | null;
 };
 
 export type AiConversationsPageResult = PageResult<AiConversation>;
@@ -135,9 +139,12 @@ export interface CreateConversationParams {
   userName: string;
   firstMessage?: string;
   aiId?: number;
+  modelName?: string;
 }
 
 export interface GetAiPropertiesParams {
+  current?: number;
+  size?: number;
   isEnabled?: number;
 }
 

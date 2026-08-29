@@ -15,6 +15,14 @@ class InterviewStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class ResumeEvaluationStatus(StrEnum):
+    PENDING = "PENDING"
+    EVALUATING = "EVALUATING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
 class InterviewDifficulty(StrEnum):
     EASY = "EASY"
     MEDIUM = "MEDIUM"
@@ -100,6 +108,32 @@ class InterviewSession:
             started_at=None,
             finished_at=None,
         )
+
+
+@dataclass(slots=True)
+class ResumeEvaluation:
+    id: UUID
+    session_id: UUID
+    user_id: UUID
+    knowledge_base_id: UUID
+    status: ResumeEvaluationStatus
+    overall_score: int | None
+    skills_match_score: int | None
+    experience_match_score: int | None
+    evidence_quality_score: int | None
+    clarity_score: int | None
+    strengths: list[str]
+    gaps: list[str]
+    suggestions: list[str]
+    summary: str | None
+    source_document_ids: list[UUID]
+    evaluation_version: str
+    provider_name: str | None
+    failure_code: str | None
+    failure_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
 
 
 @dataclass(slots=True)

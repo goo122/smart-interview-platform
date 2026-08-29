@@ -21,6 +21,7 @@ export default function InterviewReportDetailPage() {
     isRecordLoading,
     recordError,
     resumeScore,
+    resumeEvaluation,
     interviewScore,
     compositeScore,
     qaReviews,
@@ -95,6 +96,37 @@ export default function InterviewReportDetailPage() {
             <p className="mt-3 text-base leading-8 text-slate-600">
               {reviewFeedback.overallComment}
             </p>
+          </Card>
+        ) : null}
+
+        {resumeEvaluation ? (
+          <Card className="border-slate-200 p-6">
+            <div className="text-base font-medium text-slate-900">
+              简历与岗位匹配分析
+            </div>
+            {resumeEvaluation.summary ? (
+              <p className="mt-3 text-base leading-8 text-slate-600">
+                {resumeEvaluation.summary}
+              </p>
+            ) : null}
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <div className="text-sm font-medium text-slate-700">匹配优势</div>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
+                  {(resumeEvaluation.strengths ?? []).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-slate-700">待补充证据</div>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
+                  {(resumeEvaluation.gaps ?? []).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           </Card>
         ) : null}
 

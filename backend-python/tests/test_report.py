@@ -20,6 +20,8 @@ from app.modules.interview.domain import (
     InterviewStatus,
     InterviewTurn,
     InterviewType,
+    ResumeEvaluation,
+    ResumeEvaluationStatus,
     TurnStatus,
     TurnType,
 )
@@ -255,6 +257,7 @@ class FakeReportRepository:
             value = kwargs[field]
             setattr(report, field, value if field != "generated_by" else value)
         report.completed_at = datetime.now(UTC)
+        report.resume_evaluation_snapshot = kwargs.get("resume_evaluation_snapshot")
         self.items[report_id] = list(kwargs["items"])
         return report
 
@@ -348,6 +351,43 @@ async def test_completed_interview_generates_immutable_snapshot_and_is_idempoten
     interview_repository.questions[session_id][0].citations.clear()
     reloaded = await service.get_by_session(user_id, session_id)
     assert reloaded.items[0].sources[0]["sourceId"] == "[S1]"
+
+
+@pytest.mark.asyncio
+async def test_report_captures_resume_evaluation_snapshot() -> None:
+    service, reports, interview_repository, user_id, session_id = _service()
+    now = datetime.now(UTC)
+    interview_repository.resume_evaluations[session_id] = ResumeEvaluation(
+        id=uuid4(),
+        session_id=session_id,
+        user_id=user_id,
+        knowledge_base_id=interview_repository.sessions[session_id].knowledge_base_id,
+        status=ResumeEvaluationStatus.COMPLETED,
+        overall_score=91,
+        skills_match_score=90,
+        experience_match_score=92,
+        evidence_quality_score=88,
+        clarity_score=94,
+        strengths=["项目匹配"],
+        gaps=["补充指标"],
+        suggestions=["量化成果"],
+        summary="匹配度高",
+        source_document_ids=[uuid4()],
+        evaluation_version="resume-match-v1",
+        provider_name="FakeResumeEvaluator",
+        failure_code=None,
+        failure_message=None,
+        created_at=now,
+        updated_at=now,
+        completed_at=now,
+    )
+    detail = await service.generate(user_id, session_id)
+    assert detail.report.resume_evaluation_snapshot is not None
+    assert detail.report.resume_evaluation_snapshot["overallScore"] == 91
+    assert detail.report.radar_data[0] == {"dimension": "resume", "score": 91}
+    assert reports.reports[detail.report.id].resume_evaluation_snapshot == (
+        detail.report.resume_evaluation_snapshot
+    )
 
 
 @pytest.mark.asyncio

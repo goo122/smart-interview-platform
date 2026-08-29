@@ -231,9 +231,19 @@ export function useInterviewResumeAnalysis({
         });
         applyResumeMetadata(
           buildResumeMetadata({
-            resumeScore: null,
+            resumeScore:
+              prepared.resumeScore ??
+              prepared.resumeEvaluation?.overallScore ??
+              null,
             interviewType: prepared.interviewType,
-            suggestions: null,
+            suggestions: prepared.resumeEvaluation?.suggestions
+              ? Object.fromEntries(
+                  prepared.resumeEvaluation.suggestions.map((item, index) => [
+                    String(index + 1),
+                    item,
+                  ]),
+                )
+              : null,
             resumeFileUrl: file.name,
           }),
         );

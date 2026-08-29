@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ExceptionHandler
 
 from app.ai.factory import AiProviderFactory
+from app.api.v1.ai_properties import router as ai_properties_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.interview import router as interview_router
 from app.api.v1.knowledge import router as knowledge_router
@@ -49,7 +50,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.interview_answer_evaluator = providers.interview_answer_evaluator
     app.state.follow_up_question_generator = providers.follow_up_question_generator
     app.state.interview_report_narrative = providers.interview_report_narrative
+    app.state.resume_evaluator = providers.resume_evaluator
     app.state.embedding = providers.embedding
+    app.state.ai_model_metadata = providers.model_metadata
     app.state.file_storage = LocalFileStorage(settings.knowledge_storage_dir)
     app.state.pdf_parser = PypdfPdfParser()
     app.state.task_queue = InlineTaskQueue()
@@ -74,6 +77,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.include_router(v1_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api")
+    app.include_router(ai_properties_router, prefix="/api")
     app.include_router(knowledge_router, prefix="/api")
     app.include_router(interview_router, prefix="/api")
 

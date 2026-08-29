@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.ai.chat import ChatMessage, ChatModelPort
+from app.ai.metadata import AiModelMetadataPort
 from app.core.exceptions import (
     AppError,
     ConversationFinishedError,
@@ -44,11 +45,13 @@ class ChatService:
         message_repository: MessageRepository,
         chat_model: ChatModelPort,
         context_provider: ContextProvider | None = None,
+        model_metadata: AiModelMetadataPort | None = None,
     ) -> None:
         self._conversations = conversation_repository
         self._messages = message_repository
         self._model = chat_model
         self._context_provider = context_provider
+        self._model_metadata = model_metadata
 
     async def create_conversation(
         self,
@@ -56,10 +59,21 @@ class ChatService:
         title: str | None = None,
         first_message: str | None = None,
         model_name: str | None = None,
+        ai_id: int | None = None,
     ) -> Conversation:
         chosen_title = (title or "").strip() or self._title_from_message(first_message)
+        selected_model_name = model_name
+        if self._model_metadata is not None:
+            selected_model = self._model_metadata.resolve_selection(ai_id, model_name)
+            if (ai_id is not None or (model_name or "").strip()) and selected_model is None:
+                raise InvalidChatRequestError("Selected AI model is unavailable")
+            selected_model_name = selected_model.model_name if selected_model else None
         return await self._conversations.create(
-            Conversation.new(user_id=user_id, title=chosen_title[:200], model_name=model_name)
+            Conversation.new(
+                user_id=user_id,
+                title=chosen_title[:200],
+                model_name=selected_model_name,
+            )
         )
 
     async def list_conversations(

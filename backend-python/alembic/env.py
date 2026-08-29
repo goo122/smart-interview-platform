@@ -20,6 +20,7 @@ from app.modules.interview.models import (  # noqa: F401
     InterviewEventModel,
     InterviewQuestionCitationModel,
     InterviewQuestionModel,
+    InterviewResumeEvaluationModel,
     InterviewSessionModel,
     InterviewTurnModel,
 )

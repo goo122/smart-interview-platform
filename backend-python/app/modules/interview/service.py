@@ -1,7 +1,9 @@
 from collections.abc import Sequence
+from typing import cast
 from uuid import UUID
 
 from app.ai.interview import InterviewQuestionGeneratorPort
+from app.ai.resume import ResumeEvaluatorPort
 from app.core.config import Settings
 from app.modules.interview.context import InterviewContextProviderPort
 from app.modules.interview.domain import (
@@ -11,6 +13,7 @@ from app.modules.interview.domain import (
     InterviewSession,
     InterviewStatus,
     InterviewType,
+    ResumeEvaluation,
 )
 from app.modules.interview.exceptions import (
     InterviewNotFoundError,
@@ -21,6 +24,18 @@ from app.modules.interview.repository import InterviewRepository
 from app.modules.interview.workflow import InterviewPreparationWorkflow
 from app.workers.queue import TaskQueuePort
 
+CONVERSATION_STATUS_TO_DOMAIN: dict[str, InterviewStatus] = {
+    "CREATED": InterviewStatus.CREATED,
+    "DRAFT": InterviewStatus.CREATED,
+    "PREPARING": InterviewStatus.PREPARING,
+    "RESUME_UPLOADING": InterviewStatus.PREPARING,
+    "READY": InterviewStatus.READY,
+    "IN_PROGRESS": InterviewStatus.IN_PROGRESS,
+    "COMPLETED": InterviewStatus.COMPLETED,
+    "FAILED": InterviewStatus.FAILED,
+    "CANCELLED": InterviewStatus.CANCELLED,
+}
+
 
 class InterviewService:
     def __init__(
@@ -30,13 +45,16 @@ class InterviewService:
         generator: InterviewQuestionGeneratorPort,
         task_queue: TaskQueuePort,
         settings: Settings,
+        resume_evaluator: ResumeEvaluatorPort | None = None,
     ) -> None:
         self._repository = repository
         self._context_provider = context_provider
         self._generator = generator
         self._task_queue = task_queue
         self._settings = settings
-        self._workflow = InterviewPreparationWorkflow(repository, context_provider, generator)
+        self._workflow = InterviewPreparationWorkflow(
+            repository, context_provider, generator, resume_evaluator
+        )
 
     async def create_session(
         self,
@@ -113,11 +131,46 @@ class InterviewService:
         size = min(max(size, 1), 100)
         return await self._repository.list_for_user(user_id, current, size)
 
+    async def list_conversations(
+        self,
+        user_id: UUID,
+        current: int = 1,
+        size: int = 10,
+        status: str | None = None,
+        keyword: str | None = None,
+    ) -> tuple[list[InterviewSession], int]:
+        current = max(current, 1)
+        size = min(max(size, 1), 100)
+        normalized_status = status.strip().upper() if status else None
+        domain_status = (
+            CONVERSATION_STATUS_TO_DOMAIN.get(normalized_status)
+            if normalized_status
+            else None
+        )
+        if normalized_status and domain_status is None:
+            raise InvalidInterviewRequestError("Unsupported conversation status")
+        return await self._repository.list_conversations_for_user(
+            user_id,
+            current,
+            size,
+            domain_status,
+            keyword.strip() if keyword else None,
+        )
+
     async def get_session(self, user_id: UUID, session_id: UUID) -> InterviewSession:
         result = await self._repository.get_for_user(session_id, user_id)
         if result is None:
             raise InterviewNotFoundError("Interview session not found")
         return result
+
+    async def get_resume_evaluation(
+        self, user_id: UUID, session_id: UUID
+    ) -> ResumeEvaluation | None:
+        await self.get_session(user_id, session_id)
+        getter = getattr(self._repository, "get_resume_evaluation", None)
+        if getter is None:
+            return None
+        return cast(ResumeEvaluation | None, await getter(session_id, user_id))
 
     async def get_questions(self, user_id: UUID, session_id: UUID) -> Sequence[InterviewQuestion]:
         session = await self.get_session(user_id, session_id)

@@ -151,7 +151,7 @@ export const aiService = {
     return service.get<AiPropertiesPageResult>("/xunzhi/v1/ai-properties", {
       params: {
         ...params,
-        size: 100,
+        size: params?.size ?? 100,
       },
     });
   },

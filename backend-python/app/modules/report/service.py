@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -10,7 +11,12 @@ from app.ai.report import (
     StructuredInterviewReportNarrative,
 )
 from app.core.config import Settings
-from app.modules.interview.domain import InterviewEvaluation, InterviewSession, InterviewStatus
+from app.modules.interview.domain import (
+    InterviewEvaluation,
+    InterviewSession,
+    InterviewStatus,
+    ResumeEvaluation,
+)
 from app.modules.interview.exceptions import InterviewNotFoundError
 from app.modules.interview.repository import InterviewRepository
 from app.modules.report.aggregation import (
@@ -162,6 +168,20 @@ class InterviewReportService:
             scores = self._aggregator.aggregate(
                 (snapshot.turn, snapshot.evaluation) for snapshot in snapshots
             )
+            resume_evaluation = await self._load_resume_evaluation(session_id, user_id)
+            resume_snapshot = _resume_evaluation_snapshot(resume_evaluation)
+            if resume_evaluation is not None and resume_evaluation.overall_score is not None:
+                scores = type(scores)(
+                    overall_score=scores.overall_score,
+                    technical_score=scores.technical_score,
+                    relevance_score=scores.relevance_score,
+                    clarity_score=scores.clarity_score,
+                    depth_score=scores.depth_score,
+                    radar_data=(
+                        {"dimension": "resume", "score": resume_evaluation.overall_score},
+                        *scores.radar_data,
+                    ),
+                )
             strengths = _dedupe(
                 item for snapshot in snapshots for item in snapshot.evaluation.strengths
             )
@@ -202,6 +222,7 @@ class InterviewReportService:
                 prompt_version=None,
                 generated_by=generated_by,
                 items=items,
+                resume_evaluation_snapshot=resume_snapshot,
             )
         except ReportGenerationError as exc:
             await self._report_repository.mark_failed(
@@ -232,6 +253,14 @@ class InterviewReportService:
         fallback = RuleBasedInterviewReportNarrativeGenerator()
         return await fallback.generate(request), ReportGeneratedBy.RULES
 
+    async def _load_resume_evaluation(
+        self, session_id: UUID, user_id: UUID
+    ) -> ResumeEvaluation | None:
+        getter = getattr(self._interview_repository, "get_resume_evaluation", None)
+        if getter is None:
+            return None
+        return cast(ResumeEvaluation | None, await getter(session_id, user_id))
+
 
 def _dedupe(values: Iterable[str], limit: int = 10) -> list[str]:
     result: list[str] = []
@@ -245,6 +274,32 @@ def _dedupe(values: Iterable[str], limit: int = 10) -> list[str]:
         if len(result) >= limit:
             break
     return result
+
+
+def _resume_evaluation_snapshot(
+    evaluation: ResumeEvaluation | None,
+) -> dict[str, Any] | None:
+    if evaluation is None:
+        return None
+    return {
+        "status": evaluation.status.value,
+        "overallScore": evaluation.overall_score,
+        "skillsMatchScore": evaluation.skills_match_score,
+        "experienceMatchScore": evaluation.experience_match_score,
+        "evidenceQualityScore": evaluation.evidence_quality_score,
+        "clarityScore": evaluation.clarity_score,
+        "strengths": list(evaluation.strengths),
+        "gaps": list(evaluation.gaps),
+        "suggestions": list(evaluation.suggestions),
+        "summary": evaluation.summary,
+        "sourceDocumentIds": [str(value) for value in evaluation.source_document_ids],
+        "evaluationVersion": evaluation.evaluation_version,
+        "providerName": evaluation.provider_name,
+        "failureCode": evaluation.failure_code,
+        "evaluatedAt": evaluation.completed_at.isoformat()
+        if evaluation.completed_at is not None
+        else None,
+    }
 
 
 def _snapshot_to_item(

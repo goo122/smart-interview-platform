@@ -256,6 +256,7 @@ describe("fetchInterviewReportQueryData", () => {
     interviewType: "TECHNICAL",
     difficulty: "MEDIUM",
     overallScore: 86,
+    resumeScore: 91,
     dimensionScores: {
       technical: 88,
       relevance: 84,
@@ -329,6 +330,7 @@ describe("fetchInterviewReportQueryData", () => {
     expect(result.record).toMatchObject({
       sessionId: "session-100",
       interviewScore: 86,
+      resumeScore: 91,
       compositeScore: 86,
       radarDimensions: [
         { label: "技术能力", value: 88 },

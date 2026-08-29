@@ -145,6 +145,13 @@ describe("useChatPageController", () => {
     );
   });
 
+  it("defaults to the first available model", () => {
+    const { result } = renderChatController();
+
+    expect(result.current.modelSelection.selectedModel?.id).toBe(101);
+    expect(result.current.modelSelection.selectedModel?.aiName).toBe("GPT Test");
+  });
+
   it("does not redirect to the old runtime session when initialQuery is present", async () => {
     useLocationMock.mockReturnValue({
       key: "initial-query-location",

@@ -20,6 +20,7 @@ export type ReportQueryData = {
 
 export type InterviewReportViewModel = {
   resumeScore: number | null;
+  resumeEvaluation: InterviewRecordResult["resumeEvaluation"];
   interviewScore: number | null;
   compositeScore: number | null;
   isCompositeEstimated: boolean;
@@ -86,6 +87,7 @@ const toStringArray = (value: unknown): string[] => {
 };
 
 const REPORT_DIMENSION_LABELS: Record<string, string> = {
+  resume: "简历匹配度",
   technical: "技术能力",
   relevance: "回答相关性",
   clarity: "表达清晰度",
@@ -166,6 +168,8 @@ const adaptInterviewReport = (
     questionCount: report.items.filter((item) => item.turnType === "PRIMARY")
       .length,
     interviewScore: report.overallScore,
+    resumeScore: report.resumeScore ?? null,
+    resumeEvaluation: report.resumeEvaluation ?? null,
     compositeScore: report.overallScore,
     interviewDirection: [
       report.jobTitle,
@@ -199,7 +203,10 @@ const adaptInterviewReport = (
         report.suggestedImprovements.length > 0
           ? report.suggestedImprovements
           : report.weaknesses,
-      nextActions: report.actionPlan,
+      nextActions:
+        report.resumeEvaluation?.suggestions?.length
+          ? [...report.actionPlan, ...report.resumeEvaluation.suggestions]
+          : report.actionPlan,
     },
     createTime: report.createdAt,
     updateTime: report.updatedAt,
@@ -572,6 +579,7 @@ export function buildInterviewReportViewModel(
     rawRecord?.resumeScore,
     snapshot?.resumeScore,
   );
+  const resumeEvaluation = record?.resumeEvaluation ?? null;
 
   const interviewScore = pickFirstNumber(
     record?.interviewScore,
@@ -628,6 +636,7 @@ export function buildInterviewReportViewModel(
 
   return {
     resumeScore,
+    resumeEvaluation,
     interviewScore,
     compositeScore,
     isCompositeEstimated,

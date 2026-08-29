@@ -89,6 +89,21 @@ export interface components {
       "topK"?: number | null;
       "similarityThreshold"?: number | null;
     };
+    AiPropertyResponse: {
+      "id": number;
+      "aiName": string;
+      "aiType": string;
+      "modelName"?: string | null;
+      "isEnabled": number;
+      "enableThinking": number;
+    };
+    AiPropertiesPage: {
+      "records": Array<components["schemas"]["AiPropertyResponse"]>;
+      "total": number;
+      "size": number;
+      "current": number;
+      "pages": number;
+    };
     CreateConversationRequest: {
       "userName"?: string | null;
       "firstMessage"?: string | null;
@@ -202,6 +217,24 @@ export interface components {
       "preparedAt"?: string | null;
       "startedAt"?: string | null;
       "finishedAt"?: string | null;
+      "resumeScore"?: number | null;
+      "resumeEvaluationStatus"?: string | null;
+      "resumeEvaluation"?: components["schemas"]["ResumeEvaluationResponse"] | null;
+    };
+    ResumeEvaluationResponse: {
+      "status": string;
+      "overallScore"?: number | null;
+      "skillsMatchScore"?: number | null;
+      "experienceMatchScore"?: number | null;
+      "evidenceQualityScore"?: number | null;
+      "clarityScore"?: number | null;
+      "strengths": Array<string>;
+      "gaps": Array<string>;
+      "suggestions": Array<string>;
+      "summary"?: string | null;
+      "evaluationVersion": string;
+      "evaluatedAt"?: string | null;
+      "failureCode"?: string | null;
     };
     InterviewQuestionResponse: {
       "id": string;
@@ -320,6 +353,24 @@ export interface components {
       "completedAt"?: string | null;
       "failureCode"?: string | null;
       "failureMessage"?: string | null;
+      "resumeScore"?: number | null;
+      "resumeEvaluation"?: components["schemas"]["ResumeEvaluationSnapshotResponse"] | null;
+    };
+    ResumeEvaluationSnapshotResponse: {
+      "status": string;
+      "overallScore"?: number | null;
+      "skillsMatchScore"?: number | null;
+      "experienceMatchScore"?: number | null;
+      "evidenceQualityScore"?: number | null;
+      "clarityScore"?: number | null;
+      "strengths": Array<string>;
+      "gaps": Array<string>;
+      "suggestions": Array<string>;
+      "summary"?: string | null;
+      "evaluationVersion": string;
+      "providerName"?: string | null;
+      "evaluatedAt"?: string | null;
+      "failureCode"?: string | null;
     };
     InterviewReportPage: {
       "records": Array<components["schemas"]["InterviewReportResponse"]>;
@@ -343,6 +394,8 @@ export type KnowledgeDocumentResponse = components["schemas"]["KnowledgeDocument
 export type KnowledgeBasePage = components["schemas"]["KnowledgeBasePage"];
 export type KnowledgeDocumentPage = components["schemas"]["KnowledgeDocumentPage"];
 export type ChatRequest = components["schemas"]["ChatRequest"];
+export type AiPropertyResponse = components["schemas"]["AiPropertyResponse"];
+export type AiPropertiesPage = components["schemas"]["AiPropertiesPage"];
 export type CreateConversationRequest = components["schemas"]["CreateConversationRequest"];
 export type CreateConversationResponse = components["schemas"]["CreateConversationResponse"];
 export type ConversationResponse = components["schemas"]["ConversationResponse"];
@@ -356,6 +409,7 @@ export type InterviewType = components["schemas"]["InterviewType"];
 export type InterviewDifficulty = components["schemas"]["InterviewDifficulty"];
 export type CreateInterviewSessionRequest = components["schemas"]["CreateInterviewSessionRequest"];
 export type InterviewSessionResponse = components["schemas"]["InterviewSessionResponse"];
+export type ResumeEvaluationResponse = components["schemas"]["ResumeEvaluationResponse"];
 export type InterviewQuestionResponse = components["schemas"]["InterviewQuestionResponse"];
 export type InterviewQuestionCitationResponse = components["schemas"]["InterviewQuestionCitationResponse"];
 export type InterviewEvaluationResponse = components["schemas"]["InterviewEvaluationResponse"];
@@ -365,4 +419,5 @@ export type SubmitInterviewAnswerResponse = components["schemas"]["SubmitIntervi
 export type InterviewSessionPage = components["schemas"]["InterviewSessionPage"];
 export type InterviewReportItemResponse = components["schemas"]["InterviewReportItemResponse"];
 export type InterviewReportResponse = components["schemas"]["InterviewReportResponse"];
+export type ResumeEvaluationSnapshotResponse = components["schemas"]["ResumeEvaluationSnapshotResponse"];
 export type InterviewReportPage = components["schemas"]["InterviewReportPage"];

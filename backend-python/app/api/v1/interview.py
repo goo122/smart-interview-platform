@@ -12,6 +12,7 @@ from app.modules.interview.dependencies import (
 )
 from app.modules.interview.schemas import (
     CreateInterviewSessionRequest,
+    InterviewConversationResponse,
     InterviewPageResponse,
     InterviewQuestionResponse,
     InterviewSessionResponse,
@@ -50,7 +51,8 @@ async def create_session(
         question_count=payload.question_count,
         request_id=payload.request_id,
     )
-    return InterviewSessionResponse.from_domain(session)
+    evaluation = await service.get_resume_evaluation(current_user.id, session.id)
+    return InterviewSessionResponse.from_domain(session, evaluation)
 
 
 @router.get("/sessions", response_model=InterviewPageResponse[InterviewSessionResponse])
@@ -69,6 +71,33 @@ async def list_sessions(
     )
 
 
+@router.get(
+    "/conversations",
+    response_model=InterviewPageResponse[InterviewConversationResponse],
+)
+async def list_conversations(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewService, Depends(get_interview_service)],
+    current: int = Query(default=1, ge=1),
+    size: int = Query(default=10, ge=1, le=100),
+    status_filter: str | None = Query(default=None, alias="status"),
+    keyword: str | None = Query(default=None, max_length=200),
+) -> InterviewPageResponse[InterviewConversationResponse]:
+    sessions, total = await service.list_conversations(
+        current_user.id,
+        current,
+        size,
+        status_filter,
+        keyword,
+    )
+    return InterviewPageResponse.build(
+        [InterviewConversationResponse.from_domain(session) for session in sessions],
+        total,
+        current,
+        size,
+    )
+
+
 @router.get("/sessions/{session_id}", response_model=InterviewSessionResponse)
 async def get_session(
     session_id: UUID,
@@ -76,7 +105,8 @@ async def get_session(
     service: Annotated[InterviewService, Depends(get_interview_service)],
 ) -> InterviewSessionResponse:
     session = await service.get_session(current_user.id, session_id)
-    return InterviewSessionResponse.from_domain(session)
+    evaluation = await service.get_resume_evaluation(current_user.id, session_id)
+    return InterviewSessionResponse.from_domain(session, evaluation)
 
 
 @router.get(
@@ -99,7 +129,8 @@ async def start_session(
     service: Annotated[InterviewService, Depends(get_interview_service)],
 ) -> InterviewSessionResponse:
     session = await service.start(current_user.id, session_id)
-    return InterviewSessionResponse.from_domain(session)
+    evaluation = await service.get_resume_evaluation(current_user.id, session_id)
+    return InterviewSessionResponse.from_domain(session, evaluation)
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=InterviewSessionResponse)
@@ -109,7 +140,8 @@ async def cancel_session(
     service: Annotated[InterviewService, Depends(get_interview_service)],
 ) -> InterviewSessionResponse:
     session = await service.cancel(current_user.id, session_id)
-    return InterviewSessionResponse.from_domain(session)
+    evaluation = await service.get_resume_evaluation(current_user.id, session_id)
+    return InterviewSessionResponse.from_domain(session, evaluation)
 
 
 @router.get(

@@ -4,7 +4,9 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.chat import ChatModelPort
+from app.ai.dependencies import get_ai_model_metadata
 from app.ai.embedding import EmbeddingPort
+from app.ai.metadata import AiModelMetadataPort
 from app.core.config import Settings, get_settings
 from app.infrastructure.vectorstore.retriever import PgVectorRetriever
 from app.modules.auth.dependencies import get_db_session
@@ -67,7 +69,12 @@ def get_chat_service(
     message_repository: Annotated[MessageRepository, Depends(get_message_repository)],
     chat_model: Annotated[ChatModelPort, Depends(get_chat_model)],
     context_provider: Annotated[ContextProvider, Depends(get_context_provider)],
+    model_metadata: Annotated[AiModelMetadataPort, Depends(get_ai_model_metadata)],
 ) -> ChatService:
     return ChatService(
-        conversation_repository, message_repository, chat_model, context_provider
+        conversation_repository,
+        message_repository,
+        chat_model,
+        context_provider,
+        model_metadata,
     )

@@ -7,6 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.ai.chat import ChatMessage, FakeChatModel
+from app.ai.dependencies import get_ai_model_metadata
+from app.ai.metadata import RuntimeAiModelMetadata
+from app.core.config import Settings
 from app.core.exceptions import UserAlreadyExistsError
 from app.main import app
 from app.modules.auth.dependencies import get_session_store, get_user_repository
@@ -242,6 +245,9 @@ def chat_client() -> Iterator[
     app.dependency_overrides[get_conversation_repository] = lambda: conversations
     app.dependency_overrides[get_message_repository] = lambda: messages
     app.dependency_overrides[get_chat_model] = lambda: model
+    app.dependency_overrides[get_ai_model_metadata] = lambda: RuntimeAiModelMetadata(
+        Settings(_env_file=None, app_env="test", ai_provider="fake")
+    )
     with TestClient(app) as client:
         yield client, users, conversations, messages, model
     app.dependency_overrides.clear()
@@ -286,6 +292,65 @@ def test_create_and_page_are_user_scoped(chat_client) -> None:
     assert listed.json()["total"] == 1
     assert listed.json()["records"][0]["sessionId"] == session_id
     assert len(conversations.items) == len(users.users)
+
+
+def test_conversation_model_metadata_is_saved_and_restored(chat_client) -> None:
+    client, users, conversations, _, _ = chat_client
+    token = _register_and_login(client, username="model-user", email="model@example.com")
+
+    rejected = client.post(
+        "/api/xunzhi/v1/ai/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"title": "Invalid model", "aiId": 999},
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["message"] == "Selected AI model is unavailable"
+
+    created = client.post(
+        "/api/xunzhi/v1/ai/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"title": "Model chat", "aiId": 1},
+    )
+    assert created.status_code == 201
+    session_id = created.json()["sessionId"]
+    listed = client.get(
+        "/api/xunzhi/v1/ai/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    record = listed.json()["records"][0]
+    assert record["sessionId"] == session_id
+    assert record["aiId"] == 1
+    assert record["aiName"] == "寻知开发测试模型"
+    assert record["modelName"] == "fake-interview-model"
+    assert conversations.items[UUID(session_id)].model_name == "fake-interview-model"
+
+    legacy = Conversation.new(users.users[0].id, "Legacy chat", model_name="old-model")
+    conversations.items[legacy.id] = legacy
+    listed = client.get(
+        "/api/xunzhi/v1/ai/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    legacy_record = next(
+        item for item in listed.json()["records"] if item["sessionId"] == str(legacy.id)
+    )
+    assert legacy_record["modelName"] == "old-model"
+    assert legacy_record["aiName"] == "历史模型 old-model"
+    assert legacy_record["aiId"] is None
+
+    old_without_model = Conversation.new(users.users[0].id, "Legacy no model")
+    conversations.items[old_without_model.id] = old_without_model
+    listed = client.get(
+        "/api/xunzhi/v1/ai/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    fallback_record = next(
+        item
+        for item in listed.json()["records"]
+        if item["sessionId"] == str(old_without_model.id)
+    )
+    assert fallback_record["modelName"] == "fake-interview-model"
+    assert fallback_record["aiName"] == "寻知开发测试模型"
+    assert fallback_record["aiId"] == 1
 
 
 def test_other_user_cannot_view_or_delete_conversation(chat_client) -> None:

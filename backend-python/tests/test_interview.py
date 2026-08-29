@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,6 +27,7 @@ from app.modules.interview.domain import (
     InterviewStatus,
     InterviewTurn,
     InterviewType,
+    ResumeEvaluation,
     TurnStatus,
     TurnType,
     utc_now,
@@ -48,6 +50,13 @@ class InMemoryInterviewRepository:
         self.turns: dict[UUID, list[InterviewTurn]] = {}
         self.answers: dict[UUID, InterviewAnswer] = {}
         self.evaluations: dict[UUID, InterviewEvaluation] = {}
+        self.resume_evaluations: dict[UUID, ResumeEvaluation] = {}
+
+    async def get_resume_evaluation(
+        self, session_id: UUID, user_id: UUID
+    ) -> ResumeEvaluation | None:
+        evaluation = self.resume_evaluations.get(session_id)
+        return evaluation if evaluation and evaluation.user_id == user_id else None
 
     async def create(self, session: InterviewSession) -> InterviewSession:
         self.sessions[session.id] = session
@@ -84,6 +93,29 @@ class InMemoryInterviewRepository:
         self, user_id: UUID, current: int, size: int
     ) -> tuple[list[InterviewSession], int]:
         values = [session for session in self.sessions.values() if session.user_id == user_id]
+        start = (current - 1) * size
+        return values[start : start + size], len(values)
+
+    async def list_conversations_for_user(
+        self,
+        user_id: UUID,
+        current: int,
+        size: int,
+        status: InterviewStatus | None = None,
+        keyword: str | None = None,
+    ) -> tuple[list[InterviewSession], int]:
+        values = [session for session in self.sessions.values() if session.user_id == user_id]
+        if status is not None:
+            values = [session for session in values if session.status == status]
+        clean_keyword = keyword.strip().casefold() if keyword else ""
+        if clean_keyword:
+            values = [
+                session
+                for session in values
+                if clean_keyword in session.job_title.casefold()
+                or clean_keyword in session.job_description.casefold()
+            ]
+        values.sort(key=lambda session: session.updated_at, reverse=True)
         start = (current - 1) * size
         return values[start : start + size], len(values)
 
@@ -496,6 +528,31 @@ def _create_args(user_id: UUID, base_id: UUID, request_id: str | None = None) ->
     }
 
 
+def _seed_conversation(
+    repository: InMemoryInterviewRepository,
+    user_id: UUID,
+    status: InterviewStatus,
+    title: str,
+    updated_at: datetime,
+) -> InterviewSession:
+    session = InterviewSession.new(
+        user_id=user_id,
+        knowledge_base_id=uuid4(),
+        job_title=title,
+        job_description=f"为 {title} 准备面试",
+        interview_type=InterviewType.TECHNICAL,
+        difficulty=InterviewDifficulty.MEDIUM,
+        question_count=3,
+        request_id=None,
+    )
+    session.status = status
+    session.updated_at = updated_at
+    repository.sessions[session.id] = session
+    repository.events[session.id] = []
+    repository.turns[session.id] = []
+    return session
+
+
 @pytest.mark.asyncio
 async def test_state_machine_transitions_and_invalid_states() -> None:
     machine = InterviewStateMachine()
@@ -591,6 +648,212 @@ async def test_no_ready_knowledge_marks_session_failed() -> None:
     session = await service.create_session(**_create_args(uuid4(), uuid4()))
     assert session.status == InterviewStatus.FAILED
     assert session.failure_code == "interview_knowledge_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_conversation_listing_maps_statuses_and_isolates_users() -> None:
+    user_id, other_user_id = uuid4(), uuid4()
+    service, repository, _, _ = _service(context=_context())
+    now = datetime.now(UTC)
+    statuses = [
+        InterviewStatus.CREATED,
+        InterviewStatus.PREPARING,
+        InterviewStatus.READY,
+        InterviewStatus.IN_PROGRESS,
+        InterviewStatus.COMPLETED,
+        InterviewStatus.FAILED,
+        InterviewStatus.CANCELLED,
+    ]
+    for index, session_status in enumerate(statuses):
+        _seed_conversation(
+            repository,
+            user_id,
+            session_status,
+            f"岗位 {index}",
+            now - timedelta(minutes=index),
+        )
+    _seed_conversation(repository, other_user_id, InterviewStatus.READY, "其他用户", now)
+
+    sessions, total = await service.list_conversations(user_id, current=1, size=20)
+
+    assert total == len(statuses)
+    assert [session.job_title for session in sessions] == [
+        f"岗位 {index}" for index in range(len(statuses))
+    ]
+    assert [
+        {
+            InterviewStatus.CREATED: "DRAFT",
+            InterviewStatus.PREPARING: "RESUME_UPLOADING",
+            InterviewStatus.READY: "READY",
+            InterviewStatus.IN_PROGRESS: "IN_PROGRESS",
+            InterviewStatus.COMPLETED: "COMPLETED",
+            InterviewStatus.FAILED: "FAILED",
+            InterviewStatus.CANCELLED: "CANCELLED",
+        }[session.status]
+        for session in sessions
+    ] == [
+        "DRAFT",
+        "RESUME_UPLOADING",
+        "READY",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_conversation_listing_filters_before_pagination() -> None:
+    user_id = uuid4()
+    service, repository, _, _ = _service(context=_context())
+    now = datetime.now(UTC)
+    _seed_conversation(repository, user_id, InterviewStatus.CREATED, "Java 工程师", now)
+    _seed_conversation(
+        repository,
+        user_id,
+        InterviewStatus.READY,
+        "Python 工程师",
+        now - timedelta(minutes=1),
+    )
+    _seed_conversation(
+        repository,
+        user_id,
+        InterviewStatus.COMPLETED,
+        "数据分析师",
+        now - timedelta(minutes=2),
+    )
+
+    drafts, draft_total = await service.list_conversations(
+        user_id, status="DRAFT", current=1, size=10
+    )
+    keyword_matches, keyword_total = await service.list_conversations(
+        user_id, keyword="python", current=1, size=1
+    )
+
+    assert draft_total == 1
+    assert [session.status for session in drafts] == [InterviewStatus.CREATED]
+    assert keyword_total == 1
+    assert len(keyword_matches) == 1
+    assert keyword_matches[0].job_title == "Python 工程师"
+
+
+def test_conversation_api_contract_and_pagination_validation() -> None:
+    user = User(
+        id=uuid4(),
+        username="conversation-user",
+        email="conversation@example.com",
+        password_hash="hidden",
+        is_active=True,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    service, repository, _, _ = _service(context=_context())
+    now = datetime.now(UTC)
+    newest = _seed_conversation(repository, user.id, InterviewStatus.CREATED, "Java", now)
+    _seed_conversation(
+        repository,
+        user.id,
+        InterviewStatus.PREPARING,
+        "Python",
+        now - timedelta(minutes=1),
+    )
+    _seed_conversation(
+        repository,
+        uuid4(),
+        InterviewStatus.READY,
+        "不应返回",
+        now + timedelta(minutes=1),
+    )
+
+    try:
+        with TestClient(app) as client:
+            unauthorized = client.get("/api/xunzhi/v1/interview/conversations")
+            assert unauthorized.status_code == 401
+            app.dependency_overrides[get_current_user] = lambda: user
+            app.dependency_overrides[get_interview_service] = lambda: service
+
+            response = client.get(
+                "/api/xunzhi/v1/interview/conversations",
+                params={"current": 1, "size": 2},
+                headers={"Authorization": "Bearer test"},
+            )
+            assert response.status_code == 200
+            body = response.json()
+            assert body["total"] == 2
+            assert body["current"] == 1
+            assert body["size"] == 2
+            assert body["pages"] == 1
+            assert body["records"] == [
+                {
+                    "sessionId": str(newest.id),
+                    "conversationTitle": "Java",
+                    "status": "DRAFT",
+                    "interviewType": "TECHNICAL",
+                    "resumeFileUrl": None,
+                    "createTime": newest.created_at.isoformat().replace("+00:00", "Z"),
+                    "updateTime": newest.updated_at.isoformat().replace("+00:00", "Z"),
+                },
+                {
+                    "sessionId": body["records"][1]["sessionId"],
+                    "conversationTitle": "Python",
+                    "status": "RESUME_UPLOADING",
+                    "interviewType": "TECHNICAL",
+                    "resumeFileUrl": None,
+                    "createTime": body["records"][1]["createTime"],
+                    "updateTime": body["records"][1]["updateTime"],
+                },
+            ]
+
+            assert (
+                client.get(
+                    "/api/xunzhi/v1/interview/conversations",
+                    params={"current": 0},
+                    headers={"Authorization": "Bearer test"},
+                ).status_code
+                == 422
+            )
+            assert (
+                client.get(
+                    "/api/xunzhi/v1/interview/conversations",
+                    params={"size": 101},
+                    headers={"Authorization": "Bearer test"},
+                ).status_code
+                == 422
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_conversation_api_returns_empty_page() -> None:
+    user = User(
+        id=uuid4(),
+        username="empty-conversation-user",
+        email="empty-conversation@example.com",
+        password_hash="hidden",
+        is_active=True,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    service, _, _, _ = _service(context=_context())
+    try:
+        with TestClient(app) as client:
+            app.dependency_overrides[get_current_user] = lambda: user
+            app.dependency_overrides[get_interview_service] = lambda: service
+            response = client.get(
+                "/api/xunzhi/v1/interview/conversations",
+                params={"current": 2, "size": 10},
+                headers={"Authorization": "Bearer test"},
+            )
+            assert response.status_code == 200
+            assert response.json() == {
+                "records": [],
+                "total": 0,
+                "size": 10,
+                "current": 2,
+                "pages": 0,
+            }
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_interview_api_requires_auth_and_exposes_contract() -> None:

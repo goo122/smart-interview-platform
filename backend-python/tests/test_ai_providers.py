@@ -33,6 +33,11 @@ from app.ai.report import (
     LangChainInterviewReportNarrativeAdapter,
     RuleBasedInterviewReportNarrativeGenerator,
 )
+from app.ai.resume import (
+    FakeResumeEvaluator,
+    LangChainResumeEvaluatorAdapter,
+    UnavailableResumeEvaluator,
+)
 from app.core.config import Settings
 
 
@@ -44,6 +49,7 @@ def test_unavailable_provider_is_safe_default() -> None:
     assert isinstance(bundle.interview_answer_evaluator, UnavailableInterviewAnswerEvaluator)
     assert isinstance(bundle.follow_up_question_generator, UnavailableFollowUpQuestionGenerator)
     assert isinstance(bundle.interview_report_narrative, RuleBasedInterviewReportNarrativeGenerator)
+    assert isinstance(bundle.resume_evaluator, UnavailableResumeEvaluator)
     assert isinstance(bundle.embedding, UnavailableEmbedding)
 
 
@@ -65,6 +71,7 @@ async def test_fake_provider_runs_the_complete_workflow() -> None:
     assert isinstance(bundle.interview_answer_evaluator, FakeInterviewAnswerEvaluator)
     assert isinstance(bundle.follow_up_question_generator, FakeFollowUpQuestionGenerator)
     assert isinstance(bundle.interview_report_narrative, FakeInterviewReportNarrativeGenerator)
+    assert isinstance(bundle.resume_evaluator, FakeResumeEvaluator)
     assert isinstance(bundle.embedding, FakeEmbedding)
 
     chat_chunks = [
@@ -221,6 +228,7 @@ def test_openai_compatible_uses_one_shared_chat_model(monkeypatch: pytest.Monkey
         bundle.follow_up_question_generator, LangChainFollowUpQuestionGeneratorAdapter
     )
     assert isinstance(bundle.interview_report_narrative, LangChainInterviewReportNarrativeAdapter)
+    assert isinstance(bundle.resume_evaluator, LangChainResumeEvaluatorAdapter)
     assert bundle.chat_model._model is bundle.interview_question_generator._model
     assert isinstance(bundle.embedding, LangChainEmbeddingAdapter)
 

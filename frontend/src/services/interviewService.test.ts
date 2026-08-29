@@ -164,6 +164,35 @@ describe("interviewService reports", () => {
   });
 });
 
+describe("interviewService.restoreInterviewSession", () => {
+  it("forwards persisted resume evaluation metadata", async () => {
+    const getSpy = vi.spyOn(service, "get").mockResolvedValue({
+      sessionId: "session-resume",
+      status: "READY",
+      interviewType: "TECHNICAL",
+      resumeScore: 86,
+      resumeEvaluation: {
+        status: "COMPLETED",
+        overallScore: 86,
+        suggestions: ["补充量化结果"],
+        gaps: ["缺少指标"],
+        summary: "匹配度良好",
+      },
+    });
+
+    try {
+      const restored = await interviewService.restoreInterviewSession(
+        "session-resume",
+      );
+      expect(restored.resumeScore).toBe(86);
+      expect(restored.suggestions).toEqual({ "1": "补充量化结果" });
+      expect(restored.resumeEvaluation?.gaps).toEqual(["缺少指标"]);
+    } finally {
+      getSpy.mockRestore();
+    }
+  });
+});
+
 describe("interviewService.answerInterviewQuestion", () => {
   it("rejects empty questionNumber before request", async () => {
     const error = await interviewService

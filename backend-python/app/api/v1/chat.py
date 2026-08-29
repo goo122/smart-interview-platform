@@ -6,6 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 
+from app.ai.dependencies import get_ai_model_metadata
+from app.ai.metadata import AiModelMetadataPort
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.domain import User
 from app.modules.chat.dependencies import get_chat_service
@@ -32,12 +34,14 @@ async def create_conversation(
     payload: CreateConversationRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ChatService, Depends(get_chat_service)],
+    model_metadata: Annotated[AiModelMetadataPort, Depends(get_ai_model_metadata)],
 ) -> CreateConversationResponse:
     conversation = await service.create_conversation(
         current_user.id,
         title=payload.title,
         first_message=payload.first_message,
         model_name=payload.model_name,
+        ai_id=payload.ai_id,
     )
     return CreateConversationResponse(
         sessionId=str(conversation.id),
@@ -51,6 +55,7 @@ async def create_conversation(
 async def list_conversations(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ChatService, Depends(get_chat_service)],
+    model_metadata: Annotated[AiModelMetadataPort, Depends(get_ai_model_metadata)],
     current: int = Query(default=1, ge=1),
     size: int = Query(default=10, ge=1, le=100),
     ai_id: int | None = Query(default=None, alias="aiId"),
@@ -61,7 +66,11 @@ async def list_conversations(
         current_user.id, current, size, ai_id, conversation_status, title
     )
     records = [
-        ConversationResponse.from_domain(item, username=current_user.username)
+        ConversationResponse.from_domain(
+            item,
+            username=current_user.username,
+            model_metadata=model_metadata,
+        )
         for item in conversations
     ]
     return PageResponse.build(records, total, current, size)
@@ -72,9 +81,14 @@ async def get_conversation(
     session_id: UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ChatService, Depends(get_chat_service)],
+    model_metadata: Annotated[AiModelMetadataPort, Depends(get_ai_model_metadata)],
 ) -> ConversationResponse:
     conversation = await service.get_conversation(current_user.id, session_id)
-    return ConversationResponse.from_domain(conversation, username=current_user.username)
+    return ConversationResponse.from_domain(
+        conversation,
+        username=current_user.username,
+        model_metadata=model_metadata,
+    )
 
 
 @router.post("/conversations/{session_id}/end", response_model=ConversationResponse)
@@ -83,9 +97,14 @@ async def finish_conversation(
     session_id: UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ChatService, Depends(get_chat_service)],
+    model_metadata: Annotated[AiModelMetadataPort, Depends(get_ai_model_metadata)],
 ) -> ConversationResponse:
     conversation = await service.finish_conversation(current_user.id, session_id)
-    return ConversationResponse.from_domain(conversation, username=current_user.username)
+    return ConversationResponse.from_domain(
+        conversation,
+        username=current_user.username,
+        model_metadata=model_metadata,
+    )
 
 
 @router.delete("/conversations/{session_id}", response_model=EmptyResponse)

@@ -51,6 +51,7 @@ class InterviewReport:
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    resume_evaluation_snapshot: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

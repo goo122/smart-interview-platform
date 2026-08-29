@@ -39,12 +39,19 @@ from app.ai.interview import (
     LangChainInterviewQuestionGeneratorAdapter,
     UnavailableInterviewQuestionGenerator,
 )
+from app.ai.metadata import AiModelMetadataPort, RuntimeAiModelMetadata
 from app.ai.report import (
     FakeInterviewReportNarrativeGenerator,
     InterviewReportNarrativePort,
     LangChainInterviewReportNarrativeAdapter,
     RuleBasedInterviewReportNarrativeGenerator,
     UnavailableInterviewReportNarrativeGenerator,
+)
+from app.ai.resume import (
+    FakeResumeEvaluator,
+    LangChainResumeEvaluatorAdapter,
+    ResumeEvaluatorPort,
+    UnavailableResumeEvaluator,
 )
 from app.core.config import Settings
 
@@ -60,7 +67,9 @@ class AiProviderBundle:
     interview_answer_evaluator: InterviewAnswerEvaluatorPort
     follow_up_question_generator: FollowUpQuestionGeneratorPort
     interview_report_narrative: InterviewReportNarrativePort
+    resume_evaluator: ResumeEvaluatorPort
     embedding: EmbeddingPort
+    model_metadata: AiModelMetadataPort
 
 
 class AiProviderFactory:
@@ -69,12 +78,13 @@ class AiProviderFactory:
     @classmethod
     def build(cls, settings: Settings) -> AiProviderBundle:
         cls._validate_environment(settings)
+        model_metadata = RuntimeAiModelMetadata(settings)
         if (
             settings.ai_provider == "openai_compatible"
             or settings.embedding_provider == "openai_compatible"
         ):
-            return cls._build_openai_compatible(settings)
-        return cls._build_non_network(settings)
+            return cls._build_openai_compatible(settings, model_metadata)
+        return cls._build_non_network(settings, model_metadata)
 
     @staticmethod
     async def validate_embedding_dimensions(
@@ -109,7 +119,9 @@ class AiProviderFactory:
             raise AiProviderConfigurationError("Fake AI providers are not allowed in production")
 
     @classmethod
-    def _build_non_network(cls, settings: Settings) -> AiProviderBundle:
+    def _build_non_network(
+        cls, settings: Settings, model_metadata: AiModelMetadataPort
+    ) -> AiProviderBundle:
         if settings.ai_provider == "fake":
             evaluation_output: StructuredInterviewEvaluation | None = None
             evaluation_error: Exception | None = None
@@ -141,6 +153,9 @@ class AiProviderFactory:
             report_narrative: InterviewReportNarrativePort = FakeInterviewReportNarrativeGenerator(
                 error=evaluation_error
             )
+            resume_evaluator: ResumeEvaluatorPort = FakeResumeEvaluator(
+                error=evaluation_error
+            )
             chat_model: ChatModelPort = FakeChatModel(
                 chunks=("这是开发环境的模拟回答。",), error=evaluation_error
             )
@@ -154,6 +169,7 @@ class AiProviderFactory:
                 if settings.ai_provider == "unavailable"
                 else UnavailableInterviewReportNarrativeGenerator()
             )
+            resume_evaluator = UnavailableResumeEvaluator()
         embedding: EmbeddingPort = (
             FakeEmbedding(settings.embedding_dimensions)
             if settings.embedding_provider == "fake"
@@ -165,11 +181,15 @@ class AiProviderFactory:
             answer_evaluator,
             follow_up_generator,
             report_narrative,
+            resume_evaluator,
             embedding,
+            model_metadata,
         )
 
     @classmethod
-    def _build_openai_compatible(cls, settings: Settings) -> AiProviderBundle:
+    def _build_openai_compatible(
+        cls, settings: Settings, model_metadata: AiModelMetadataPort
+    ) -> AiProviderBundle:
         try:
             from langchain_openai import (
                 ChatOpenAI,
@@ -185,6 +205,7 @@ class AiProviderFactory:
         answer_evaluator: InterviewAnswerEvaluatorPort
         follow_up_generator: FollowUpQuestionGeneratorPort
         report_narrative: InterviewReportNarrativePort
+        resume_evaluator: ResumeEvaluatorPort
         if settings.ai_provider == "openai_compatible":
             assert settings.llm_api_key is not None
             assert settings.llm_base_url is not None
@@ -200,12 +221,14 @@ class AiProviderFactory:
             answer_evaluator = LangChainInterviewAnswerEvaluatorAdapter(model)
             follow_up_generator = LangChainFollowUpQuestionGeneratorAdapter(model)
             report_narrative = LangChainInterviewReportNarrativeAdapter(model)
+            resume_evaluator = LangChainResumeEvaluatorAdapter(model)
         else:
             chat_model = UnavailableChatModel()
             question_generator = UnavailableInterviewQuestionGenerator()
             answer_evaluator = UnavailableInterviewAnswerEvaluator()
             follow_up_generator = UnavailableFollowUpQuestionGenerator()
             report_narrative = RuleBasedInterviewReportNarrativeGenerator()
+            resume_evaluator = UnavailableResumeEvaluator()
 
         if settings.embedding_provider == "openai_compatible":
             assert settings.embedding_api_key is not None
@@ -235,5 +258,7 @@ class AiProviderFactory:
             answer_evaluator,
             follow_up_generator,
             report_narrative,
+            resume_evaluator,
             embedding,
+            model_metadata,
         )

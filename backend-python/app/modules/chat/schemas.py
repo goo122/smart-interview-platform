@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.ai.metadata import AiModelMetadataPort
 from app.modules.chat.domain import Conversation, Message, MessageCitation
 
 T = TypeVar("T")
@@ -73,21 +74,28 @@ class ConversationResponse(BaseModel):
         username: str | None = None,
         message_count: int = 0,
         ai_id: int | None = None,
+        model_metadata: AiModelMetadataPort | None = None,
     ) -> "ConversationResponse":
         numeric_status = 1 if conversation.status.value == "ACTIVE" else 2
+        metadata = (
+            model_metadata.describe_conversation(conversation.model_name)
+            if model_metadata is not None
+            else None
+        )
         return cls(
             id=conversation.id,
             user_id=conversation.user_id,
             title=conversation.title,
             status=numeric_status,
             statusName=conversation.status.value,
-            modelName=conversation.model_name,
+            modelName=metadata.model_name if metadata is not None else conversation.model_name,
             createdAt=conversation.created_at,
             updatedAt=conversation.updated_at,
             finishedAt=conversation.finished_at,
             sessionId=str(conversation.id),
             username=username,
-            aiId=ai_id,
+            aiId=ai_id if ai_id is not None else (metadata.id if metadata is not None else None),
+            aiName=metadata.ai_name if metadata is not None else None,
             messageCount=message_count,
             lastMessageTime=conversation.updated_at,
             createTime=conversation.created_at,

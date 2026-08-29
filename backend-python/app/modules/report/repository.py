@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, select
@@ -52,6 +52,7 @@ class InterviewReportRepository(Protocol):
         prompt_version: str | None,
         generated_by: ReportGeneratedBy,
         items: Sequence[InterviewReportItem],
+        resume_evaluation_snapshot: dict[str, Any] | None = None,
     ) -> InterviewReport: ...
 
     async def mark_failed(
@@ -196,6 +197,7 @@ class SqlAlchemyInterviewReportRepository:
         prompt_version: str | None,
         generated_by: ReportGeneratedBy,
         items: Sequence[InterviewReportItem],
+        resume_evaluation_snapshot: dict[str, Any] | None = None,
     ) -> InterviewReport:
         row = await self._locked_row(report_id, user_id)
         if row is None:
@@ -250,6 +252,7 @@ class SqlAlchemyInterviewReportRepository:
         row.aggregation_version = aggregation_version
         row.prompt_version = prompt_version
         row.generated_by = generated_by.value
+        row.resume_evaluation_snapshot = resume_evaluation_snapshot
         row.failure_code = None
         row.failure_message = None
         row.updated_at = now
@@ -323,6 +326,11 @@ def _report_to_domain(row: InterviewReportModel) -> InterviewReport:
         created_at=row.created_at,
         updated_at=row.updated_at,
         completed_at=row.completed_at,
+        resume_evaluation_snapshot=(
+            dict(row.resume_evaluation_snapshot)
+            if row.resume_evaluation_snapshot is not None
+            else None
+        ),
     )
 
 

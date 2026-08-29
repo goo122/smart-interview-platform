@@ -10,6 +10,7 @@ from app.ai.interview import (
     InterviewQuestionGeneratorPort,
     UnavailableInterviewQuestionGenerator,
 )
+from app.ai.resume import ResumeEvaluatorPort, UnavailableResumeEvaluator
 from app.core.config import Settings, get_settings
 from app.infrastructure.vectorstore.retriever import PgVectorRetriever
 from app.modules.auth.dependencies import get_db_session
@@ -75,6 +76,13 @@ def get_interview_question_generator(request: Request) -> InterviewQuestionGener
     )
 
 
+def get_resume_evaluator(request: Request) -> ResumeEvaluatorPort:
+    return cast(
+        ResumeEvaluatorPort,
+        getattr(request.app.state, "resume_evaluator", UnavailableResumeEvaluator()),
+    )
+
+
 def get_interview_answer_evaluator(request: Request) -> InterviewAnswerEvaluatorPort:
     return cast(
         InterviewAnswerEvaluatorPort,
@@ -122,8 +130,11 @@ def get_interview_service(
     ],
     task_queue: Annotated[TaskQueuePort, Depends(get_task_queue)],
     settings: Annotated[Settings, Depends(get_settings)],
+    resume_evaluator: Annotated[ResumeEvaluatorPort, Depends(get_resume_evaluator)],
 ) -> InterviewService:
-    return InterviewService(repository, context_provider, generator, task_queue, settings)
+    return InterviewService(
+        repository, context_provider, generator, task_queue, settings, resume_evaluator
+    )
 
 
 def get_interview_answer_service(

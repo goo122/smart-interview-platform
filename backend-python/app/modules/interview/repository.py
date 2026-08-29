@@ -1,8 +1,8 @@
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,8 @@ from app.modules.interview.domain import (
     InterviewStatus,
     InterviewTurn,
     InterviewType,
+    ResumeEvaluation,
+    ResumeEvaluationStatus,
     TurnStatus,
     TurnType,
     utc_now,
@@ -33,6 +35,7 @@ from app.modules.interview.models import (
     InterviewEventModel,
     InterviewQuestionCitationModel,
     InterviewQuestionModel,
+    InterviewResumeEvaluationModel,
     InterviewSessionModel,
     InterviewTurnModel,
 )
@@ -50,6 +53,49 @@ class InterviewRepository(Protocol):
     async def list_for_user(
         self, user_id: UUID, current: int, size: int
     ) -> tuple[list[InterviewSession], int]: ...
+
+    async def list_conversations_for_user(
+        self,
+        user_id: UUID,
+        current: int,
+        size: int,
+        status: InterviewStatus | None = None,
+        keyword: str | None = None,
+    ) -> tuple[list[InterviewSession], int]: ...
+
+    async def get_resume_evaluation(
+        self, session_id: UUID, user_id: UUID
+    ) -> ResumeEvaluation | None: ...
+
+    async def create_resume_evaluation_pending(
+        self, session_id: UUID, user_id: UUID, knowledge_base_id: UUID, version: str
+    ) -> ResumeEvaluation: ...
+
+    async def claim_resume_evaluation(
+        self, session_id: UUID, user_id: UUID
+    ) -> tuple[ResumeEvaluation, bool]: ...
+
+    async def persist_resume_evaluation(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        evaluation: Any,
+        *,
+        source_document_ids: Sequence[UUID],
+        version: str,
+        provider_name: str | None,
+    ) -> ResumeEvaluation: ...
+
+    async def mark_resume_evaluation_failed(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        status: ResumeEvaluationStatus,
+        failure_code: str,
+        failure_message: str,
+        *,
+        version: str,
+    ) -> ResumeEvaluation: ...
 
     async def begin_preparing(
         self, session_id: UUID, user_id: UUID
@@ -121,11 +167,140 @@ class InterviewRepository(Protocol):
 
     async def list_events(self, session_id: UUID) -> list[InterviewEvent]: ...
 
-
 class SqlAlchemyInterviewRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._state_machine = InterviewStateMachine()
+
+    async def get_resume_evaluation(
+        self, session_id: UUID, user_id: UUID
+    ) -> ResumeEvaluation | None:
+        row = await self._session.scalar(
+            select(InterviewResumeEvaluationModel).where(
+                InterviewResumeEvaluationModel.session_id == session_id,
+                InterviewResumeEvaluationModel.user_id == user_id,
+            )
+        )
+        return _resume_evaluation_to_domain(row) if row is not None else None
+
+    async def create_resume_evaluation_pending(
+        self, session_id: UUID, user_id: UUID, knowledge_base_id: UUID, version: str
+    ) -> ResumeEvaluation:
+        existing = await self.get_resume_evaluation(session_id, user_id)
+        if existing is not None:
+            return existing
+        now = utc_now()
+        row = InterviewResumeEvaluationModel(
+            id=uuid4(), session_id=session_id, user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            status=ResumeEvaluationStatus.PENDING.value,
+            overall_score=None, skills_match_score=None, experience_match_score=None,
+            evidence_quality_score=None, clarity_score=None,
+            strengths=[], gaps=[], suggestions=[], summary=None,
+            source_document_ids=[], evaluation_version=version, provider_name=None,
+            failure_code=None, failure_message=None, created_at=now,
+            updated_at=now, completed_at=None,
+        )
+        self._session.add(row)
+        try:
+            await self._session.commit()
+        except IntegrityError:
+            await self._session.rollback()
+            existing = await self.get_resume_evaluation(session_id, user_id)
+            if existing is None:
+                raise
+            return existing
+        await self._session.refresh(row)
+        return _resume_evaluation_to_domain(row)
+
+    async def claim_resume_evaluation(
+        self, session_id: UUID, user_id: UUID
+    ) -> tuple[ResumeEvaluation, bool]:
+        row = await self._session.scalar(
+            select(InterviewResumeEvaluationModel).where(
+                InterviewResumeEvaluationModel.session_id == session_id,
+                InterviewResumeEvaluationModel.user_id == user_id,
+            ).with_for_update()
+        )
+        if row is None:
+            raise InterviewNotFoundError("Resume evaluation not found")
+        if row.status in {
+            ResumeEvaluationStatus.COMPLETED.value,
+            ResumeEvaluationStatus.EVALUATING.value,
+            ResumeEvaluationStatus.UNAVAILABLE.value,
+        }:
+            return _resume_evaluation_to_domain(row), False
+        row.status = ResumeEvaluationStatus.EVALUATING.value
+        row.failure_code = None
+        row.failure_message = None
+        row.updated_at = utc_now()
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _resume_evaluation_to_domain(row), True
+
+    async def persist_resume_evaluation(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        evaluation: Any,
+        *,
+        source_document_ids: Sequence[UUID],
+        version: str,
+        provider_name: str | None,
+    ) -> ResumeEvaluation:
+        row = await self._session.scalar(
+            select(InterviewResumeEvaluationModel).where(
+                InterviewResumeEvaluationModel.session_id == session_id,
+                InterviewResumeEvaluationModel.user_id == user_id,
+            ).with_for_update()
+        )
+        if row is None:
+            raise InterviewNotFoundError("Resume evaluation not found")
+        row.status = ResumeEvaluationStatus.COMPLETED.value
+        for field_name in (
+            "overall_score", "skills_match_score", "experience_match_score",
+            "evidence_quality_score", "clarity_score", "strengths", "gaps",
+            "suggestions", "summary",
+        ):
+            setattr(row, field_name, getattr(evaluation, field_name))
+        row.source_document_ids = [str(value) for value in source_document_ids]
+        row.evaluation_version = version
+        row.provider_name = provider_name
+        row.failure_code = None
+        row.failure_message = None
+        row.updated_at = utc_now()
+        row.completed_at = row.updated_at
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _resume_evaluation_to_domain(row)
+
+    async def mark_resume_evaluation_failed(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        status: ResumeEvaluationStatus,
+        failure_code: str,
+        failure_message: str,
+        *,
+        version: str,
+    ) -> ResumeEvaluation:
+        row = await self._session.scalar(
+            select(InterviewResumeEvaluationModel).where(
+                InterviewResumeEvaluationModel.session_id == session_id,
+                InterviewResumeEvaluationModel.user_id == user_id,
+            ).with_for_update()
+        )
+        if row is None:
+            raise InterviewNotFoundError("Resume evaluation not found")
+        row.status = status.value
+        row.evaluation_version = version
+        row.failure_code = failure_code[:64]
+        row.failure_message = failure_message[:2000]
+        row.updated_at = utc_now()
+        row.completed_at = row.updated_at
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _resume_evaluation_to_domain(row)
 
     async def create(self, session: InterviewSession) -> InterviewSession:
         row = InterviewSessionModel(
@@ -191,6 +366,39 @@ class SqlAlchemyInterviewRepository:
         count = await self._session.scalar(select(func.count()).select_from(query.subquery()))
         result = await self._session.execute(
             query.order_by(InterviewSessionModel.updated_at.desc())
+            .offset((current - 1) * size)
+            .limit(size)
+        )
+        return [_session_to_domain(row) for row in result.scalars().all()], int(count or 0)
+
+    async def list_conversations_for_user(
+        self,
+        user_id: UUID,
+        current: int,
+        size: int,
+        status: InterviewStatus | None = None,
+        keyword: str | None = None,
+    ) -> tuple[list[InterviewSession], int]:
+        filters = [InterviewSessionModel.user_id == user_id]
+        if status is not None:
+            filters.append(InterviewSessionModel.status == status.value)
+        clean_keyword = keyword.strip() if keyword else ""
+        if clean_keyword:
+            pattern = f"%{clean_keyword}%"
+            filters.append(
+                or_(
+                    InterviewSessionModel.job_title.ilike(pattern),
+                    InterviewSessionModel.job_description.ilike(pattern),
+                )
+            )
+
+        query = select(InterviewSessionModel).where(*filters)
+        count = await self._session.scalar(select(func.count()).select_from(query.subquery()))
+        result = await self._session.execute(
+            query.order_by(
+                InterviewSessionModel.updated_at.desc(),
+                InterviewSessionModel.id.desc(),
+            )
             .offset((current - 1) * size)
             .limit(size)
         )
@@ -964,6 +1172,33 @@ def _session_to_domain(row: InterviewSessionModel) -> InterviewSession:
         prepared_at=row.prepared_at,
         started_at=row.started_at,
         finished_at=row.finished_at,
+    )
+
+
+def _resume_evaluation_to_domain(row: InterviewResumeEvaluationModel) -> ResumeEvaluation:
+    return ResumeEvaluation(
+        id=row.id,
+        session_id=row.session_id,
+        user_id=row.user_id,
+        knowledge_base_id=row.knowledge_base_id,
+        status=ResumeEvaluationStatus(row.status),
+        overall_score=row.overall_score,
+        skills_match_score=row.skills_match_score,
+        experience_match_score=row.experience_match_score,
+        evidence_quality_score=row.evidence_quality_score,
+        clarity_score=row.clarity_score,
+        strengths=list(row.strengths),
+        gaps=list(row.gaps),
+        suggestions=list(row.suggestions),
+        summary=row.summary,
+        source_document_ids=[UUID(value) for value in row.source_document_ids],
+        evaluation_version=row.evaluation_version,
+        provider_name=row.provider_name,
+        failure_code=row.failure_code,
+        failure_message=row.failure_message,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        completed_at=row.completed_at,
     )
 
 

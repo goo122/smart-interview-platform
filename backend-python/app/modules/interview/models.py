@@ -62,6 +62,78 @@ class InterviewSessionModel(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class InterviewResumeEvaluationModel(Base):
+    """One immutable-source evaluation record per interview session."""
+
+    __tablename__ = "interview_resume_evaluations"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_interview_resume_evaluations_session"),
+        Index(
+            "ix_interview_resume_evaluations_user_status_updated_at",
+            "user_id",
+            "status",
+            "updated_at",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'EVALUATING', 'COMPLETED', 'FAILED', 'UNAVAILABLE')",
+            name="ck_interview_resume_evaluations_status",
+        ),
+        CheckConstraint(
+            "overall_score IS NULL OR overall_score BETWEEN 0 AND 100",
+            name="ck_interview_resume_evaluations_overall_score",
+        ),
+        CheckConstraint(
+            "skills_match_score IS NULL OR skills_match_score BETWEEN 0 AND 100",
+            name="ck_interview_resume_evaluations_skills_score",
+        ),
+        CheckConstraint(
+            "experience_match_score IS NULL OR experience_match_score BETWEEN 0 AND 100",
+            name="ck_interview_resume_evaluations_experience_score",
+        ),
+        CheckConstraint(
+            "evidence_quality_score IS NULL OR evidence_quality_score BETWEEN 0 AND 100",
+            name="ck_interview_resume_evaluations_evidence_score",
+        ),
+        CheckConstraint(
+            "clarity_score IS NULL OR clarity_score BETWEEN 0 AND 100",
+            name="ck_interview_resume_evaluations_clarity_score",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    session_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    overall_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    skills_match_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    experience_match_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_quality_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    clarity_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    strengths: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    gaps: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    suggestions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_document_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    evaluation_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class InterviewQuestionModel(Base):
     __tablename__ = "interview_questions"
     __table_args__ = (

@@ -86,6 +86,18 @@ export interface InterviewRecordResult {
   userId: number;
   sessionId: string;
   resumeScore?: number | null;
+  resumeEvaluation?: {
+    status?: string | null;
+    overallScore?: number | null;
+    skillsMatchScore?: number | null;
+    experienceMatchScore?: number | null;
+    evidenceQualityScore?: number | null;
+    clarityScore?: number | null;
+    strengths?: string[] | null;
+    gaps?: string[] | null;
+    suggestions?: string[] | null;
+    summary?: string | null;
+  } | null;
   interviewScore?: number | null;
   interviewStatus?: string | null;
   questionCount?: number | null;
@@ -199,6 +211,13 @@ export interface InterviewSessionRestoreResult {
   resumeScore?: number | null;
   interviewType?: string | null;
   suggestions?: Record<string, string> | null;
+  resumeEvaluation?: {
+    status?: string | null;
+    overallScore?: number | null;
+    suggestions?: string[] | null;
+    gaps?: string[] | null;
+    summary?: string | null;
+  } | null;
 }
 
 export interface AnswerInterviewQuestionParams {
@@ -726,6 +745,7 @@ const normalizeInterviewSessionRestore = (
       toStringMap(
         pickFirst(source, ["suggestions", "suggestionMap", "suggestion_map"]),
       ) ?? payload.suggestions,
+    resumeEvaluation: payload.resumeEvaluation,
   };
 };
 
@@ -921,9 +941,25 @@ export const interviewService = {
         status: session.status,
         canResume: session.status === "IN_PROGRESS" || session.status === "READY",
         resumeFileUrl: null,
-        resumeScore: null,
+        resumeScore: session.resumeScore ?? session.resumeEvaluation?.overallScore ?? null,
         interviewType: session.interviewType,
-        suggestions: null,
+        suggestions: session.resumeEvaluation?.suggestions
+          ? Object.fromEntries(
+              session.resumeEvaluation.suggestions.map((item, index) => [
+                String(index + 1),
+                item,
+              ]),
+            )
+          : null,
+        resumeEvaluation: session.resumeEvaluation
+          ? {
+              status: session.resumeEvaluation.status,
+              overallScore: session.resumeEvaluation.overallScore,
+              suggestions: session.resumeEvaluation.suggestions,
+              gaps: session.resumeEvaluation.gaps,
+              summary: session.resumeEvaluation.summary,
+            }
+          : null,
       } satisfies InterviewSessionRestoreResult;
     } catch (error) {
       if (!shouldFallbackToLegacyPath(error)) {

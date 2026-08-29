@@ -65,6 +65,11 @@ const selected = [
   { exportName: "KnowledgeBasePage", schemaName: "PageResponse_KnowledgeBaseResponse_" },
   { exportName: "KnowledgeDocumentPage", schemaName: "PageResponse_KnowledgeDocumentResponse_" },
   { exportName: "ChatRequest", schemaName: "ChatRequest" },
+  { exportName: "AiPropertyResponse", schemaName: "AiPropertyResponse" },
+  {
+    exportName: "AiPropertiesPage",
+    schemaName: "AiPropertiesPageResponse_AiPropertyResponse_",
+  },
   { exportName: "CreateConversationRequest", schemaName: "CreateConversationRequest" },
   { exportName: "CreateConversationResponse", schemaName: "CreateConversationResponse" },
   { exportName: "ConversationResponse", schemaName: "ConversationResponse" },
@@ -83,6 +88,10 @@ const selected = [
   {
     exportName: "InterviewSessionResponse",
     schemaName: "InterviewSessionResponse",
+  },
+  {
+    exportName: "ResumeEvaluationResponse",
+    schemaName: "ResumeEvaluationResponse",
   },
   {
     exportName: "InterviewQuestionResponse",
@@ -116,6 +125,10 @@ const selected = [
   {
     exportName: "InterviewReportResponse",
     schemaName: "InterviewReportResponse",
+  },
+  {
+    exportName: "ResumeEvaluationSnapshotResponse",
+    schemaName: "ResumeEvaluationSnapshotResponse",
   },
   {
     exportName: "InterviewReportPage",

@@ -13,6 +13,7 @@ from app.modules.interview.domain import (
     InterviewSession,
     InterviewStatus,
     InterviewType,
+    ResumeEvaluation,
 )
 
 
@@ -52,9 +53,18 @@ class InterviewSessionResponse(BaseModel):
     prepared_at: datetime | None = Field(default=None, alias="preparedAt")
     started_at: datetime | None = Field(default=None, alias="startedAt")
     finished_at: datetime | None = Field(default=None, alias="finishedAt")
+    resume_score: int | None = Field(default=None, alias="resumeScore")
+    resume_evaluation_status: str | None = Field(default=None, alias="resumeEvaluationStatus")
+    resume_evaluation: "ResumeEvaluationResponse | None" = Field(
+        default=None, alias="resumeEvaluation"
+    )
 
     @classmethod
-    def from_domain(cls, session: InterviewSession) -> "InterviewSessionResponse":
+    def from_domain(
+        cls,
+        session: InterviewSession,
+        resume_evaluation: ResumeEvaluation | None = None,
+    ) -> "InterviewSessionResponse":
         progress = {
             InterviewStatus.CREATED: 0,
             InterviewStatus.PREPARING: 50,
@@ -86,6 +96,89 @@ class InterviewSessionResponse(BaseModel):
             preparedAt=session.prepared_at,
             startedAt=session.started_at,
             finishedAt=session.finished_at,
+            resumeScore=(resume_evaluation.overall_score if resume_evaluation else None),
+            resumeEvaluationStatus=(
+                resume_evaluation.status.value if resume_evaluation else None
+            ),
+            resumeEvaluation=(
+                ResumeEvaluationResponse.from_domain(resume_evaluation)
+                if resume_evaluation
+                else None
+            ),
+        )
+
+
+class ResumeEvaluationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    status: str
+    overall_score: int | None = Field(default=None, alias="overallScore")
+    skills_match_score: int | None = Field(default=None, alias="skillsMatchScore")
+    experience_match_score: int | None = Field(default=None, alias="experienceMatchScore")
+    evidence_quality_score: int | None = Field(default=None, alias="evidenceQualityScore")
+    clarity_score: int | None = Field(default=None, alias="clarityScore")
+    strengths: list[str]
+    gaps: list[str]
+    suggestions: list[str]
+    summary: str | None = None
+    evaluation_version: str = Field(alias="evaluationVersion")
+    evaluated_at: datetime | None = Field(default=None, alias="evaluatedAt")
+    failure_code: str | None = Field(default=None, alias="failureCode")
+
+    @classmethod
+    def from_domain(cls, evaluation: ResumeEvaluation) -> "ResumeEvaluationResponse":
+        return cls(
+            status=evaluation.status.value,
+            overallScore=evaluation.overall_score,
+            skillsMatchScore=evaluation.skills_match_score,
+            experienceMatchScore=evaluation.experience_match_score,
+            evidenceQualityScore=evaluation.evidence_quality_score,
+            clarityScore=evaluation.clarity_score,
+            strengths=list(evaluation.strengths),
+            gaps=list(evaluation.gaps),
+            suggestions=list(evaluation.suggestions),
+            summary=evaluation.summary,
+            evaluationVersion=evaluation.evaluation_version,
+            evaluatedAt=evaluation.completed_at,
+            failureCode=evaluation.failure_code,
+        )
+
+
+InterviewSessionResponse.model_rebuild()
+
+
+class InterviewConversationResponse(BaseModel):
+    """Legacy conversation summary used by the original interview intro page."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(alias="sessionId")
+    conversation_title: str | None = Field(default=None, alias="conversationTitle")
+    status: str | None = None
+    interview_type: str | None = Field(default=None, alias="interviewType")
+    resume_file_url: str | None = Field(default=None, alias="resumeFileUrl")
+    create_time: datetime | None = Field(default=None, alias="createTime")
+    update_time: datetime | None = Field(default=None, alias="updateTime")
+
+    @classmethod
+    def from_domain(cls, session: InterviewSession) -> "InterviewConversationResponse":
+        status = {
+            InterviewStatus.CREATED: "DRAFT",
+            InterviewStatus.PREPARING: "RESUME_UPLOADING",
+            InterviewStatus.READY: "READY",
+            InterviewStatus.IN_PROGRESS: "IN_PROGRESS",
+            InterviewStatus.COMPLETED: "COMPLETED",
+            InterviewStatus.FAILED: "FAILED",
+            InterviewStatus.CANCELLED: "CANCELLED",
+        }[session.status]
+        return cls(
+            sessionId=str(session.id),
+            conversationTitle=session.job_title or None,
+            status=status,
+            interviewType=session.interview_type.value,
+            resumeFileUrl=None,
+            createTime=session.created_at,
+            updateTime=session.updated_at,
         )
 
 

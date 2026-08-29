@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
@@ -9,6 +10,13 @@ from app.ai.interview import (
     InterviewQuestionGeneratorPort,
     QuestionGenerationRequest,
 )
+from app.ai.resume import (
+    RESUME_EVALUATION_VERSION,
+    ResumeEvaluationRequest,
+    ResumeEvaluatorPort,
+    StructuredResumeEvaluation,
+    UnavailableResumeEvaluator,
+)
 from app.core.exceptions import AppError
 from app.modules.interview.context import InterviewContext, InterviewContextProviderPort
 from app.modules.interview.domain import (
@@ -16,6 +24,7 @@ from app.modules.interview.domain import (
     InterviewQuestion,
     InterviewQuestionCitation,
     InterviewSession,
+    ResumeEvaluationStatus,
     utc_now,
 )
 from app.modules.interview.exceptions import (
@@ -23,6 +32,8 @@ from app.modules.interview.exceptions import (
     InterviewQuestionValidationError,
 )
 from app.modules.interview.repository import InterviewRepository
+
+logger = logging.getLogger(__name__)
 
 
 class InterviewGraphState(TypedDict, total=False):
@@ -44,10 +55,12 @@ class InterviewPreparationWorkflow:
         repository: InterviewRepository,
         context_provider: InterviewContextProviderPort,
         generator: InterviewQuestionGeneratorPort,
+        resume_evaluator: ResumeEvaluatorPort | None = None,
     ) -> None:
         self._repository = repository
         self._context_provider = context_provider
         self._generator = generator
+        self._resume_evaluator = resume_evaluator
         self._graph = self._build_graph()
 
     async def prepare(self, user_id: UUID, session_id: UUID) -> InterviewSession:
@@ -79,6 +92,7 @@ class InterviewPreparationWorkflow:
         builder.add_node("validate_knowledge_base", self._validate_knowledge_base)
         builder.add_node("mark_preparing", self._mark_preparing)
         builder.add_node("retrieve_resume_context", self._retrieve_resume_context)
+        builder.add_node("evaluate_resume", self._evaluate_resume)
         builder.add_node("build_question_generation_context", self._build_generation_context)
         builder.add_node("generate_questions", self._generate_questions)
         builder.add_node("validate_questions", self._validate_questions)
@@ -92,7 +106,8 @@ class InterviewPreparationWorkflow:
             self._continue_after_mark_preparing,
             {"continue": "retrieve_resume_context", "end": END},
         )
-        builder.add_edge("retrieve_resume_context", "build_question_generation_context")
+        builder.add_edge("retrieve_resume_context", "evaluate_resume")
+        builder.add_edge("evaluate_resume", "build_question_generation_context")
         builder.add_edge("build_question_generation_context", "generate_questions")
         builder.add_edge("generate_questions", "validate_questions")
         builder.add_edge("validate_questions", "persist_questions_and_citations")
@@ -150,6 +165,79 @@ class InterviewPreparationWorkflow:
             context_prompt=context.prompt,
             source_ids=tuple(citation.source_id for citation in context.citations),
         )
+        return state
+
+    async def _evaluate_resume(self, state: InterviewGraphState) -> InterviewGraphState:
+        """Persist a traceable match assessment without blocking question generation."""
+
+        evaluator = self._resume_evaluator
+        if evaluator is None:
+            return state
+        session = state["session"]
+        context = state["context"]
+        try:
+            existing = await self._repository.create_resume_evaluation_pending(
+                session.id,
+                state["user_id"],
+                session.knowledge_base_id,
+                RESUME_EVALUATION_VERSION,
+            )
+            _, claimed = await self._repository.claim_resume_evaluation(
+                session.id, state["user_id"]
+            )
+            if not claimed or existing.status.value in {"COMPLETED", "UNAVAILABLE"}:
+                return state
+            request = ResumeEvaluationRequest(
+                job_title=session.job_title,
+                job_description=session.job_description,
+                resume_context=context.prompt,
+                source_ids=tuple(citation.source_id for citation in context.citations),
+            )
+            last_error: Exception | None = None
+            for _attempt in range(2):
+                try:
+                    evaluation = StructuredResumeEvaluation.model_validate(
+                        await evaluator.evaluate(request)
+                    )
+                    await self._repository.persist_resume_evaluation(
+                        session.id,
+                        state["user_id"],
+                        evaluation,
+                        source_document_ids=tuple(
+                            dict.fromkeys(citation.document_id for citation in context.citations)
+                        ),
+                        version=RESUME_EVALUATION_VERSION,
+                        provider_name=type(evaluator).__name__,
+                    )
+                    return state
+                except Exception as exc:
+                    last_error = exc
+            if last_error is not None:
+                raise last_error
+        except Exception:
+            status = (
+                "UNAVAILABLE"
+                if isinstance(evaluator, UnavailableResumeEvaluator)
+                else "FAILED"
+            )
+            try:
+                await self._repository.mark_resume_evaluation_failed(
+                    session.id,
+                    state["user_id"],
+                    ResumeEvaluationStatus(status),
+                    "RESUME_EVALUATION_UNAVAILABLE"
+                    if status == "UNAVAILABLE"
+                    else "RESUME_EVALUATION_FAILED",
+                    "Resume match evaluation is unavailable"
+                    if status == "UNAVAILABLE"
+                    else "Resume match evaluation failed",
+                    version=RESUME_EVALUATION_VERSION,
+                )
+            except Exception:
+                # The interview preparation must remain usable when an optional
+                # analysis record cannot be written.  The warning contains no
+                # resume text, credentials or provider response.
+                logger.warning("Resume evaluation failure state could not be persisted")
         return state
 
     async def _generate_questions(self, state: InterviewGraphState) -> InterviewGraphState:
