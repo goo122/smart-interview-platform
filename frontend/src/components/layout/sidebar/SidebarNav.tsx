@@ -19,7 +19,7 @@ export default function SidebarNav({ isCollapsed }: SidebarNavProps) {
   return (
     <div className="px-3">
       <div className="space-y-1">
-        <Link to={ROUTES.chat}>
+        <Link to={ROUTES.chat} state={{ newChat: true }}>
           <Button
             variant={isActive(ROUTES.chat) ? "secondary" : "ghost"}
             className={cn(

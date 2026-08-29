@@ -17,6 +17,7 @@ export function useChatRouteState() {
   const routeSessionId = params.sessionId?.trim() || null;
   const initialQuery = normalizeInitialQuery(locationState?.initialQuery);
   const initialModel = locationState?.model ?? null;
+  const isNewChatRequest = locationState?.newChat === true;
   const hasPendingInitialQuery = Boolean(initialQuery);
 
   const navigateToSession = useCallback(
@@ -38,13 +39,17 @@ export function useChatRouteState() {
   );
 
   const shouldRedirectToRuntimeSession =
-    !routeSessionId && !hasPendingInitialQuery && Boolean(currentSessionId);
+    !isNewChatRequest &&
+    !routeSessionId &&
+    !hasPendingInitialQuery &&
+    Boolean(currentSessionId);
 
   return {
     routeSessionId,
     currentRuntimeSessionId: currentSessionId,
     initialQuery,
     initialModel,
+    isNewChatRequest,
     hasPendingInitialQuery,
     shouldRedirectToRuntimeSession,
     locationKey: location.key,

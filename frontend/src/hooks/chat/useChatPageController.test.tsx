@@ -322,6 +322,35 @@ describe("useChatPageController", () => {
     );
   });
 
+  it("clears the old runtime session when new chat is requested", async () => {
+    useLocationMock.mockReturnValue({
+      key: "new-chat-location",
+      state: { newChat: true },
+    });
+
+    const { result, store } = renderChatController({
+      currentSessionId: "old-session",
+      currentSessionTitle: "Old Session",
+      messages: [
+        {
+          id: "old-message",
+          role: "assistant",
+          content: "old content",
+          timestamp: 1,
+          status: "done",
+        },
+      ] as ChatMessage[],
+    });
+
+    await waitFor(() => {
+      expect(store.getState().chat.currentSessionId).toBeNull();
+      expect(result.current.history.messages).toHaveLength(0);
+      expect(navigateMock).toHaveBeenCalledWith(ROUTES.chat, {
+        replace: true,
+      });
+    });
+  });
+
   it("creates a conversation first and starts stream after route session is ready", async () => {
     const { result, store, rerender } = renderChatController();
 

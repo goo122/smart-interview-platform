@@ -13,6 +13,7 @@ export function useChatPageController(options?: { knowledgeBaseId?: string | nul
     initialQuery,
     initialModel,
     hasPendingInitialQuery,
+    isNewChatRequest,
     shouldRedirectToRuntimeSession,
     locationKey,
     navigateToSession,
@@ -34,6 +35,16 @@ export function useChatPageController(options?: { knowledgeBaseId?: string | nul
   const [input, setInput] = useState("");
   const handledInitialQueryKeyRef = useRef<string | null>(null);
   const { currentSessionId } = useAppSelector((state) => state.chat);
+
+  useEffect(() => {
+    if (!isNewChatRequest) {
+      return;
+    }
+
+    cancelActiveStream();
+    dispatch(resetChatRuntime());
+    navigateToChatRoot({ replace: true });
+  }, [cancelActiveStream, dispatch, isNewChatRequest, navigateToChatRoot]);
 
   useEffect(() => {
     if (!shouldRedirectToRuntimeSession || !currentSessionId) {

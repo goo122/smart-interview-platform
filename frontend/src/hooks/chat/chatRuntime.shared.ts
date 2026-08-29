@@ -5,6 +5,7 @@ import type { AiMessageHistoryWithCitations, AiProperty } from "@/types/ai";
 export type ChatPageLocationState = {
   initialQuery?: string;
   model?: AiProperty | null;
+  newChat?: boolean;
 };
 
 export const CHAT_HISTORY_LOADING_TITLE = "正在加载会话...";
