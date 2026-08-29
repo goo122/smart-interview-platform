@@ -14,12 +14,15 @@ export default function ChatPage() {
   });
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-3 md:p-4">
-      <KnowledgePanel
-        selectedBaseId={knowledgeBaseId}
-        onSelect={setKnowledgeBaseId}
-      />
-      <div className="min-h-0 flex-1">
+    <div className="flex h-full min-h-0 flex-col gap-3 p-3 md:flex-row md:p-4">
+      <aside className="min-h-0 max-h-[45%] w-full shrink-0 md:h-full md:max-h-none md:w-[22rem] lg:w-[24rem]">
+        <KnowledgePanel
+          variant="sidebar"
+          selectedBaseId={knowledgeBaseId}
+          onSelect={setKnowledgeBaseId}
+        />
+      </aside>
+      <div className="min-h-0 min-w-0 flex-1">
         <ChatRoom
           header={
             <ChatPageHeader

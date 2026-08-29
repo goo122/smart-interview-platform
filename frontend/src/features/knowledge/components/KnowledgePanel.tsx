@@ -25,9 +25,15 @@ const statusLabels: Record<string, string> = {
 type KnowledgePanelProps = {
   selectedBaseId: string | null;
   onSelect: (baseId: string | null) => void;
+  variant?: "default" | "sidebar";
 };
 
-export function KnowledgePanel({ selectedBaseId, onSelect }: KnowledgePanelProps) {
+export function KnowledgePanel({
+  selectedBaseId,
+  onSelect,
+  variant = "default",
+}: KnowledgePanelProps) {
+  const isSidebar = variant === "sidebar";
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [managedBaseId, setManagedBaseId] = useState<string | null>(selectedBaseId);
@@ -117,7 +123,10 @@ export function KnowledgePanel({ selectedBaseId, onSelect }: KnowledgePanelProps
   return (
     <section
       aria-label="知识库管理"
-      className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 shadow-sm"
+      className={cn(
+        "flex h-full flex-col rounded-2xl border border-slate-200 bg-slate-50/70 p-4 shadow-sm",
+        isSidebar ? "min-h-0 overflow-y-auto" : "",
+      )}
     >
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -134,7 +143,12 @@ export function KnowledgePanel({ selectedBaseId, onSelect }: KnowledgePanelProps
         <p className="mt-2 text-xs font-medium text-emerald-700">RAG 知识库模式</p>
       ) : null}
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+      <div
+        className={cn(
+          "mt-3 grid gap-2",
+          isSidebar ? "grid-cols-1" : "sm:grid-cols-[1fr_1fr_auto]",
+        )}
+      >
         <Input
           value={name}
           onChange={(event) => setName(event.target.value)}
@@ -153,7 +167,7 @@ export function KnowledgePanel({ selectedBaseId, onSelect }: KnowledgePanelProps
           type="button"
           onClick={() => void submitCreate()}
           disabled={!name.trim() || create.isPending}
-          className="h-9 rounded-full"
+          className={cn("h-9 rounded-full", isSidebar && "w-full")}
         >
           {create.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Plus className="mr-1 h-4 w-4" />}
           创建知识库
@@ -163,17 +177,24 @@ export function KnowledgePanel({ selectedBaseId, onSelect }: KnowledgePanelProps
       {create.isError ? <p className="mt-2 text-xs text-red-600">知识库创建失败，请稍后重试。</p> : null}
       {basesQuery.isError ? <p className="mt-2 text-xs text-red-600">知识库加载失败，请刷新重试。</p> : null}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className={cn("mt-3 flex gap-2", isSidebar ? "flex-col" : "flex-wrap")}>
         {bases.map((base, index) => {
           const documents = basesQuery.documentQueries[index]?.data?.records ?? [];
           const ready = hasReadyDocument(documents);
           const selected = base.id === effectiveBaseId;
           return (
-            <div key={base.id} className="flex items-center gap-1">
+            <div
+              key={base.id}
+              className={cn("flex items-center gap-1", isSidebar && "w-full")}
+            >
               <Button
                 type="button"
                 variant={selected ? "secondary" : "outline"}
-                className={cn("h-8 rounded-full bg-white text-xs", selected && "border-slate-400")}
+                className={cn(
+                  "h-8 rounded-full bg-white text-xs",
+                  isSidebar && "min-w-0 flex-1 justify-start",
+                  selected && "border-slate-400",
+                )}
                 onClick={() => selectBase(base.id)}
               >
                 {ready ? <Check className="mr-1 h-3.5 w-3.5 text-emerald-600" /> : <FileText className="mr-1 h-3.5 w-3.5 text-slate-400" />}
