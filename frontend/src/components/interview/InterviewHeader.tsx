@@ -32,7 +32,7 @@ export default function InterviewHeader({
     <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/70 px-6 py-4 backdrop-blur-sm">
       <div>
         <h2 className="text-lg font-semibold text-slate-900">
-          Java 高级开发工程师模拟面试室
+          模拟面试室
         </h2>
         <p className="text-sm text-slate-500">实时面试练习</p>
       </div>
