@@ -16,6 +16,7 @@ from app.modules.chat.domain import (
     MessageStatus,
 )
 from app.modules.chat.service import CHAT_SYSTEM_PROMPT, ChatEvent, ChatService
+from app.modules.interview.context import InterviewContextProvider
 from app.modules.knowledge.context import ContextAssembler, ContextCitation
 from app.modules.knowledge.domain import KnowledgeBase, RetrievedChunk
 from app.modules.knowledge.exceptions import KnowledgeBaseNotFoundError
@@ -379,3 +380,38 @@ async def test_rag_context_provider_rejects_missing_or_other_user_base() -> None
     )
     with pytest.raises(KnowledgeBaseNotFoundError):
         await provider.validate_knowledge_base(uuid4(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_interview_context_falls_back_to_scoped_ready_resume_chunks() -> None:
+    user_id = uuid4()
+    base_id = uuid4()
+
+    class Repository:
+        async def get_base_for_user(self, requested: UUID, owner: UUID) -> KnowledgeBase | None:
+            if requested == base_id and owner == user_id:
+                return KnowledgeBase.new(owner, "resume")
+            return None
+
+    retriever = FakeRetriever(
+        chunks=(RetrievedChunk(uuid4(), uuid4(), "resume.pdf", 1, "resume content", 0.42),)
+    )
+    provider = InterviewContextProvider(
+        Repository(),
+        FakeEmbedding(),
+        retriever,
+        ContextAssembler(100, 20),
+        Settings(rag_similarity_threshold=0.7),
+    )
+
+    context = await provider.build(
+        user_id=user_id,
+        knowledge_base_id=base_id,
+        job_title="Java 工程师",
+        job_description="负责后端开发",
+        difficulty="MEDIUM",
+        question_count=5,
+    )
+
+    assert context.citations[0].score == 0.42
+    assert [call[3] for call in retriever.calls] == [0.7, 0.0]
