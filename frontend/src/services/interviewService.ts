@@ -569,7 +569,10 @@ const normalizeInterviewTurn = (
     feedback: evaluation?.feedback,
     score: evaluation?.overallScore,
     isSuccess: status !== "FAILED",
-    errorMessage: status === "FAILED" ? "AI 评分失败，请稍后重试" : undefined,
+    errorMessage:
+      status === "FAILED"
+        ? "AI 评分失败，本次面试已停止，请重新上传简历开始新的面试。"
+        : undefined,
   });
 };
 
