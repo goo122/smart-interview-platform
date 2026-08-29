@@ -100,6 +100,70 @@ describe("interviewService.createInterviewSession", () => {
   });
 });
 
+describe("interviewService reports", () => {
+  it("uses the FastAPI report read and generation endpoints", async () => {
+    const report = { sessionId: "session-1", status: "READY" };
+    const getSpy = vi.spyOn(service, "get").mockResolvedValue(report);
+    const postSpy = vi.spyOn(service, "post").mockResolvedValue(report);
+
+    try {
+      await interviewService.getInterviewReportBySessionId("session-1");
+      await interviewService.generateInterviewReport("session-1");
+
+      expect(getSpy).toHaveBeenCalledWith(
+        "/xunzhi/v1/interview/sessions/session-1/report",
+        { timeout: 180_000 },
+      );
+      expect(postSpy).toHaveBeenCalledWith(
+        "/xunzhi/v1/interview/sessions/session-1/report",
+        {},
+        { timeout: 180_000 },
+      );
+    } finally {
+      getSpy.mockRestore();
+      postSpy.mockRestore();
+    }
+  });
+
+  it("loads history from the FastAPI report list", async () => {
+    const getSpy = vi.spyOn(service, "get").mockResolvedValue({
+      records: [
+        {
+          sessionId: "session-1",
+          status: "READY",
+          overallScore: 86,
+          jobTitle: "Java 开发工程师",
+          createdAt: "2026-08-29T00:00:00Z",
+          updatedAt: "2026-08-29T00:01:00Z",
+          completedAt: "2026-08-29T00:01:00Z",
+        },
+      ],
+      total: 1,
+      size: 20,
+      current: 1,
+      pages: 1,
+    });
+
+    try {
+      const page = await interviewService.pageInterviewRecords({
+        pageNum: 1,
+        pageSize: 20,
+      });
+
+      expect(getSpy).toHaveBeenCalledWith("/xunzhi/v1/interview/reports", {
+        params: { current: 1, size: 20 },
+      });
+      expect(page.records[0]).toMatchObject({
+        sessionId: "session-1",
+        interviewScore: 86,
+        interviewDirection: "Java 开发工程师",
+      });
+    } finally {
+      getSpy.mockRestore();
+    }
+  });
+});
+
 describe("interviewService.answerInterviewQuestion", () => {
   it("rejects empty questionNumber before request", async () => {
     const error = await interviewService

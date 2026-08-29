@@ -4,6 +4,7 @@ import {
   fetchInterviewReportQueryData,
 } from "@/hooks/interview/report/interviewReportData.shared";
 import { interviewService } from "@/services/interviewService";
+import { AppError, ErrorCode } from "@/lib/errors";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -247,60 +248,144 @@ describe("buildInterviewReportViewModel", () => {
 });
 
 describe("fetchInterviewReportQueryData", () => {
-  it("uses only record query on success", async () => {
-    const record = {
-      id: 100,
-      userId: 1,
-      sessionId: "session-100",
-    };
+  const report = {
+    reportId: "report-100",
+    sessionId: "session-100",
+    status: "READY",
+    jobTitle: "Java 开发工程师",
+    interviewType: "TECHNICAL",
+    difficulty: "MEDIUM",
+    overallScore: 86,
+    dimensionScores: {
+      technical: 88,
+      relevance: 84,
+      clarity: 82,
+      depth: 85,
+    },
+    radarData: [
+      { dimension: "technical", score: 88 },
+      { dimension: "relevance", score: 84 },
+    ],
+    summary: "整体表现稳定。",
+    strengths: ["基础扎实"],
+    weaknesses: ["细节不足"],
+    suggestedImprovements: ["补充实现细节"],
+    actionPlan: ["复习并发编程"],
+    recommendedLevel: "中级",
+    items: [
+      {
+        id: "item-1",
+        turnId: "turn-1",
+        parentTurnId: null,
+        sequence: 1,
+        turnType: "PRIMARY",
+        question: "请介绍线程池。",
+        answer: "线程池用于复用线程。",
+        scores: { overall: 86 },
+        strengths: ["概念正确"],
+        weaknesses: [],
+        feedback: "可以补充拒绝策略。",
+        suggestedImprovements: ["补充参数说明"],
+        sources: [],
+        createdAt: "2026-08-29T00:00:00Z",
+      },
+      {
+        id: "item-2",
+        turnId: "turn-2",
+        parentTurnId: "turn-1",
+        sequence: 2,
+        turnType: "FOLLOW_UP",
+        question: "有哪些拒绝策略？",
+        answer: "有 AbortPolicy 等。",
+        scores: { overall: 80 },
+        strengths: [],
+        weaknesses: [],
+        feedback: "回答正确。",
+        suggestedImprovements: [],
+        sources: [],
+        createdAt: "2026-08-29T00:01:00Z",
+      },
+    ],
+    aggregationVersion: "v1",
+    generatedBy: "HYBRID",
+    createdAt: "2026-08-29T00:00:00Z",
+    updatedAt: "2026-08-29T00:02:00Z",
+    completedAt: "2026-08-29T00:02:00Z",
+    failureCode: null,
+    failureMessage: null,
+  };
 
-    const getRecordSpy = vi
-      .spyOn(interviewService, "getInterviewRecordBySessionId")
-      .mockResolvedValue(record);
-    const saveSpy = vi
-      .spyOn(interviewService, "saveInterviewRecord")
-      .mockResolvedValue(undefined);
-    const saveRedisSpy = vi
-      .spyOn(interviewService, "saveInterviewRecordFromRedis")
-      .mockResolvedValue(undefined);
-    const radarSpy = vi.spyOn(interviewService, "getInterviewRadarChart");
+  it("uses the FastAPI report query on success", async () => {
+    const getReportSpy = vi
+      .spyOn(interviewService, "getInterviewReportBySessionId")
+      .mockResolvedValue(report);
+    const generateSpy = vi.spyOn(
+      interviewService,
+      "generateInterviewReport",
+    );
 
     const result = await fetchInterviewReportQueryData("session-100");
 
-    expect(result).toEqual({ record });
-    expect(getRecordSpy).toHaveBeenCalledTimes(1);
-    expect(saveSpy).not.toHaveBeenCalled();
-    expect(saveRedisSpy).not.toHaveBeenCalled();
-    expect(radarSpy).not.toHaveBeenCalled();
+    expect(result.record).toMatchObject({
+      sessionId: "session-100",
+      interviewScore: 86,
+      compositeScore: 86,
+      radarDimensions: [
+        { label: "技术能力", value: 88 },
+        { label: "回答相关性", value: 84 },
+      ],
+      reviewFeedback: {
+        overallComment: "整体表现稳定。",
+        highlights: ["基础扎实"],
+        improvementTips: ["补充实现细节"],
+        nextActions: ["复习并发编程"],
+      },
+    });
+    expect(result.record?.qaReviews).toEqual([
+      expect.objectContaining({
+        questionNumber: "1",
+        isFollowUp: false,
+        score: 86,
+      }),
+      expect.objectContaining({
+        questionNumber: "1-F1",
+        isFollowUp: true,
+        score: 80,
+      }),
+    ]);
+    expect(getReportSpy).toHaveBeenCalledTimes(1);
+    expect(generateSpy).not.toHaveBeenCalled();
   });
 
-  it("runs save fallback chain when record query fails", async () => {
-    const record = {
-      id: 101,
-      userId: 1,
-      sessionId: "session-101",
-    };
-
-    const getRecordSpy = vi
-      .spyOn(interviewService, "getInterviewRecordBySessionId")
-      .mockRejectedValueOnce(new Error("not ready"))
-      .mockResolvedValueOnce(record);
-    const saveSpy = vi
-      .spyOn(interviewService, "saveInterviewRecord")
-      .mockRejectedValueOnce(new Error("save failed"));
-    const saveRedisSpy = vi
-      .spyOn(interviewService, "saveInterviewRecordFromRedis")
-      .mockResolvedValue(undefined);
-    const radarSpy = vi.spyOn(interviewService, "getInterviewRadarChart");
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("generates the report when it does not exist yet", async () => {
+    const getReportSpy = vi
+      .spyOn(interviewService, "getInterviewReportBySessionId")
+      .mockRejectedValueOnce(
+        new AppError(ErrorCode.RESOURCE_NOT_FOUND, "not found"),
+      );
+    const generateSpy = vi
+      .spyOn(interviewService, "generateInterviewReport")
+      .mockResolvedValue({ ...report, sessionId: "session-101" });
 
     const result = await fetchInterviewReportQueryData("session-101");
 
-    expect(result).toEqual({ record });
-    expect(getRecordSpy).toHaveBeenCalledTimes(2);
-    expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect(saveRedisSpy).toHaveBeenCalledTimes(1);
-    expect(radarSpy).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(result.record?.sessionId).toBe("session-101");
+    expect(getReportSpy).toHaveBeenCalledTimes(1);
+    expect(generateSpy).toHaveBeenCalledWith("session-101");
+  });
+
+  it("does not generate a report for authorization failures", async () => {
+    vi.spyOn(interviewService, "getInterviewReportBySessionId").mockRejectedValueOnce(
+      new AppError(ErrorCode.UNAUTHORIZED, "sign in again"),
+    );
+    const generateSpy = vi.spyOn(
+      interviewService,
+      "generateInterviewReport",
+    );
+
+    await expect(fetchInterviewReportQueryData("session-102")).rejects.toMatchObject({
+      code: ErrorCode.UNAUTHORIZED,
+    });
+    expect(generateSpy).not.toHaveBeenCalled();
   });
 });

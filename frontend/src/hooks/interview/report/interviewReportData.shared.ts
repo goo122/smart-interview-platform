@@ -9,6 +9,8 @@ import type {
   RadarPoint,
   ReviewFeedback,
 } from "@/components/interview/report/types";
+import type { InterviewReportResponse } from "@/api/generated";
+import { AppError, ErrorCode } from "@/lib/errors";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -81,6 +83,128 @@ const toStringArray = (value: unknown): string[] => {
   return value
     .map((item) => (typeof item === "string" ? item.trim() : ""))
     .filter((item) => item.length > 0);
+};
+
+const REPORT_DIMENSION_LABELS: Record<string, string> = {
+  technical: "技术能力",
+  relevance: "回答相关性",
+  clarity: "表达清晰度",
+  depth: "回答深度",
+};
+
+const translateReportValue = (value: string) => {
+  const translations: Record<string, string> = {
+    TECHNICAL: "技术面试",
+    BEHAVIORAL: "行为面试",
+    MIXED: "综合面试",
+    EASY: "简单",
+    MEDIUM: "中等",
+    HARD: "困难",
+  };
+  return translations[value.toUpperCase()] ?? value;
+};
+
+const buildReportQuestionNumbers = (report: InterviewReportResponse) => {
+  const primarySequenceByTurnId = new Map<string, number>();
+  report.items.forEach((item) => {
+    if (item.turnType === "PRIMARY") {
+      primarySequenceByTurnId.set(item.turnId, item.sequence);
+    }
+  });
+
+  const followUpCounts = new Map<string, number>();
+  return report.items.map((item) => {
+    if (item.turnType !== "FOLLOW_UP") {
+      return String(item.sequence);
+    }
+
+    const parentId = item.parentTurnId ?? "";
+    const parentSequence = primarySequenceByTurnId.get(parentId) ?? item.sequence;
+    const followUpCount = (followUpCounts.get(parentId) ?? 0) + 1;
+    followUpCounts.set(parentId, followUpCount);
+    return `${parentSequence}-F${followUpCount}`;
+  });
+};
+
+const adaptInterviewReport = (
+  report: InterviewReportResponse,
+): InterviewRecordResult => {
+  const questionNumbers = buildReportQuestionNumbers(report);
+  const radarDimensions = report.radarData
+    .map((entry) => {
+      const dimension = pickFirstString(entry.dimension, entry.label, entry.name);
+      const score = pickFirstNumber(entry.score, entry.value);
+      if (!dimension || score === null) return null;
+      return {
+        label: REPORT_DIMENSION_LABELS[dimension] ?? dimension,
+        value: score,
+      };
+    })
+    .filter((item): item is { label: string; value: number } => item !== null);
+
+  const fallbackRadarDimensions = Object.entries(report.dimensionScores)
+    .map(([dimension, value]) => {
+      const score = pickFirstNumber(value);
+      if (score === null) return null;
+      return {
+        label: REPORT_DIMENSION_LABELS[dimension] ?? dimension,
+        value: score,
+      };
+    })
+    .filter((item): item is { label: string; value: number } => item !== null);
+
+  const suggestions =
+    report.actionPlan.length > 0
+      ? report.actionPlan
+      : report.suggestedImprovements;
+
+  return {
+    id: 0,
+    userId: 0,
+    sessionId: report.sessionId,
+    interviewStatus: report.status,
+    questionCount: report.items.filter((item) => item.turnType === "PRIMARY")
+      .length,
+    interviewScore: report.overallScore,
+    compositeScore: report.overallScore,
+    interviewDirection: [
+      report.jobTitle,
+      translateReportValue(report.interviewType),
+      translateReportValue(report.difficulty),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    interviewSuggestionsMap: Object.fromEntries(
+      suggestions.map((suggestion, index) => [String(index + 1), suggestion]),
+    ),
+    radarDimensions:
+      radarDimensions.length > 0 ? radarDimensions : fallbackRadarDimensions,
+    qaReviews: report.items.map((item, index) => {
+      const scores = toRecord(item.scores);
+      return {
+        seq: item.sequence,
+        questionNumber: questionNumbers[index],
+        question: item.question,
+        answer: item.answer,
+        score: pickFirstNumber(scores?.overall),
+        feedback: item.feedback,
+        isFollowUp: item.turnType === "FOLLOW_UP",
+        followUpNeeded: item.turnType === "FOLLOW_UP",
+      };
+    }),
+    reviewFeedback: {
+      overallComment: report.summary,
+      highlights: report.strengths,
+      improvementTips:
+        report.suggestedImprovements.length > 0
+          ? report.suggestedImprovements
+          : report.weaknesses,
+      nextActions: report.actionPlan,
+    },
+    createTime: report.createdAt,
+    updateTime: report.updatedAt,
+    endTime: report.completedAt,
+  };
 };
 
 const parseJsonRecord = (value: unknown): UnknownRecord | null => {
@@ -388,23 +512,18 @@ export async function fetchInterviewReportQueryData(
   sessionId: string,
 ): Promise<ReportQueryData> {
   try {
-    const record =
-      await interviewService.getInterviewRecordBySessionId(sessionId);
-    return { record };
-  } catch {
-    try {
-      await interviewService.saveInterviewRecord({ sessionId });
-    } catch (manualSaveError) {
-      console.warn(
-        "[useInterviewReportData] manual save failed, fallback save-from-redis",
-        manualSaveError,
-      );
-      await interviewService.saveInterviewRecordFromRedis(sessionId);
+    const report =
+      await interviewService.getInterviewReportBySessionId(sessionId);
+    return { record: adaptInterviewReport(report) };
+  } catch (error) {
+    if (
+      !(error instanceof AppError) ||
+      error.code !== ErrorCode.RESOURCE_NOT_FOUND
+    ) {
+      throw error;
     }
-
-    const record =
-      await interviewService.getInterviewRecordBySessionId(sessionId);
-    return { record };
+    const report = await interviewService.generateInterviewReport(sessionId);
+    return { record: adaptInterviewReport(report) };
   }
 }
 

@@ -1,9 +1,10 @@
 import service, { assertRequestAuthorized, buildApiUrl } from "@/lib/request";
 import { AppError, ErrorCode } from "@/lib/errors";
-import type { AxiosRequestConfig } from "axios";
 import { knowledgeApi } from "@/features/knowledge/api";
 import type {
   InterviewDifficulty,
+  InterviewReportPage,
+  InterviewReportResponse,
   InterviewSessionResponse,
   InterviewTurnResponse,
   InterviewType,
@@ -750,21 +751,6 @@ const getWithPathFallback = async <T>(
   }
 };
 
-const getWithPathFallbackAndConfig = async <T>(
-  primaryPath: string,
-  legacyPath: string,
-  config?: AxiosRequestConfig,
-) => {
-  try {
-    return await service.get<T>(primaryPath, config);
-  } catch (error) {
-    if (!shouldFallbackToLegacyPath(error)) {
-      throw error;
-    }
-    return service.get<T>(legacyPath, config);
-  }
-};
-
 const postWithPathFallback = async <T, D = unknown>(
   primaryPath: string,
   legacyPath: string,
@@ -1230,13 +1216,33 @@ export const interviewService = {
     );
   },
   pageInterviewRecords: async (params: PageInterviewRecordsParams) => {
-    return getWithPathFallbackAndConfig<InterviewRecordsPageResult>(
-      "/xunzhi/v1/interview/interview/records",
-      "/xunzhi/v1/interview/records",
+    const page = await service.get<InterviewReportPage>(
+      "/xunzhi/v1/interview/reports",
       {
-        params,
+        params: {
+          current: params.pageNum,
+          size: params.pageSize,
+        },
       },
     );
+    return {
+      records: page.records.map((report, index) => ({
+        id: index,
+        userId: 0,
+        sessionId: report.sessionId,
+        interviewStatus: report.status,
+        interviewScore: report.overallScore,
+        compositeScore: report.overallScore,
+        interviewDirection: report.jobTitle,
+        createTime: report.createdAt,
+        updateTime: report.updatedAt,
+        endTime: report.completedAt,
+      })),
+      total: page.total,
+      size: page.size,
+      current: page.current,
+      pages: page.pages,
+    } satisfies InterviewRecordsPageResult;
   },
   getInterviewRadarChart: async (sessionId: string) => {
     const response = await service.get<InterviewRadarChartResult>(
@@ -1248,6 +1254,19 @@ export const interviewService = {
     return getWithPathFallback<InterviewRecordResult>(
       `/xunzhi/v1/interview/interview/record/${encodeURIComponent(sessionId)}`,
       `/xunzhi/v1/interview/record/${encodeURIComponent(sessionId)}`,
+    );
+  },
+  getInterviewReportBySessionId: async (sessionId: string) => {
+    return service.get<InterviewReportResponse>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/report`,
+      { timeout: INTERVIEW_LONG_TIMEOUT_MS },
+    );
+  },
+  generateInterviewReport: async (sessionId: string) => {
+    return service.post<InterviewReportResponse, Record<string, never>>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/report`,
+      {},
+      { timeout: INTERVIEW_LONG_TIMEOUT_MS },
     );
   },
 };
