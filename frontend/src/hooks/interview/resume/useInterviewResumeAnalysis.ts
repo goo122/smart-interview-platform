@@ -11,7 +11,10 @@ import {
   deriveResumeName,
   isPdfResumeFile,
 } from "@/hooks/interview/resume/interviewResumeAnalysis.shared";
-import { resolveInterviewTypeLabel } from "@/hooks/interview/shared/interviewUtils";
+import {
+  generateRequestId,
+  resolveInterviewTypeLabel,
+} from "@/hooks/interview/shared/interviewUtils";
 import { useInterviewResumePreviewState } from "@/hooks/interview/resume/useInterviewResumePreviewState";
 import { useInterviewUploadStage } from "@/hooks/interview/resume/useInterviewUploadStage";
 
@@ -136,6 +139,11 @@ export function useInterviewResumeAnalysis({
         );
         setResumePreviewError(null);
 
+        if (!restored.resumeFileUrl) {
+          hydratedSessionIdRef.current = interviewerSessionId;
+          return;
+        }
+
         try {
           const previewBlob =
             await interviewService.fetchInterviewResumePreviewBlob(
@@ -213,6 +221,29 @@ export function useInterviewResumeAnalysis({
     startUploadStage();
 
     try {
+      const prepareInterviewSession =
+        "prepareInterviewSessionFromResume" in interviewService
+          ? interviewService.prepareInterviewSessionFromResume
+          : undefined;
+      if (typeof prepareInterviewSession === "function") {
+        const prepared = await prepareInterviewSession(file, {
+          requestId: generateRequestId(),
+        });
+        applyResumeMetadata(
+          buildResumeMetadata({
+            resumeScore: null,
+            interviewType: prepared.interviewType,
+            suggestions: null,
+            resumeFileUrl: file.name,
+          }),
+        );
+        setInterviewerSessionId(prepared.sessionId);
+        hydratedSessionIdRef.current = prepared.sessionId;
+        setResumePreviewError(null);
+        await syncNextQuestion(prepared.sessionId);
+        return;
+      }
+
       const createdSession = await interviewService.createInterviewSession();
       const sessionId = createdSession.sessionId;
 

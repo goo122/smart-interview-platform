@@ -8,6 +8,7 @@ export type InterviewFlowUser = {
 } | null;
 
 export type InterviewProgressPatch = {
+  currentTurnId: string | null;
   currentQuestionNumber: string | null;
   currentQuestionContent: string | null;
   isCurrentQuestionFollowUp: boolean;
@@ -22,6 +23,7 @@ export type InterviewFlowState = {
   isInterviewSubmitting: boolean;
   interviewError: string | null;
   isEndingInterview: boolean;
+  currentTurnId: string | null;
   currentQuestionNumber: string | null;
   currentQuestionContent: string | null;
   isCurrentQuestionFollowUp: boolean;
@@ -81,6 +83,7 @@ export const buildInterviewProgressPatch = (
     response.nextQuestion?.trim() || response.questionContent?.trim() || null;
 
   return {
+    currentTurnId: response.turnId || null,
     currentQuestionNumber:
       response.nextQuestionNumber || response.questionNumber || null,
     currentQuestionContent: isInterviewFinished ? null : nextQuestion,

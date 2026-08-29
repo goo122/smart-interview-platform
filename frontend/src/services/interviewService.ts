@@ -1,6 +1,13 @@
 import service, { assertRequestAuthorized, buildApiUrl } from "@/lib/request";
 import { AppError, ErrorCode } from "@/lib/errors";
 import type { AxiosRequestConfig } from "axios";
+import { knowledgeApi } from "@/features/knowledge/api";
+import type {
+  InterviewDifficulty,
+  InterviewSessionResponse,
+  InterviewTurnResponse,
+  InterviewType,
+} from "@/api/generated";
 
 const INTERVIEW_LONG_TIMEOUT_MS = 180000;
 
@@ -31,6 +38,26 @@ export interface ExtractInterviewQuestionsParams {
 export interface CreateInterviewSessionResult {
   sessionId: string;
   status?: string | null;
+}
+
+export interface CreateInterviewSessionParams {
+  knowledgeBaseId: string;
+  jobTitle: string;
+  jobDescription: string;
+  interviewType?: InterviewType;
+  difficulty?: InterviewDifficulty;
+  questionCount?: number;
+  requestId?: string;
+}
+
+export interface PrepareInterviewSessionOptions {
+  requestId?: string;
+  signal?: AbortSignal;
+  jobTitle?: string;
+  jobDescription?: string;
+  interviewType?: InterviewType;
+  difficulty?: InterviewDifficulty;
+  questionCount?: number;
 }
 
 export interface ExtractInterviewQuestionsResult {
@@ -175,7 +202,8 @@ export interface InterviewSessionRestoreResult {
 
 export interface AnswerInterviewQuestionParams {
   sessionId: string;
-  questionNumber: string;
+  questionNumber?: string;
+  turnId?: string;
   answerContent?: string;
   audioFile?: File;
   requestId?: string;
@@ -188,6 +216,7 @@ export interface EvaluateInterviewDemeanorParams {
 }
 
 export interface AnswerInterviewQuestionResult {
+  turnId?: string;
   questionNumber?: string;
   questionContent?: string;
   score?: number;
@@ -212,6 +241,53 @@ type AnswerInterviewQuestionJsonPayload = {
 };
 
 type UnknownRecord = Record<string, unknown>;
+
+const POLL_INTERVAL_MS = 800;
+const DOCUMENT_READY_TIMEOUT_MS = 120000;
+const INTERVIEW_READY_TIMEOUT_MS = 180000;
+
+const wait = async (milliseconds: number, signal?: AbortSignal) => {
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted", "AbortError");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(resolve, milliseconds);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("The operation was aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
+const pollUntil = async <T>(
+  load: () => Promise<T>,
+  isReady: (value: T) => boolean,
+  timeoutMs: number,
+  signal?: AbortSignal,
+) => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= timeoutMs) {
+    const value = await load();
+    if (isReady(value)) {
+      return value;
+    }
+    await wait(POLL_INTERVAL_MS, signal);
+  }
+  throw new Error("处理时间较长，请稍后刷新页面查看状态");
+};
+
+const toSafeResumeBaseName = (filename: string) => {
+  const base = filename.replace(/\.pdf$/i, "").trim() || "我的简历";
+  return base.replace(/[\\/:*?"<>|]/g, "-").slice(0, 80);
+};
+
+const createRequestId = () => {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `interview-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
 
 const toRecord = (value: unknown): UnknownRecord =>
   value && typeof value === "object" ? (value as UnknownRecord) : {};
@@ -418,6 +494,9 @@ export const normalizeInterviewAnswer = (
 
   return {
     ...payload,
+    turnId:
+      toStringValue(pickFirst(source, ["turnId", "turn_id"])) ??
+      payload.turnId,
     questionNumber:
       toStringValue(pickFirst(source, ["questionNumber", "question_number"])) ??
       payload.questionNumber,
@@ -455,6 +534,30 @@ export const normalizeInterviewAnswer = (
       payload.missingPoints,
     finished,
   };
+};
+
+const normalizeInterviewTurn = (
+  payload: InterviewTurnResponse,
+  options?: { finished?: boolean; totalScore?: number | null },
+): AnswerInterviewQuestionResult => {
+  const status = String(payload.status || "").toUpperCase();
+  const finished = options?.finished ?? status === "FAILED";
+  const evaluation = payload.evaluation;
+  return normalizeInterviewAnswer({
+    turnId: payload.turnId,
+    questionNumber: String(payload.sequence),
+    questionContent: payload.question,
+    nextQuestion: finished ? null : payload.question,
+    nextQuestionNumber: finished ? null : String(payload.sequence),
+    isFollowUp: payload.turnType === "FOLLOW_UP",
+    followUpCount: payload.followUpDepth,
+    finished,
+    totalScore: options?.totalScore ?? evaluation?.overallScore,
+    feedback: evaluation?.feedback,
+    score: evaluation?.overallScore,
+    isSuccess: status !== "FAILED",
+    errorMessage: status === "FAILED" ? "AI 评分失败，请稍后重试" : undefined,
+  });
 };
 
 const normalizeInterviewRadarChart = (
@@ -676,7 +779,7 @@ const buildAnswerFormData = (params: AnswerInterviewQuestionParams) => {
   const formData = new FormData();
   formData.append(
     "questionNumber",
-    normalizeRequiredQuestionNumber(params.questionNumber),
+    normalizeRequiredQuestionNumber(params.questionNumber ?? ""),
   );
   if (params.answerContent) {
     formData.append("answerContent", params.answerContent);
@@ -701,12 +804,99 @@ const decodePreviewError = (bytes: Uint8Array) => {
 };
 
 export const interviewService = {
-  createInterviewSession: async () => {
-    return service.post<CreateInterviewSessionResult, Record<string, never>>(
+  createInterviewSession: async (payload?: CreateInterviewSessionParams) => {
+    return service.post<
+      CreateInterviewSessionResult | InterviewSessionResponse,
+      CreateInterviewSessionParams | Record<string, never>
+    >(
       "/xunzhi/v1/interview/sessions",
-      {},
+      payload ?? {},
     );
   },
+  prepareInterviewSessionFromResume: async (
+    file: File,
+    options: PrepareInterviewSessionOptions = {},
+  ): Promise<InterviewSessionResponse> => {
+    const knowledgeBase = await knowledgeApi.createBase({
+      name: `简历-${toSafeResumeBaseName(file.name)}`,
+      description: "由面试页上传的简历知识库",
+    });
+
+    const document = await knowledgeApi.uploadDocument(
+      knowledgeBase.id,
+      file,
+    );
+    const readyDocument = await pollUntil(
+      () => knowledgeApi.listDocuments(knowledgeBase.id, 1, 100),
+      (page) => {
+        const current = page.records.find((item) => item.id === document.id);
+        if (current?.status === "FAILED") {
+          throw new Error(
+            current.error_message || "简历解析失败，请检查 PDF 内容后重试",
+          );
+        }
+        return current?.status === "READY";
+      },
+      DOCUMENT_READY_TIMEOUT_MS,
+      options.signal,
+    );
+    if (!readyDocument.records.some((item) => item.id === document.id)) {
+      throw new Error("简历解析失败，请稍后重试");
+    }
+
+    const created = await interviewService.createInterviewSession({
+      knowledgeBaseId: knowledgeBase.id,
+      jobTitle: options.jobTitle || "Java 高级开发工程师",
+      jobDescription:
+        options.jobDescription ||
+        "负责 Java 后端开发、系统设计与性能优化，能够结合项目经验进行技术方案分析。",
+      interviewType: options.interviewType || "TECHNICAL",
+      difficulty: options.difficulty || "MEDIUM",
+      questionCount: options.questionCount || 5,
+      requestId: options.requestId,
+    });
+    const sessionId = String(
+      (created as CreateInterviewSessionResult | InterviewSessionResponse)
+        .sessionId,
+    );
+    const readySession = await pollUntil(
+      () => interviewService.getInterviewSession(sessionId),
+      (session) => {
+        if (session.status === "FAILED") {
+          throw new Error(session.failureMessage || "面试题准备失败，请稍后重试");
+        }
+        return session.status === "READY";
+      },
+      INTERVIEW_READY_TIMEOUT_MS,
+      options.signal,
+    );
+    if (!readySession.canStart) {
+      throw new Error("面试题暂未准备完成，请稍后刷新页面");
+    }
+    return interviewService.startInterviewSession(sessionId);
+  },
+  getInterviewSession: async (sessionId: string) =>
+    service.get<InterviewSessionResponse>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}`,
+    ),
+  startInterviewSession: async (sessionId: string) =>
+    service.post<InterviewSessionResponse, Record<string, never>>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/start`,
+      {},
+    ),
+  getInterviewTurn: async (sessionId: string, turnId: string) =>
+    service.get<InterviewTurnResponse>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}`,
+    ),
+  getCurrentInterviewTurn: async (sessionId: string) =>
+    service.get<InterviewTurnResponse>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/current-turn`,
+    ),
+  cancelInterviewSession: async (sessionId: string) =>
+    service.post<InterviewSessionResponse, Record<string, never>>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/cancel`,
+      {},
+    ),
   pageInterviewConversations: async (
     params: PageInterviewConversationsParams,
   ) => {
@@ -719,10 +909,26 @@ export const interviewService = {
     return normalizeInterviewConversationsPage(response);
   },
   restoreInterviewSession: async (sessionId: string) => {
-    const response = await service.get<InterviewSessionRestoreResult>(
-      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/restore`,
-    );
-    return normalizeInterviewSessionRestore(response);
+    try {
+      const session = await interviewService.getInterviewSession(sessionId);
+      return {
+        sessionId: session.sessionId,
+        status: session.status,
+        canResume: session.status === "IN_PROGRESS" || session.status === "READY",
+        resumeFileUrl: null,
+        resumeScore: null,
+        interviewType: session.interviewType,
+        suggestions: null,
+      } satisfies InterviewSessionRestoreResult;
+    } catch (error) {
+      if (!shouldFallbackToLegacyPath(error)) {
+        throw error;
+      }
+      const response = await service.get<InterviewSessionRestoreResult>(
+        `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/restore`,
+      );
+      return normalizeInterviewSessionRestore(response);
+    }
   },
   fetchInterviewResumePreviewBlob: async (sessionId: string) => {
     const token = assertRequestAuthorized(buildResumePreviewPath(sessionId));
@@ -820,8 +1026,69 @@ export const interviewService = {
     return normalizeExtractInterviewQuestions(response);
   },
   answerInterviewQuestion: async (params: AnswerInterviewQuestionParams) => {
+    if (params.turnId) {
+      const requestId = params.requestId?.trim() || createRequestId();
+      const answer = params.answerContent?.trim() || "";
+      const answerRequestPolicy = {
+        dedupe: "reject" as const,
+        debounceMs: 250,
+        key: `interview-answer:${params.sessionId}:${params.turnId}`,
+      };
+      await service.post<
+        { sessionId: string; turnId: string; status: string; requestId: string },
+        { turnId: string; answer: string; requestId: string }
+      >(
+        `/xunzhi/v1/interview/sessions/${encodeURIComponent(params.sessionId)}/answers`,
+        { turnId: params.turnId, answer, requestId },
+        {
+          timeout: INTERVIEW_LONG_TIMEOUT_MS,
+          requestPolicy: answerRequestPolicy,
+        },
+      );
+
+      const evaluatedTurn = await pollUntil(
+        () => interviewService.getInterviewTurn(params.sessionId, params.turnId!),
+        (turn) => ["COMPLETED", "FAILED"].includes(turn.status.toUpperCase()),
+        INTERVIEW_READY_TIMEOUT_MS,
+      );
+      if (evaluatedTurn.status.toUpperCase() === "FAILED") {
+        return normalizeInterviewTurn(evaluatedTurn);
+      }
+
+      const session = await interviewService.getInterviewSession(params.sessionId);
+      if (session.status === "COMPLETED") {
+        return normalizeInterviewTurn(evaluatedTurn, {
+          finished: true,
+          totalScore: evaluatedTurn.evaluation?.overallScore,
+        });
+      }
+
+      try {
+        const nextTurn = await interviewService.getCurrentInterviewTurn(
+          params.sessionId,
+        );
+        const next = normalizeInterviewTurn(nextTurn);
+        return {
+          ...next,
+          feedback: evaluatedTurn.evaluation?.feedback,
+          score: evaluatedTurn.evaluation?.overallScore,
+          totalScore: evaluatedTurn.evaluation?.overallScore,
+          turnId: nextTurn.turnId,
+          isSuccess: true,
+        };
+      } catch (error) {
+        if (!shouldFallbackToLegacyPath(error)) {
+          throw error;
+        }
+        return normalizeInterviewTurn(evaluatedTurn, {
+          finished: false,
+          totalScore: evaluatedTurn.evaluation?.overallScore,
+        });
+      }
+    }
+
     const questionNumber = normalizeRequiredQuestionNumber(
-      params.questionNumber,
+      params.questionNumber ?? "",
     );
     const answerRequestPolicy = {
       dedupe: "reject" as const,
@@ -880,13 +1147,14 @@ export const interviewService = {
   },
   getCurrentQuestion: async (sessionId: string) => {
     try {
-      const response = await service.get<AnswerInterviewQuestionResult>(
-        `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/current-question`,
-      );
-      return normalizeInterviewAnswer(response);
+      const response = await interviewService.getCurrentInterviewTurn(sessionId);
+      return normalizeInterviewTurn(response);
     } catch (error) {
       if (shouldFallbackToLegacyPath(error)) {
-        return interviewService.getNextQuestion(sessionId);
+        const response = await service.get<AnswerInterviewQuestionResult>(
+          `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/current-question`,
+        );
+        return normalizeInterviewAnswer(response);
       }
       throw error;
     }
@@ -913,10 +1181,21 @@ export const interviewService = {
     );
   },
   finishInterviewSession: async (sessionId: string) => {
-    return service.put<void, Record<string, never>>(
-      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/finish`,
-      {},
-    );
+    try {
+      const session = await interviewService.getInterviewSession(sessionId);
+      if (session.status === "COMPLETED" || session.status === "CANCELLED") {
+        return;
+      }
+      await interviewService.cancelInterviewSession(sessionId);
+    } catch (error) {
+      if (!shouldFallbackToLegacyPath(error)) {
+        throw error;
+      }
+      await service.put<void, Record<string, never>>(
+        `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/finish`,
+        {},
+      );
+    }
   },
   saveInterviewRecordFromRedis: async (sessionId: string) => {
     return postWithPathFallback<void>(

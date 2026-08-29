@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ROUTES } from "@/lib/constants";
@@ -28,6 +28,9 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   const [isInterviewSubmitting, setIsInterviewSubmitting] = useState(false);
   const [interviewError, setInterviewError] = useState<string | null>(null);
   const [isEndingInterview, setIsEndingInterview] = useState(false);
+  const answerRequestRef = useRef<{ key: string; requestId: string } | null>(
+    null,
+  );
 
   const {
     interviewerSessionId: storedInterviewerSessionId,
@@ -38,6 +41,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   const interviewerSessionId = routeSessionId;
 
   const {
+    currentTurnId,
     currentQuestionNumber,
     currentQuestionContent,
     isCurrentQuestionFollowUp,
@@ -147,6 +151,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     resetAutoSaveAttempt();
     setInterviewError(null);
     setInput("");
+    answerRequestRef.current = null;
   }, [
     resetAutoSaveAttempt,
     resetMessageStream,
@@ -170,7 +175,8 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
       return;
     }
     const activeQuestionNumber = currentQuestionNumber?.trim();
-    if (!activeQuestionNumber) {
+    const activeTurnId = currentTurnId?.trim();
+    if (!activeQuestionNumber && !activeTurnId) {
       const message = "当前题号缺失，请先等待题目加载完成后再提交。";
       setInterviewError(message);
       appendErrorMessage(message);
@@ -189,11 +195,20 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
         throw new Error("Please upload and analyze resume first");
       }
 
+      const answerKey = `${activeSessionId}:${activeTurnId || activeQuestionNumber}`;
+      if (answerRequestRef.current?.key !== answerKey) {
+        answerRequestRef.current = {
+          key: answerKey,
+          requestId: generateRequestId(),
+        };
+      }
+
       const response = await interviewService.answerInterviewQuestion({
         sessionId: activeSessionId,
         questionNumber: activeQuestionNumber,
+        turnId: activeTurnId,
         answerContent: nextInput,
-        requestId: generateRequestId(),
+        requestId: answerRequestRef.current.requestId,
       });
       stopThinkingIndicator();
 
@@ -204,6 +219,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
       }
 
       const progressPatch = buildInterviewProgressPatch(response);
+      answerRequestRef.current = null;
       const feedbackText = response.feedback?.trim();
       applyProgressPatch(progressPatch);
 
@@ -250,6 +266,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     appendUserMessage,
     applyProgressPatch,
     currentQuestionNumber,
+    currentTurnId,
     input,
     interviewerSessionId,
     isInterviewSubmitting,
@@ -276,6 +293,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     } finally {
       stopThinkingIndicator();
       cancelActiveQuestionStream();
+      answerRequestRef.current = null;
       persistInterviewerSessionId(null);
       clearStoredSession();
       resetProgressState();
@@ -310,6 +328,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     interviewError,
     isEndingInterview,
     currentQuestionNumber,
+    currentTurnId,
     currentQuestionContent,
     isCurrentQuestionFollowUp,
     currentFollowUpCount,
