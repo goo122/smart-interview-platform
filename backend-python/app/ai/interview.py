@@ -96,6 +96,41 @@ class UnavailableInterviewQuestionGenerator:
         raise RuntimeError("No interview question generator is configured")
 
 
+def _source_reference_key(value: str) -> str:
+    normalized = "".join(character for character in value.strip().upper() if character.isalnum())
+    if normalized.startswith("SOURCE") and normalized[6:].isdigit():
+        return f"S{int(normalized[6:])}"
+    if normalized.startswith("S") and normalized[1:].isdigit():
+        return f"S{int(normalized[1:])}"
+    if normalized.isdigit():
+        return f"S{int(normalized)}"
+    return normalized
+
+
+def _sanitize_question_sources(
+    generated: GeneratedQuestionSet,
+    allowed_source_ids: tuple[str, ...],
+) -> GeneratedQuestionSet:
+    if not allowed_source_ids:
+        return generated
+    allowed_by_key = {
+        _source_reference_key(source_id): source_id for source_id in allowed_source_ids
+    }
+    questions: list[GeneratedInterviewQuestion] = []
+    for question in generated.questions:
+        source_ids: list[str] = []
+        for candidate in question.source_ids:
+            source_id = allowed_by_key.get(_source_reference_key(candidate))
+            if source_id is not None and source_id not in source_ids:
+                source_ids.append(source_id)
+        if not source_ids:
+            # The context is relevance-ranked, so the first allowed source is the
+            # safest real citation when a provider invents or reformats every id.
+            source_ids.append(allowed_source_ids[0])
+        questions.append(question.model_copy(update={"source_ids": source_ids}))
+    return generated.model_copy(update={"questions": questions})
+
+
 class LangChainInterviewQuestionGeneratorAdapter:
     """Adapter for a LangChain model exposing ``with_structured_output``."""
 
@@ -113,7 +148,10 @@ class LangChainInterviewQuestionGeneratorAdapter:
             f"难度：{request.difficulty}\n"
             f"题目数量：{request.question_count}\n"
             f"允许的来源编号：{', '.join(request.source_ids)}\n"
+            "source_ids 必须是 JSON 字符串数组，每个值只能逐字复制自允许的来源编号，"
+            "包括方括号；不得省略、改写或自行创造编号。\n"
             f"参考资料：\n{request.context_prompt}"
         )
         result = await structured_model.ainvoke(prompt)
-        return GeneratedQuestionSet.model_validate(result)
+        generated = GeneratedQuestionSet.model_validate(result)
+        return _sanitize_question_sources(generated, request.source_ids)

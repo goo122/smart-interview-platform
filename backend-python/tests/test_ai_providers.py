@@ -223,3 +223,48 @@ def test_openai_compatible_uses_one_shared_chat_model(monkeypatch: pytest.Monkey
     assert isinstance(bundle.interview_report_narrative, LangChainInterviewReportNarrativeAdapter)
     assert bundle.chat_model._model is bundle.interview_question_generator._model
     assert isinstance(bundle.embedding, LangChainEmbeddingAdapter)
+
+
+@pytest.mark.asyncio
+async def test_question_adapter_normalizes_provider_source_ids() -> None:
+    class StructuredModel:
+        async def ainvoke(self, prompt: str) -> dict[str, object]:
+            assert "包括方括号" in prompt
+            return {
+                "questions": [
+                    {
+                        "content": "请介绍项目中的缓存设计",
+                        "category": "PROJECT_EXPERIENCE",
+                        "difficulty": "MEDIUM",
+                        "expected_points": ["说明缓存策略"],
+                        "source_ids": ["S1", "[S9]"],
+                    },
+                    {
+                        "content": "如何保证接口幂等性",
+                        "category": "SYSTEM_DESIGN",
+                        "difficulty": "MEDIUM",
+                        "expected_points": ["说明幂等键"],
+                        "source_ids": ["source 99"],
+                    },
+                ]
+            }
+
+    class Model:
+        def with_structured_output(self, _schema: object) -> StructuredModel:
+            return StructuredModel()
+
+    adapter = LangChainInterviewQuestionGeneratorAdapter(Model())
+    generated = await adapter.generate(
+        QuestionGenerationRequest(
+            job_title="Java 工程师",
+            job_description="负责后端系统开发",
+            interview_type="TECHNICAL",
+            difficulty="MEDIUM",
+            question_count=2,
+            context_prompt="[S1]\n真实简历片段一\n\n[S2]\n真实简历片段二",
+            source_ids=("[S1]", "[S2]"),
+        )
+    )
+
+    assert generated.questions[0].source_ids == ["[S1]"]
+    assert generated.questions[1].source_ids == ["[S1]"]
