@@ -266,6 +266,8 @@ describe("useInterviewSessionFlow", () => {
     answerInterviewQuestionMock.mockResolvedValue({
       isSuccess: false,
       errorMessage: "Submit failed",
+      finished: false,
+      failed: true,
     });
 
     const { result } = renderSessionFlow();
@@ -297,6 +299,13 @@ describe("useInterviewSessionFlow", () => {
     const lastMessage = result.current.messages.at(-1);
     expect(lastMessage?.content).toBe("Submit failed");
     expect(lastMessage?.status).toBe("error");
+    expect(result.current.isReady).toBe(false);
+
+    await act(async () => {
+      result.current.setInput("Retrying a failed turn");
+      await result.current.handleSend();
+    });
+    expect(answerInterviewQuestionMock).toHaveBeenCalledTimes(1);
   });
 
   it("auto-finishes only once after the interview is finished", async () => {

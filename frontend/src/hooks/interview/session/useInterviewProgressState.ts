@@ -13,6 +13,7 @@ export function useInterviewProgressState() {
     useState(false);
   const [currentFollowUpCount, setCurrentFollowUpCount] = useState(0);
   const [isInterviewFinished, setIsInterviewFinished] = useState(false);
+  const [isInterviewFailed, setIsInterviewFailed] = useState(false);
   const [totalInterviewScore, setTotalInterviewScore] = useState<number | null>(
     null,
   );
@@ -24,6 +25,7 @@ export function useInterviewProgressState() {
     setIsCurrentQuestionFollowUp(patch.isCurrentQuestionFollowUp);
     setCurrentFollowUpCount(patch.currentFollowUpCount);
     setIsInterviewFinished(patch.isInterviewFinished);
+    setIsInterviewFailed(patch.isInterviewFailed);
     if (patch.totalInterviewScore !== undefined) {
       setTotalInterviewScore(patch.totalInterviewScore);
     }
@@ -36,6 +38,7 @@ export function useInterviewProgressState() {
     setIsCurrentQuestionFollowUp(false);
     setCurrentFollowUpCount(0);
     setIsInterviewFinished(false);
+    setIsInterviewFailed(false);
     setTotalInterviewScore(null);
   }, []);
 
@@ -46,6 +49,7 @@ export function useInterviewProgressState() {
     isCurrentQuestionFollowUp,
     currentFollowUpCount,
     isInterviewFinished,
+    isInterviewFailed,
     totalInterviewScore,
     applyProgressPatch,
     resetProgressState,

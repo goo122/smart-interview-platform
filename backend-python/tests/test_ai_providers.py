@@ -268,3 +268,46 @@ async def test_question_adapter_normalizes_provider_source_ids() -> None:
 
     assert generated.questions[0].source_ids == ["[S1]"]
     assert generated.questions[1].source_ids == ["[S1]"]
+
+
+@pytest.mark.asyncio
+async def test_evaluation_adapter_normalizes_common_provider_deviations() -> None:
+    class StructuredModel:
+        async def ainvoke(self, _prompt: str) -> dict[str, object]:
+            return {
+                "overallScore": 101.6,
+                "technicalScore": "88.4",
+                "relevanceScore": 80,
+                "clarityScore": 76,
+                "depthScore": 72,
+                "strengths": [],
+                "weaknesses": "可以补充量化指标",
+                "feedback": "   ",
+                "suggestedImprovements": [],
+                "shouldFollowUp": True,
+            }
+
+    class Model:
+        def with_structured_output(self, _schema: object) -> StructuredModel:
+            return StructuredModel()
+
+    adapter = LangChainInterviewAnswerEvaluatorAdapter(Model())
+    evaluation = await adapter.evaluate(
+        InterviewEvaluationRequest(
+            job_title="Java 工程师",
+            job_description="负责后端服务",
+            question="如何设计限流系统？",
+            expected_points=("说明算法", "说明分布式一致性"),
+            answer="使用令牌桶并结合一致性路由。",
+            follow_up_depth=0,
+            context_prompt="简历项目经验",
+            recent_answers=(),
+        )
+    )
+
+    assert evaluation.overall_score == 100
+    assert evaluation.technical_score == 88
+    assert evaluation.strengths
+    assert evaluation.feedback
+    assert evaluation.suggested_improvements
+    assert evaluation.follow_up_focus

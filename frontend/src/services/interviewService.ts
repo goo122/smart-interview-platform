@@ -232,6 +232,7 @@ export interface AnswerInterviewQuestionResult {
   askToUser?: string | null;
   missingPoints?: string[] | Record<string, string>;
   finished?: boolean;
+  failed?: boolean;
 }
 
 type AnswerInterviewQuestionJsonPayload = {
@@ -551,7 +552,8 @@ const normalizeInterviewTurn = (
   options?: { finished?: boolean; totalScore?: number | null },
 ): AnswerInterviewQuestionResult => {
   const status = String(payload.status || "").toUpperCase();
-  const finished = options?.finished ?? status === "FAILED";
+  const failed = status === "FAILED";
+  const finished = options?.finished ?? false;
   const evaluation = payload.evaluation;
   return normalizeInterviewAnswer({
     turnId: payload.turnId,
@@ -562,6 +564,7 @@ const normalizeInterviewTurn = (
     isFollowUp: payload.turnType === "FOLLOW_UP",
     followUpCount: payload.followUpDepth,
     finished,
+    failed,
     totalScore: options?.totalScore ?? evaluation?.overallScore,
     feedback: evaluation?.feedback,
     score: evaluation?.overallScore,

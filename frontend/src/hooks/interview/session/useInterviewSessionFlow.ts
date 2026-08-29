@@ -47,6 +47,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     isCurrentQuestionFollowUp,
     currentFollowUpCount,
     isInterviewFinished,
+    isInterviewFailed,
     totalInterviewScore,
     applyProgressPatch,
     resetProgressState,
@@ -65,7 +66,8 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     resetMessageStream,
   } = useInterviewMessageStream();
 
-  const isReady = Boolean(interviewerSessionId) && !isInterviewFinished;
+  const isReady =
+    Boolean(interviewerSessionId) && !isInterviewFinished && !isInterviewFailed;
 
   const buildInterviewRoomPath = useCallback(
     (sessionId: string) =>
@@ -100,14 +102,13 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   const syncNextQuestion = useCallback(
     async (sessionId: string, options?: { appendMessage?: boolean }) => {
       const response = await interviewService.getCurrentQuestion(sessionId);
+      const progressPatch = buildInterviewProgressPatch(response);
+      applyProgressPatch(progressPatch);
       if (isInterviewResponseFailed(response.isSuccess)) {
         throw new Error(
           response.errorMessage || "Failed to load current interview question",
         );
       }
-
-      const progressPatch = buildInterviewProgressPatch(response);
-      applyProgressPatch(progressPatch);
 
       if (
         progressPatch.isInterviewFinished ||
@@ -212,16 +213,17 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
       });
       stopThinkingIndicator();
 
+      const progressPatch = buildInterviewProgressPatch(response);
+      applyProgressPatch(progressPatch);
       if (isInterviewResponseFailed(response.isSuccess)) {
+        answerRequestRef.current = null;
         throw new Error(
           response.errorMessage || "Failed to submit interview answer",
         );
       }
 
-      const progressPatch = buildInterviewProgressPatch(response);
       answerRequestRef.current = null;
       const feedbackText = response.feedback?.trim();
-      applyProgressPatch(progressPatch);
 
       if (feedbackText) {
         await appendAssistantMessage(feedbackText, {
@@ -333,6 +335,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     isCurrentQuestionFollowUp,
     currentFollowUpCount,
     isInterviewFinished,
+    isInterviewFailed,
     totalInterviewScore,
     interviewerSessionId,
     setInterviewerSessionId,

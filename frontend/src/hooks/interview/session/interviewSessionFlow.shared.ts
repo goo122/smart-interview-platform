@@ -14,6 +14,7 @@ export type InterviewProgressPatch = {
   isCurrentQuestionFollowUp: boolean;
   currentFollowUpCount: number;
   isInterviewFinished: boolean;
+  isInterviewFailed: boolean;
   totalInterviewScore?: number | null;
 };
 
@@ -29,6 +30,7 @@ export type InterviewFlowState = {
   isCurrentQuestionFollowUp: boolean;
   currentFollowUpCount: number;
   isInterviewFinished: boolean;
+  isInterviewFailed: boolean;
   totalInterviewScore: number | null;
 };
 
@@ -79,6 +81,8 @@ export const buildInterviewProgressPatch = (
   response: AnswerInterviewQuestionResult,
 ): InterviewProgressPatch => {
   const isInterviewFinished = Boolean(response.finished);
+  const isInterviewFailed = Boolean(response.failed);
+  const isTerminal = isInterviewFinished || isInterviewFailed;
   const nextQuestion =
     response.nextQuestion?.trim() || response.questionContent?.trim() || null;
 
@@ -86,16 +90,17 @@ export const buildInterviewProgressPatch = (
     currentTurnId: response.turnId || null,
     currentQuestionNumber:
       response.nextQuestionNumber || response.questionNumber || null,
-    currentQuestionContent: isInterviewFinished ? null : nextQuestion,
-    isCurrentQuestionFollowUp: isInterviewFinished
+    currentQuestionContent: isTerminal ? null : nextQuestion,
+    isCurrentQuestionFollowUp: isTerminal
       ? false
       : Boolean(response.isFollowUp),
-    currentFollowUpCount: isInterviewFinished
+    currentFollowUpCount: isTerminal
       ? 0
       : typeof response.followUpCount === "number"
         ? response.followUpCount
         : 0,
     isInterviewFinished,
+    isInterviewFailed,
     totalInterviewScore:
       typeof response.totalScore === "number" ? response.totalScore : undefined,
   };
