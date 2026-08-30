@@ -3,9 +3,14 @@ import asyncio
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
-from app.workers.queue import DocumentImportHandler, DocumentImportJob
+from app.workers.queue import (
+    DocumentImportHandler,
+    DocumentImportJob,
+    InterviewPreparationJob,
+)
 
 DOCUMENT_IMPORT_FUNCTION = "process_knowledge_document"
+INTERVIEW_PREPARATION_FUNCTION = "process_interview_preparation"
 DOCUMENT_IMPORT_QUEUE = "knowledge:documents"
 
 
@@ -35,6 +40,10 @@ class ArqDocumentTaskQueue:
         redis = await self._get_redis()
         await enqueue_document_job(redis, job)
 
+    async def enqueue_interview_preparation(self, job: InterviewPreparationJob) -> None:
+        redis = await self._get_redis()
+        await enqueue_interview_preparation_job(redis, job)
+
     def bind_inline_handler(self, handler: DocumentImportHandler) -> None:
         del handler
 
@@ -54,5 +63,20 @@ async def enqueue_document_job(redis: ArqRedis, job: DocumentImportJob) -> None:
         knowledge_base_id=str(job.knowledge_base_id),
         request_id=job.request_id,
         _job_id=f"knowledge-document:{job.document_id}",
+        _queue_name=DOCUMENT_IMPORT_QUEUE,
+    )
+
+
+async def enqueue_interview_preparation_job(
+    redis: ArqRedis, job: InterviewPreparationJob
+) -> None:
+    """Enqueue preparation with a deterministic ARQ job ID."""
+
+    await redis.enqueue_job(
+        INTERVIEW_PREPARATION_FUNCTION,
+        session_id=str(job.session_id),
+        user_id=str(job.user_id),
+        request_id=job.request_id,
+        _job_id=f"interview-preparation:{job.session_id}",
         _queue_name=DOCUMENT_IMPORT_QUEUE,
     )

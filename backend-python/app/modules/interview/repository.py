@@ -1,8 +1,9 @@
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,6 +102,14 @@ class InterviewRepository(Protocol):
     async def begin_preparing(
         self, session_id: UUID, user_id: UUID
     ) -> tuple[InterviewSession, bool]: ...
+
+    async def claim_preparation(
+        self, session_id: UUID, user_id: UUID, stale_before: datetime, attempt: int = 1
+    ) -> InterviewSession | None: ...
+
+    async def list_recoverable_preparations(
+        self, stale_before: datetime, limit: int = 100
+    ) -> list[InterviewSession]: ...
 
     async def persist_questions_and_ready(
         self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
@@ -321,6 +330,9 @@ class SqlAlchemyInterviewRepository:
             request_id=session.request_id,
             created_at=session.created_at,
             updated_at=session.updated_at,
+            preparation_queued_at=session.preparation_queued_at,
+            preparation_started_at=session.preparation_started_at,
+            preparation_attempt_count=session.preparation_attempt_count,
         )
         self._session.add(row)
         await self._session.flush()
@@ -429,6 +441,7 @@ class SqlAlchemyInterviewRepository:
         self._state_machine.transition(current, InterviewStatus.PREPARING)
         now = utc_now()
         row.status = InterviewStatus.PREPARING.value
+        row.preparation_queued_at = row.preparation_queued_at or now
         row.version += 1
         row.updated_at = now
         self._session.add(
@@ -438,12 +451,64 @@ class SqlAlchemyInterviewRepository:
                 current,
                 InterviewStatus.PREPARING,
                 {"version": row.version},
-                row.request_id,
+                f"preparation:{row.id}:preparing",
             )
         )
         await self._session.commit()
         await self._session.refresh(row)
         return _session_to_domain(row), True
+
+    async def claim_preparation(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+        stale_before: datetime,
+        attempt: int = 1,
+    ) -> InterviewSession | None:
+        """Atomically claim one PREPARING session for one ARQ delivery."""
+
+        expected_attempt = max(attempt - 1, 0)
+        started_at = utc_now()
+        result = await self._session.execute(
+            update(InterviewSessionModel)
+            .where(
+                InterviewSessionModel.id == session_id,
+                InterviewSessionModel.user_id == user_id,
+                InterviewSessionModel.status == InterviewStatus.PREPARING.value,
+                or_(
+                    InterviewSessionModel.preparation_attempt_count == expected_attempt,
+                    InterviewSessionModel.preparation_started_at.is_(None),
+                    InterviewSessionModel.preparation_started_at < stale_before,
+                ),
+            )
+            .values(
+                preparation_started_at=started_at,
+                preparation_attempt_count=InterviewSessionModel.preparation_attempt_count + 1,
+                updated_at=started_at,
+            )
+        )
+        if result.rowcount != 1:
+            await self._session.rollback()
+            return None
+        await self._session.commit()
+        return await self.get_for_user(session_id, user_id)
+
+    async def list_recoverable_preparations(
+        self, stale_before: datetime, limit: int = 100
+    ) -> list[InterviewSession]:
+        result = await self._session.execute(
+            select(InterviewSessionModel)
+            .where(
+                InterviewSessionModel.status == InterviewStatus.PREPARING.value,
+                or_(
+                    InterviewSessionModel.preparation_started_at.is_(None),
+                    InterviewSessionModel.preparation_started_at < stale_before,
+                ),
+            )
+            .order_by(InterviewSessionModel.updated_at.asc())
+            .limit(limit)
+        )
+        return [_session_to_domain(row) for row in result.scalars().all()]
 
     async def persist_questions_and_ready(
         self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
@@ -501,7 +566,7 @@ class SqlAlchemyInterviewRepository:
                 current,
                 InterviewStatus.READY,
                 {"question_count": len(questions), "version": row.version},
-                row.request_id,
+                f"preparation:{row.id}:ready",
             )
         )
         await self._session.commit()
@@ -537,7 +602,7 @@ class SqlAlchemyInterviewRepository:
                 current,
                 InterviewStatus.FAILED,
                 {"failure_code": row.failure_code, "version": row.version},
-                row.request_id,
+                f"preparation:{row.id}:failed",
             )
         )
         await self._session.commit()
@@ -1309,6 +1374,9 @@ def _session_to_domain(row: InterviewSessionModel) -> InterviewSession:
         prepared_at=row.prepared_at,
         started_at=row.started_at,
         finished_at=row.finished_at,
+        preparation_queued_at=row.preparation_queued_at,
+        preparation_started_at=row.preparation_started_at,
+        preparation_attempt_count=row.preparation_attempt_count,
     )
 
 

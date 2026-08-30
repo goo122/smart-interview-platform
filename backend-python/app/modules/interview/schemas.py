@@ -67,6 +67,13 @@ class InterviewSessionResponse(BaseModel):
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
     prepared_at: datetime | None = Field(default=None, alias="preparedAt")
+    preparation_queued_at: datetime | None = Field(
+        default=None, alias="preparationQueuedAt"
+    )
+    preparation_started_at: datetime | None = Field(
+        default=None, alias="preparationStartedAt"
+    )
+    preparation_attempt_count: int = Field(default=0, alias="preparationAttemptCount")
     started_at: datetime | None = Field(default=None, alias="startedAt")
     finished_at: datetime | None = Field(default=None, alias="finishedAt")
     resume_score: int | None = Field(default=None, alias="resumeScore")
@@ -110,6 +117,9 @@ class InterviewSessionResponse(BaseModel):
             createdAt=session.created_at,
             updatedAt=session.updated_at,
             preparedAt=session.prepared_at,
+            preparationQueuedAt=session.preparation_queued_at,
+            preparationStartedAt=session.preparation_started_at,
+            preparationAttemptCount=session.preparation_attempt_count,
             startedAt=session.started_at,
             finishedAt=session.finished_at,
             resumeScore=(resume_evaluation.overall_score if resume_evaluation else None),

@@ -169,7 +169,8 @@ python backend-python/scripts/run_integration_tests.py
 
 入口会校验 Compose、创建 `interviewplatform-integration` 专用 PostgreSQL 16/pgvector
 和 Redis 容器，从空卷执行全部 Alembic 迁移，验证 `0010_knowledge_queue_state`、
-`vector` 扩展和 1536 维向量列，然后连续运行两次 `pytest -m integration`，最后在
+`0011_interview_preparation_queue`、`vector` 扩展和 1536 维向量列，然后连续运行两次
+`pytest -m integration`，最后在
 `finally` 中删除本轮容器、网络和数据卷。测试使用专用端口和密码，不读取
 `backend-python/.env`，也不会触碰普通开发项目的资源。
 
@@ -237,7 +238,17 @@ returns structured questions with traceable source citations. The API is availab
 Migration `0005_create_interview_tables` creates sessions, questions, status events and
 question citations. Preparation is orchestrated through the compiled
 `InterviewPreparationWorkflow` LangGraph; LangGraph is a required runtime dependency
-and the database remains the source of truth.
+and the database remains the source of truth. Session creation transitions the session to
+`PREPARING` and enqueues the serializable `process_interview_preparation` ARQ task; the
+API does not wait for model execution. The shared Worker claims the session atomically,
+persists resume evaluation, questions, citations and the final `READY`/`FAILED` state.
+`preparation_queued_at`, `preparation_started_at` and `preparation_attempt_count` are
+stored by migration `0011_interview_preparation_queue`; `prepared_at` records completion.
+Recovery re-enqueues bounded batches of stale `PREPARING` sessions at startup and while
+the Worker is running. Duplicate jobs are safe because ARQ uses
+`interview-preparation:{session_id}` and PostgreSQL performs the claim and terminal-state
+checks. The existing `InlineTaskQueue` remains only for unit tests and answer/report
+workflows that have not been migrated.
 
 ## Interview answers, evaluation and follow-up
 

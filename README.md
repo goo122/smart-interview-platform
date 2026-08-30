@@ -77,6 +77,10 @@ PDF 上传接口只负责保存原文件、创建 `PENDING` 文档并投递可�
 重试和临时状态。Worker 会恢复待处理及超时的 `PROCESSING` 文档，失败时保留原始
 PDF 并记录安全错误码，避免静默丢失任务。
 
+面试题准备也通过同一个 ARQ Worker 执行：创建会话后 API 立即返回 `PREPARING`，
+Worker 完成简历匹配、题目生成和引用持久化后将会话更新为 `READY`；前端继续轮询
+会话接口。答题评分、报告、ASR 和 TTS 仍使用各自现有流程。
+
 健康检查：
 
 - `GET http://localhost:8000/health`：兼容的存活别名；

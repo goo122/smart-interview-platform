@@ -42,6 +42,23 @@ class DocumentTaskQueuePort(Protocol):
     def bind_inline_handler(self, handler: DocumentImportHandler) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class InterviewPreparationJob:
+    """Serializable arguments for an interview-preparation task."""
+
+    session_id: UUID
+    user_id: UUID
+    request_id: str
+
+
+class InterviewPreparationTaskQueuePort(Protocol):
+    """Queue port for asynchronously preparing interview questions."""
+
+    async def enqueue_interview_preparation(
+        self, job: InterviewPreparationJob
+    ) -> None: ...
+
+
 class InlineDocumentTaskQueue:
     """In-process document queue substitute used by unit/API tests only."""
 

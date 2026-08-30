@@ -4,6 +4,7 @@ from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
 from langgraph.graph import END, START, StateGraph
+from pydantic import ValidationError
 
 from app.ai.interview import (
     GeneratedQuestionSet,
@@ -30,6 +31,7 @@ from app.modules.interview.domain import (
 from app.modules.interview.exceptions import (
     InterviewPreparationError,
     InterviewQuestionValidationError,
+    RetryableInterviewPreparationError,
 )
 from app.modules.interview.repository import InterviewRepository
 
@@ -45,6 +47,7 @@ class InterviewGraphState(TypedDict, total=False):
     generated: GeneratedQuestionSet
     questions: list[InterviewQuestion]
     skip: bool
+    preparation_claimed: bool
 
 
 class InterviewPreparationWorkflow:
@@ -63,11 +66,24 @@ class InterviewPreparationWorkflow:
         self._resume_evaluator = resume_evaluator
         self._graph = self._build_graph()
 
-    async def prepare(self, user_id: UUID, session_id: UUID) -> InterviewSession:
-        state: InterviewGraphState = {"user_id": user_id, "session_id": session_id}
+    async def prepare(
+        self,
+        user_id: UUID,
+        session_id: UUID,
+        *,
+        preparation_claimed: bool = False,
+        worker_mode: bool = False,
+    ) -> InterviewSession:
+        state: InterviewGraphState = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "preparation_claimed": preparation_claimed,
+        }
         try:
             await self._graph.ainvoke(state)
         except asyncio.CancelledError:
+            if worker_mode:
+                raise
             try:
                 await self._repository.cancel(session_id, user_id)
             except Exception as exc:
@@ -75,7 +91,11 @@ class InterviewPreparationWorkflow:
             raise
         except AppError as exc:
             return await self._fail(state, exc.code, exc.message)
-        except Exception:
+        except Exception as exc:
+            if worker_mode:
+                raise RetryableInterviewPreparationError(
+                    "Interview preparation will be retried"
+                ) from exc
             return await self._fail(
                 state,
                 "INTERVIEW_PREPARATION_FAILED",
@@ -130,6 +150,12 @@ class InterviewPreparationWorkflow:
         return state
 
     async def _mark_preparing(self, state: InterviewGraphState) -> InterviewGraphState:
+        if state.get("preparation_claimed"):
+            if state["session"].status.value != "PREPARING":
+                state["skip"] = True
+                return state
+            state["skip"] = False
+            return state
         session, started = await self._repository.begin_preparing(
             state["session_id"], state["user_id"]
         )
@@ -243,7 +269,14 @@ class InterviewPreparationWorkflow:
     async def _generate_questions(self, state: InterviewGraphState) -> InterviewGraphState:
         last_error: InterviewQuestionValidationError | None = None
         for _attempt in range(2):
-            state["generated"] = await self._generator.generate(state["generation_request"])
+            try:
+                state["generated"] = await self._generator.generate(
+                    state["generation_request"]
+                )
+            except ValidationError as exc:
+                raise InterviewQuestionValidationError(
+                    "Generated question payload is invalid"
+                ) from exc
             try:
                 await self._validate_questions(state)
                 return state

@@ -1,4 +1,5 @@
 from app.core.exceptions import AppError
+from app.workers.queue import RetryableTaskError
 
 
 class InterviewNotFoundError(AppError):
@@ -40,6 +41,15 @@ class InterviewQuestionValidationError(InterviewPreparationError):
 
 class InterviewPreparationInProgressError(InvalidInterviewTransitionError):
     code = "interview_preparation_in_progress"
+
+
+class InterviewPreparationQueueUnavailableError(AppError):
+    status_code = 503
+    code = "interview_preparation_queue_unavailable"
+
+
+class RetryableInterviewPreparationError(RetryableTaskError):
+    """Signal that an ARQ interview-preparation delivery should be retried."""
 
 
 class InterviewTurnNotFoundError(AppError):

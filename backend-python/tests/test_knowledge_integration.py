@@ -36,6 +36,7 @@ from app.modules.interview.context import (
 )
 from app.modules.interview.domain import (
     InterviewDifficulty,
+    InterviewSession,
     InterviewStatus,
     InterviewType,
     TurnStatus,
@@ -68,8 +69,13 @@ from app.modules.knowledge.splitter import SimpleTextSplitter
 from app.modules.report.models import InterviewReportModel
 from app.modules.report.repository import SqlAlchemyInterviewReportRepository
 from app.modules.report.service import InterviewReportService
-from app.workers.queue import DocumentImportJob, InlineDocumentTaskQueue, InlineTaskQueue
-from app.workers.redis_queue import enqueue_document_job
+from app.workers.queue import (
+    DocumentImportJob,
+    InlineDocumentTaskQueue,
+    InlineTaskQueue,
+    InterviewPreparationJob,
+)
+from app.workers.redis_queue import enqueue_document_job, enqueue_interview_preparation_job
 
 pytestmark = pytest.mark.integration
 
@@ -558,6 +564,109 @@ async def test_arq_worker_consumes_shared_storage_document(
         await arq_redis.aclose()
         if document is not None:
             await storage.delete(document.storage_path)
+        await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_arq_worker_prepares_interview_and_persists_ready_state(
+    database_session: AsyncSession,
+) -> None:
+    session = database_session
+    user_id, base_id, document_id = uuid4(), uuid4(), uuid4()
+    embedding = FakeEmbedding()
+    query_text = (
+        "岗位：Python 后端工程师\n岗位描述：负责 FastAPI 和 PostgreSQL\n"
+        "难度：MEDIUM\n题目数：3"
+    )
+    vector = embedding._embed(query_text, embedding.dimensions)
+    arq_redis = await create_pool(
+        RedisSettings.from_dsn(_redis_url() or "redis://redis:6379/0"),
+        default_queue_name="knowledge:documents",
+    )
+    try:
+        session.add_all(
+            [
+                UserModel(
+                    id=user_id,
+                    username=f"interview-worker-{user_id.hex[:8]}",
+                    email=f"interview-worker-{user_id.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                KnowledgeBaseModel(id=base_id, user_id=user_id, name="Interview Worker"),
+                KnowledgeDocumentModel(
+                    id=document_id,
+                    knowledge_base_id=base_id,
+                    original_filename="resume.pdf",
+                    safe_filename="resume.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/interview-worker-resume.pdf",
+                    status=DocumentStatus.READY.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add(
+            KnowledgeChunkModel(
+                document_id=document_id,
+                chunk_index=0,
+                page_number=1,
+                content="FastAPI PostgreSQL 项目经验",
+                token_count=4,
+                content_hash=uuid4().hex * 2,
+                embedding=vector,
+            )
+        )
+        await session.commit()
+        repository = SqlAlchemyInterviewRepository(session)
+        interview = await repository.create(
+            InterviewSession.new(
+                user_id=user_id,
+                knowledge_base_id=base_id,
+                job_title="Python 后端工程师",
+                job_description="负责 FastAPI 和 PostgreSQL",
+                interview_type=InterviewType.TECHNICAL,
+                difficulty=InterviewDifficulty.MEDIUM,
+                question_count=3,
+                request_id="worker-interview-1",
+            )
+        )
+        queued, started = await repository.begin_preparing(interview.id, user_id)
+        assert started
+        assert queued.status == InterviewStatus.PREPARING
+        await enqueue_interview_preparation_job(
+            arq_redis,
+            InterviewPreparationJob(interview.id, user_id, "worker-interview-1"),
+        )
+
+        deadline = asyncio.get_running_loop().time() + 60
+        while asyncio.get_running_loop().time() < deadline:
+            await session.rollback()
+            current = await repository.get_for_user(interview.id, user_id)
+            if current is not None and current.status == InterviewStatus.READY:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            current = await repository.get_for_user(interview.id, user_id)
+            pytest.fail(f"Worker did not prepare interview: {current}")
+
+        assert current is not None
+        assert current.status == InterviewStatus.READY
+        questions = await repository.list_questions(interview.id)
+        assert len(questions) == 3
+        assert [event.to_status for event in await repository.list_events(interview.id)] == [
+            InterviewStatus.CREATED,
+            InterviewStatus.PREPARING,
+            InterviewStatus.READY,
+        ]
+    finally:
+        await arq_redis.aclose()
         await session.rollback()
         await session.execute(delete(UserModel).where(UserModel.id == user_id))
         await session.commit()

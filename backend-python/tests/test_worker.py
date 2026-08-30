@@ -1,5 +1,12 @@
+from uuid import uuid4
+
 import pytest
 
+from app.workers.queue import InterviewPreparationJob
+from app.workers.redis_queue import (
+    INTERVIEW_PREPARATION_FUNCTION,
+    enqueue_interview_preparation_job,
+)
 from app.workers.worker import worker_shutdown
 
 
@@ -17,6 +24,35 @@ class RecordingEngine:
 
     async def dispose(self) -> None:
         self.disposed = True
+
+
+class RecordingRedis:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def enqueue_job(self, function_name: str, **kwargs: object) -> None:
+        self.calls.append((function_name, kwargs))
+
+
+@pytest.mark.asyncio
+async def test_interview_preparation_job_has_serializable_deterministic_payload() -> None:
+    redis = RecordingRedis()
+    job = InterviewPreparationJob(uuid4(), uuid4(), "request-1")
+
+    await enqueue_interview_preparation_job(redis, job)  # type: ignore[arg-type]
+
+    assert redis.calls == [
+        (
+            INTERVIEW_PREPARATION_FUNCTION,
+            {
+                "session_id": str(job.session_id),
+                "user_id": str(job.user_id),
+                "request_id": "request-1",
+                "_job_id": f"interview-preparation:{job.session_id}",
+                "_queue_name": "knowledge:documents",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

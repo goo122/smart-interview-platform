@@ -230,6 +230,9 @@ export interface components {
       "createdAt": string;
       "updatedAt": string;
       "preparedAt"?: string | null;
+      "preparationQueuedAt"?: string | null;
+      "preparationStartedAt"?: string | null;
+      "preparationAttemptCount": number;
       "startedAt"?: string | null;
       "finishedAt"?: string | null;
       "resumeScore"?: number | null;

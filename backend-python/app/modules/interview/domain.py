@@ -73,6 +73,9 @@ class InterviewSession:
     prepared_at: datetime | None
     started_at: datetime | None
     finished_at: datetime | None
+    preparation_queued_at: datetime | None = None
+    preparation_started_at: datetime | None = None
+    preparation_attempt_count: int = 0
 
     @classmethod
     def new(
@@ -108,6 +111,9 @@ class InterviewSession:
             prepared_at=None,
             started_at=None,
             finished_at=None,
+            preparation_queued_at=None,
+            preparation_started_at=None,
+            preparation_attempt_count=0,
         )
 
 

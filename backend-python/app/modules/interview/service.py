@@ -22,13 +22,18 @@ from app.modules.interview.domain import (
 )
 from app.modules.interview.exceptions import (
     InterviewNotFoundError,
+    InterviewPreparationQueueUnavailableError,
     InterviewRequestAlreadyExistsError,
     InvalidInterviewRequestError,
     InvalidInterviewTransitionError,
 )
 from app.modules.interview.repository import InterviewRepository
 from app.modules.interview.workflow import InterviewPreparationWorkflow
-from app.workers.queue import TaskQueuePort
+from app.workers.queue import (
+    InterviewPreparationJob,
+    InterviewPreparationTaskQueuePort,
+    TaskQueuePort,
+)
 
 CONVERSATION_STATUS_TO_DOMAIN: dict[str, InterviewStatus] = {
     "CREATED": InterviewStatus.CREATED,
@@ -49,7 +54,7 @@ class InterviewService:
         repository: InterviewRepository,
         context_provider: InterviewContextProviderPort,
         generator: InterviewQuestionGeneratorPort,
-        task_queue: TaskQueuePort,
+        task_queue: InterviewPreparationTaskQueuePort | TaskQueuePort,
         settings: Settings,
         resume_evaluator: ResumeEvaluatorPort | None = None,
         role_inference: ResumeRoleInferencePort | None = None,
@@ -134,6 +139,34 @@ class InterviewService:
             if existing is None:
                 raise
             return existing
+        enqueue_preparation = getattr(
+            self._task_queue, "enqueue_interview_preparation", None
+        )
+        if callable(enqueue_preparation):
+            queued, _ = await self._repository.begin_preparing(created.id, user_id)
+            try:
+                await enqueue_preparation(
+                    InterviewPreparationJob(
+                        session_id=created.id,
+                        user_id=user_id,
+                        request_id=clean_request_id or f"interview:{created.id}",
+                    )
+                )
+            except Exception as exc:
+                await self._repository.mark_failed(
+                    created.id,
+                    user_id,
+                    "INTERVIEW_QUEUE_FAILED",
+                    "Interview preparation could not be queued",
+                )
+                raise InterviewPreparationQueueUnavailableError(
+                    "Interview preparation is temporarily unavailable"
+                ) from exc
+            return queued
+
+        # Legacy in-process behavior is intentionally kept for unit tests and
+        # workflows that have not moved to ARQ. Production interview creation
+        # injects the serializable queue above.
         try:
             async def prepare_task() -> None:
                 await self._workflow.prepare(user_id, created.id)

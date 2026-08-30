@@ -39,7 +39,7 @@ from app.modules.knowledge.dependencies import (
 )
 from app.modules.knowledge.repository import KnowledgeRepository
 from app.modules.knowledge.retrieval import RetrieverPort
-from app.workers.queue import TaskQueuePort
+from app.workers.queue import InterviewPreparationTaskQueuePort, TaskQueuePort
 
 
 async def get_interview_repository(
@@ -136,6 +136,15 @@ def get_interview_evaluation_context_provider(
     )
 
 
+def get_interview_preparation_task_queue(request: Request) -> InterviewPreparationTaskQueuePort:
+    """Return the serializable ARQ queue used only by interview preparation."""
+
+    return cast(
+        InterviewPreparationTaskQueuePort,
+        request.app.state.interview_preparation_task_queue,
+    )
+
+
 def get_interview_service(
     repository: Annotated[InterviewRepository, Depends(get_interview_repository)],
     context_provider: Annotated[
@@ -144,7 +153,9 @@ def get_interview_service(
     generator: Annotated[
         InterviewQuestionGeneratorPort, Depends(get_interview_question_generator)
     ],
-    task_queue: Annotated[TaskQueuePort, Depends(get_task_queue)],
+    task_queue: Annotated[
+        InterviewPreparationTaskQueuePort, Depends(get_interview_preparation_task_queue)
+    ],
     settings: Annotated[Settings, Depends(get_settings)],
     resume_evaluator: Annotated[ResumeEvaluatorPort, Depends(get_resume_evaluator)],
     role_inference: Annotated[

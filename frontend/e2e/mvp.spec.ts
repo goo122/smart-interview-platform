@@ -204,6 +204,7 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     },
   );
   expect(createInterviewResponse.status()).toBe(201);
+  expect(["PREPARING", "READY"]).toContain(createdSession.status);
   const sessionId = createdSession.sessionId as string;
   expect(sessionId).toBeTruthy();
   await expect

@@ -154,13 +154,13 @@ select exists(select 1 from pg_extension where extname = 'vector');
     )
     output = _require_success(result, "Schema verification")
     values = [line.strip() for line in output.splitlines() if line.strip()]
-    expected = ["0010_knowledge_queue_state", "t", "1536", "t", "t"]
+    expected = ["0011_interview_preparation_queue", "t", "1536", "t", "t"]
     if values != expected:
         raise IntegrationGateError(
             f"Schema verification returned unexpected safe values: {values}"
         )
     print(
-        "Schema: Alembic 0010, pgvector enabled, embedding dimension 1536, "
+        "Schema: Alembic 0011, pgvector enabled, embedding dimension 1536, "
         "resume snapshot present"
     )
 
