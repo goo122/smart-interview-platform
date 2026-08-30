@@ -1,4 +1,6 @@
 import hashlib
+import logging
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,7 @@ from app.infrastructure.storage.files import FileStoragePort
 from app.infrastructure.storage.pdf import PdfParserPort
 from app.infrastructure.vectorstore.port import VectorStorePort
 from app.modules.knowledge.domain import (
+    DocumentStatus,
     KnowledgeBase,
     KnowledgeDocument,
     StoredChunk,
@@ -28,6 +31,8 @@ from app.modules.knowledge.exceptions import (
 from app.modules.knowledge.repository import KnowledgeRepository
 from app.modules.knowledge.splitter import TextSplitterPort
 from app.workers.queue import TaskQueuePort
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeService:
@@ -96,6 +101,23 @@ class KnowledgeService:
         if document is None:
             raise KnowledgeDocumentNotFoundError("Knowledge document not found")
         return document
+
+    async def get_latest_ready_document(
+        self, user_id: UUID, base_id: UUID
+    ) -> KnowledgeDocument:
+        await self.get_base(user_id, base_id)
+        documents, _ = await self._repository.list_documents(base_id, 1, 10000)
+        for document in documents:
+            if document.status == DocumentStatus.READY:
+                return document
+        raise KnowledgeDocumentNotFoundError("Ready resume document not found")
+
+    async def read_document_content(self, user_id: UUID, document_id: UUID) -> bytes:
+        document = await self.get_document(user_id, document_id)
+        try:
+            return await self._file_storage.read(document.storage_path)
+        except FileNotFoundError as exc:
+            raise KnowledgeDocumentNotFoundError("Knowledge document file not found") from exc
 
     async def upload_document(
         self,
@@ -170,27 +192,71 @@ class KnowledgeService:
 
     async def _embed_chunks(self, chunks: Sequence[Any]) -> list[StoredChunk]:
         result: list[StoredChunk] = []
-        batch_size = self._settings.embedding_batch_size
-        for start in range(0, len(chunks), batch_size):
-            batch = chunks[start : start + batch_size]
-            vectors = await self._embedding.embed_documents([chunk.content for chunk in batch])
-            if len(vectors) != len(batch):
-                raise EmbeddingDimensionError("Embedding result count is invalid")
-            for chunk, vector in zip(batch, vectors, strict=True):
-                if len(vector) != self._embedding.dimensions:
-                    raise EmbeddingDimensionError("Embedding dimensions are invalid")
-                if len(vector) != self._settings.embedding_dimensions:
-                    raise EmbeddingDimensionError("Embedding dimensions are invalid")
-                result.append(
-                    StoredChunk(
-                        chunk_index=chunk.chunk_index,
-                        page_number=chunk.page_number,
-                        content=chunk.content,
-                        token_count=chunk.token_count,
-                        content_hash=chunk.content_hash,
-                        embedding=tuple(float(value) for value in vector),
-                    )
+        configured_batch_size = self._settings.embedding_batch_size
+        provider_limit = self._embedding.max_batch_size
+        batch_size = (
+            min(configured_batch_size, provider_limit)
+            if provider_limit is not None
+            else configured_batch_size
+        )
+        batch_count = (len(chunks) + batch_size - 1) // batch_size if chunks else 0
+        started_at = time.perf_counter()
+        common_log = {
+            "provider": self._settings.embedding_provider,
+            "model": self._settings.embedding_model,
+            "input_count": len(chunks),
+            "configured_batch_size": configured_batch_size,
+            "effective_batch_size": batch_size,
+            "batch_count": batch_count,
+        }
+        logger.info("Embedding document chunks", extra=common_log)
+        try:
+            for start in range(0, len(chunks), batch_size):
+                batch_number = (start // batch_size) + 1
+                batch = chunks[start : start + batch_size]
+                logger.info(
+                    "Embedding document batch",
+                    extra={**common_log, "batch_number": batch_number},
                 )
+                vectors = await self._embedding.embed_documents(
+                    [chunk.content for chunk in batch]
+                )
+                if len(vectors) != len(batch):
+                    raise EmbeddingDimensionError("Embedding result count is invalid")
+                for chunk, vector in zip(batch, vectors, strict=True):
+                    if len(vector) != self._embedding.dimensions:
+                        raise EmbeddingDimensionError("Embedding dimensions are invalid")
+                    if len(vector) != self._settings.embedding_dimensions:
+                        raise EmbeddingDimensionError("Embedding dimensions are invalid")
+                    result.append(
+                        StoredChunk(
+                            chunk_index=chunk.chunk_index,
+                            page_number=chunk.page_number,
+                            content=chunk.content,
+                            token_count=chunk.token_count,
+                            content_hash=chunk.content_hash,
+                            embedding=tuple(float(value) for value in vector),
+                        )
+                    )
+        except Exception as exc:
+            logger.warning(
+                "Embedding document failed",
+                extra={
+                    **common_log,
+                    "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "failure_category": type(exc).__name__,
+                    "success": False,
+                },
+            )
+            raise
+        logger.info(
+            "Embedding document completed",
+            extra={
+                **common_log,
+                "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "success": True,
+            },
+        )
         return result
 
     async def _fail_document(

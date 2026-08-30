@@ -27,10 +27,12 @@ from app.modules.knowledge.domain import (
     KnowledgeDocument,
     PdfPage,
     StoredChunk,
+    TextChunk,
     utc_now,
 )
 from app.modules.knowledge.exceptions import (
     DuplicateKnowledgeDocumentError,
+    EmbeddingDimensionError,
     KnowledgeNameAlreadyExistsError,
 )
 from app.modules.knowledge.service import KnowledgeService
@@ -441,6 +443,149 @@ async def test_chunk_limit_marks_failed_and_rolls_back() -> None:
     assert document.error_code == "CHUNK_LIMIT_EXCEEDED"
     assert not vector_store.chunks
     assert storage.deleted
+
+
+def _embedding_test_chunks(count: int) -> tuple[TextChunk, ...]:
+    return tuple(
+        TextChunk(
+            chunk_index=index,
+            page_number=index + 1,
+            content=f"synthetic chunk {index}",
+            token_count=3,
+            content_hash=f"hash-{index}",
+        )
+        for index in range(count)
+    )
+
+
+def _embedding_test_service(embedding: FakeEmbedding) -> KnowledgeService:
+    return KnowledgeService(
+        FakeKnowledgeRepository(),
+        FakeFileStorage(),
+        FakePdfParser(),
+        SimpleTextSplitter(100, 1),
+        embedding,
+        FakeVectorStore(),
+        InlineTaskQueue(),
+        Settings(_env_file=None, embedding_batch_size=10),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("count", "expected_batches"),
+    [(0, []), (1, [1]), (10, [10]), (11, [10, 1]), (26, [10, 10, 6])],
+)
+async def test_embedding_batches_respect_provider_safe_batch_size(
+    count: int, expected_batches: list[int]
+) -> None:
+    embedding = FakeEmbedding()
+    stored = await _embedding_test_service(embedding)._embed_chunks(_embedding_test_chunks(count))
+
+    assert [len(batch) for batch in embedding.batch_calls] == expected_batches
+    assert [chunk.content for chunk in stored] == [
+        f"synthetic chunk {index}" for index in range(count)
+    ]
+    assert len(stored) == count
+    assert all(len(chunk.embedding) == 1536 for chunk in stored)
+
+
+@pytest.mark.asyncio
+async def test_embedding_service_honors_adapter_batch_capability() -> None:
+    class CappedEmbedding(FakeEmbedding):
+        @property
+        def max_batch_size(self) -> int:
+            return 3
+
+    embedding = CappedEmbedding()
+
+    await _embedding_test_service(embedding)._embed_chunks(_embedding_test_chunks(8))
+
+    assert [len(batch) for batch in embedding.batch_calls] == [3, 3, 2]
+
+
+@pytest.mark.asyncio
+async def test_embedding_second_batch_failure_marks_document_failed_and_cleans_up() -> None:
+    class FailOnSecondBatch(FakeEmbedding):
+        async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+            self.batch_calls.append(tuple(texts))
+            if len(self.batch_calls) == 2:
+                raise RuntimeError("provider request failed")
+            return [self._embed(text, self.dimensions) for text in texts]
+
+    repository = FakeKnowledgeRepository()
+    storage = FakeFileStorage()
+    parser = FakePdfParser(tuple(PdfPage(index + 1, f"page {index}") for index in range(26)))
+    vector_store = FakeVectorStore()
+    embedding = FailOnSecondBatch()
+    service = KnowledgeService(
+        repository,
+        storage,
+        parser,
+        SimpleTextSplitter(100, 1),
+        embedding,
+        vector_store,
+        InlineTaskQueue(),
+        Settings(_env_file=None, embedding_batch_size=10),
+    )
+    user_id = UUID("00000000-0000-0000-0000-000000000003")
+    base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
+
+    document = await service.upload_document(
+        user_id, base.id, "file.pdf", "application/pdf", b"%PDF-1.7 content"
+    )
+
+    assert [len(batch) for batch in embedding.batch_calls] == [10, 10]
+    assert document.status == DocumentStatus.FAILED
+    assert document.error_code == "EMBEDDING_FAILED"
+    assert vector_store.rollback_count == 1
+    assert not vector_store.chunks
+    assert storage.deleted
+
+
+@pytest.mark.asyncio
+async def test_embedding_result_count_mismatch_is_rejected() -> None:
+    class MissingVectorEmbedding(FakeEmbedding):
+        async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+            self.batch_calls.append(tuple(texts))
+            return [self._embed(texts[0], self.dimensions)]
+
+    with pytest.raises(EmbeddingDimensionError, match="result count"):
+        await _embedding_test_service(MissingVectorEmbedding())._embed_chunks(
+            _embedding_test_chunks(2)
+        )
+
+
+@pytest.mark.asyncio
+async def test_more_than_ten_pdf_chunks_reach_ready_with_ordered_batches() -> None:
+    repository = FakeKnowledgeRepository()
+    storage = FakeFileStorage()
+    parser = FakePdfParser(tuple(PdfPage(index + 1, f"page {index}") for index in range(26)))
+    vector_store = FakeVectorStore()
+    embedding = FakeEmbedding()
+    service = KnowledgeService(
+        repository,
+        storage,
+        parser,
+        SimpleTextSplitter(100, 1),
+        embedding,
+        vector_store,
+        InlineTaskQueue(),
+        Settings(_env_file=None, embedding_batch_size=10),
+    )
+    user_id = UUID("00000000-0000-0000-0000-000000000004")
+    base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
+
+    document = await service.upload_document(
+        user_id, base.id, "file.pdf", "application/pdf", b"%PDF-1.7 content"
+    )
+
+    assert document.status == DocumentStatus.READY
+    assert document.chunk_count == 26
+    assert [len(batch) for batch in embedding.batch_calls] == [10, 10, 6]
+    assert [chunk.page_number for chunk in vector_store.chunks[document.id]] == list(
+        range(1, 27)
+    )
 
 
 @pytest.mark.asyncio

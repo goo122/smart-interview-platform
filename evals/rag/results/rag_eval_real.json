@@ -1,0 +1,1219 @@
+{
+  "dataset_version": "rag-eval-v1",
+  "mode": "real",
+  "embedding_identity": "openai_compatible:text-embedding-v4:1536",
+  "embedding_dimensions": 1536,
+  "document_count": 5,
+  "chunk_count": 14,
+  "query_count": 12,
+  "thresholds": [
+    0.0,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8
+  ],
+  "top_ks": [
+    1,
+    3,
+    5,
+    8
+  ],
+  "embedding_requests": 3,
+  "embedding_request_budget": 10,
+  "embedding_batch_size": 10,
+  "matrix": [
+    {
+      "similarity_threshold": 0.0,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 0.8148,
+        "precision_at_3": 1.0,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 0.8148,
+        "precision_at_5": 1.0,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.0,
+        "unrelated_false_positive_rate": 1.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 9.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7757115445524414,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 3.0,
+          "min": 0.19970391390943054,
+          "mean": 0.2500876426637952,
+          "max": 0.31632500886917114
+        },
+        "latency_ms": {
+          "p50": 2.1948245048406534,
+          "p95": 5.210344148508735
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.0,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.4815,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.4815,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.0,
+        "unrelated_false_positive_rate": 1.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 23.0,
+          "min": 0.172631383475487,
+          "mean": 0.3458455694095004,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.661031496245414,
+          "p95": 3.7771964503917843
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.0,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.4815,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.4815,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.0,
+        "unrelated_false_positive_rate": 1.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 23.0,
+          "min": 0.172631383475487,
+          "mean": 0.3458455694095004,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.721555494645145,
+          "p95": 3.6350790898723053
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.0,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.4815,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.4815,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.0,
+        "unrelated_false_positive_rate": 1.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 23.0,
+          "min": 0.172631383475487,
+          "mean": 0.3458455694095004,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.611850002722349,
+          "p95": 2.8706619479635265
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.2,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 0.8148,
+        "precision_at_3": 1.0,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 0.8148,
+        "precision_at_5": 1.0,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.3333,
+        "unrelated_false_positive_rate": 0.6667,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 9.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7757115445524414,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 2.0,
+          "min": 0.2342340052127838,
+          "mean": 0.2752795070409775,
+          "max": 0.31632500886917114
+        },
+        "latency_ms": {
+          "p50": 2.2208275040611625,
+          "p95": 3.489702696970198
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.2,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.4815,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.4815,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.3333,
+        "unrelated_false_positive_rate": 0.6667,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 19.0,
+          "min": 0.2057906538248062,
+          "mean": 0.378476750291984,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.7109580041724257,
+          "p95": 3.2887220448174044
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.2,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.4815,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.4815,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.3333,
+        "unrelated_false_positive_rate": 0.6667,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 19.0,
+          "min": 0.2057906538248062,
+          "mean": 0.378476750291984,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.6153790022362955,
+          "p95": 3.2461233022331717
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.2,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.4815,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.4815,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.3333,
+        "unrelated_false_positive_rate": 0.6667,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 19.0,
+          "min": 0.2057906538248062,
+          "mean": 0.378476750291984,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.6553889983915724,
+          "p95": 4.711130693613085
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.3,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 0.8148,
+        "precision_at_3": 1.0,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 0.8148,
+        "precision_at_5": 1.0,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.6667,
+        "unrelated_false_positive_rate": 0.3333,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 9.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7757115445524414,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 1.0,
+          "min": 0.31632500886917114,
+          "mean": 0.31632500886917114,
+          "max": 0.31632500886917114
+        },
+        "latency_ms": {
+          "p50": 3.081467999436427,
+          "p95": 5.777288600074824
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.3,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.5185,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.5185,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.6667,
+        "unrelated_false_positive_rate": 0.3333,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 14.0,
+          "min": 0.30233073234558105,
+          "mean": 0.42578953527319546,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 4.53469450440025,
+          "p95": 6.600117493508149
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.3,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.5185,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.5185,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.6667,
+        "unrelated_false_positive_rate": 0.3333,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 14.0,
+          "min": 0.30233073234558105,
+          "mean": 0.42578953527319546,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 3.66894399485318,
+          "p95": 5.063956643425627
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.3,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.5185,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.5185,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 0.6667,
+        "unrelated_false_positive_rate": 0.3333,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 14.0,
+          "min": 0.30233073234558105,
+          "mean": 0.42578953527319546,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.9277929934323765,
+          "p95": 3.2078792501124553
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.4,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 0.8148,
+        "precision_at_3": 1.0,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 0.8148,
+        "precision_at_5": 1.0,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 9.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7757115445524414,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 2.259319502627477,
+          "p95": 4.084483657788948
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.4,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.7037,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.7037,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 8.0,
+          "min": 0.40482486428918363,
+          "mean": 0.498549839670018,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.539563000027556,
+          "p95": 2.9146082037186716
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.4,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.7037,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.7037,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 8.0,
+          "min": 0.40482486428918363,
+          "mean": 0.498549839670018,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.4435900049866177,
+          "p95": 2.9174944953410886
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.4,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.8148,
+        "precision_at_1": 1.0,
+        "mrr_at_1": 1.0,
+        "recall_at_3": 1.0,
+        "precision_at_3": 0.7037,
+        "mrr_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.7037,
+        "mrr_at_5": 1.0,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 1.0,
+        "citation_page_accuracy": 1.0,
+        "related_score_distribution": {
+          "count": 13.0,
+          "min": 0.4630911350250244,
+          "mean": 0.7104864886317762,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 8.0,
+          "min": 0.40482486428918363,
+          "mean": 0.498549839670018,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.632518000609707,
+          "p95": 3.9467411916120905
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.5,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.7037,
+        "precision_at_3": 0.8889,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.7037,
+        "precision_at_5": 0.8889,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 8.0,
+          "min": 0.619380667135795,
+          "mean": 0.8147890957433686,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 2.211324499512557,
+          "p95": 2.7790655512944795
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.5,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.8889,
+        "precision_at_3": 0.7593,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.8889,
+        "precision_at_5": 0.7593,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 12.0,
+          "min": 0.5419651754467368,
+          "mean": 0.7311027680990055,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 3.0,
+          "min": 0.5305793479948266,
+          "mean": 0.5634768674636302,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.387309999903664,
+          "p95": 3.181192956253653
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.5,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.8889,
+        "precision_at_3": 0.7593,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.8889,
+        "precision_at_5": 0.7593,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 12.0,
+          "min": 0.5419651754467368,
+          "mean": 0.7311027680990055,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 3.0,
+          "min": 0.5305793479948266,
+          "mean": 0.5634768674636302,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.5295559971709736,
+          "p95": 2.8110649473092053
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.5,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.8889,
+        "precision_at_3": 0.7593,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.8889,
+        "precision_at_5": 0.7593,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 12.0,
+          "min": 0.5419651754467368,
+          "mean": 0.7311027680990055,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 3.0,
+          "min": 0.5305793479948266,
+          "mean": 0.5634768674636302,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.522991504520178,
+          "p95": 3.654284255026141
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.6,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.7037,
+        "precision_at_3": 0.8889,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.7037,
+        "precision_at_5": 0.8889,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 8.0,
+          "min": 0.619380667135795,
+          "mean": 0.8147890957433686,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 2.301536005688831,
+          "p95": 3.4566566544526713
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.6,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.7037,
+        "precision_at_3": 0.8333,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.7037,
+        "precision_at_5": 0.8333,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 8.0,
+          "min": 0.619380667135795,
+          "mean": 0.8147890957433686,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 1.0,
+          "min": 0.6027991355299694,
+          "mean": 0.6027991355299694,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.329317998373881,
+          "p95": 3.542307695170166
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.6,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.7037,
+        "precision_at_3": 0.8333,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.7037,
+        "precision_at_5": 0.8333,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 8.0,
+          "min": 0.619380667135795,
+          "mean": 0.8147890957433686,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 1.0,
+          "min": 0.6027991355299694,
+          "mean": 0.6027991355299694,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.317320504516829,
+          "p95": 2.478153901756741
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.6,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.7037,
+        "precision_at_1": 0.8889,
+        "mrr_at_1": 0.8889,
+        "recall_at_3": 0.7037,
+        "precision_at_3": 0.8333,
+        "mrr_at_3": 0.8889,
+        "recall_at_5": 0.7037,
+        "precision_at_5": 0.8333,
+        "mrr_at_5": 0.8889,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.8889,
+        "citation_page_accuracy": 0.8889,
+        "related_score_distribution": {
+          "count": 8.0,
+          "min": 0.619380667135795,
+          "mean": 0.8147890957433686,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 1.0,
+          "min": 0.6027991355299694,
+          "mean": 0.6027991355299694,
+          "max": 0.6027991355299694
+        },
+        "latency_ms": {
+          "p50": 2.1589914977084845,
+          "p95": 2.356900752783986
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.7,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.5926,
+        "precision_at_1": 0.7778,
+        "mrr_at_1": 0.7778,
+        "recall_at_3": 0.5926,
+        "precision_at_3": 0.7778,
+        "mrr_at_3": 0.7778,
+        "recall_at_5": 0.5926,
+        "precision_at_5": 0.7778,
+        "mrr_at_5": 0.7778,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.7778,
+        "citation_page_accuracy": 0.7778,
+        "related_score_distribution": {
+          "count": 7.0,
+          "min": 0.7321604490280151,
+          "mean": 0.8427045855444505,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 2.0893100008834153,
+          "p95": 2.21911104672472
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.7,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.5926,
+        "precision_at_1": 0.7778,
+        "mrr_at_1": 0.7778,
+        "recall_at_3": 0.5926,
+        "precision_at_3": 0.7778,
+        "mrr_at_3": 0.7778,
+        "recall_at_5": 0.5926,
+        "precision_at_5": 0.7778,
+        "mrr_at_5": 0.7778,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.7778,
+        "citation_page_accuracy": 0.7778,
+        "related_score_distribution": {
+          "count": 7.0,
+          "min": 0.7321604490280151,
+          "mean": 0.8427045855444505,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 2.091550995828584,
+          "p95": 2.949758998147444
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.7,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.5926,
+        "precision_at_1": 0.7778,
+        "mrr_at_1": 0.7778,
+        "recall_at_3": 0.5926,
+        "precision_at_3": 0.7778,
+        "mrr_at_3": 0.7778,
+        "recall_at_5": 0.5926,
+        "precision_at_5": 0.7778,
+        "mrr_at_5": 0.7778,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.7778,
+        "citation_page_accuracy": 0.7778,
+        "related_score_distribution": {
+          "count": 7.0,
+          "min": 0.7321604490280151,
+          "mean": 0.8427045855444505,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 1.9670015026349574,
+          "p95": 2.229929294117028
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.7,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.5926,
+        "precision_at_1": 0.7778,
+        "mrr_at_1": 0.7778,
+        "recall_at_3": 0.5926,
+        "precision_at_3": 0.7778,
+        "mrr_at_3": 0.7778,
+        "recall_at_5": 0.5926,
+        "precision_at_5": 0.7778,
+        "mrr_at_5": 0.7778,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.7778,
+        "citation_page_accuracy": 0.7778,
+        "related_score_distribution": {
+          "count": 7.0,
+          "min": 0.7321604490280151,
+          "mean": 0.8427045855444505,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 2.003284993406851,
+          "p95": 2.202662747731665
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.8,
+      "top_k": 1,
+      "metrics": {
+        "recall_at_1": 0.3333,
+        "precision_at_1": 0.3333,
+        "mrr_at_1": 0.3333,
+        "recall_at_3": 0.3333,
+        "precision_at_3": 0.3333,
+        "mrr_at_3": 0.3333,
+        "recall_at_5": 0.3333,
+        "precision_at_5": 0.3333,
+        "mrr_at_5": 0.3333,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.3333,
+        "citation_page_accuracy": 0.3333,
+        "related_score_distribution": {
+          "count": 3.0,
+          "min": 0.9121581754967288,
+          "mean": 0.970719391832243,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 1.8678185006137937,
+          "p95": 2.187197740568081
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.8,
+      "top_k": 3,
+      "metrics": {
+        "recall_at_1": 0.3333,
+        "precision_at_1": 0.3333,
+        "mrr_at_1": 0.3333,
+        "recall_at_3": 0.3333,
+        "precision_at_3": 0.3333,
+        "mrr_at_3": 0.3333,
+        "recall_at_5": 0.3333,
+        "precision_at_5": 0.3333,
+        "mrr_at_5": 0.3333,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.3333,
+        "citation_page_accuracy": 0.3333,
+        "related_score_distribution": {
+          "count": 3.0,
+          "min": 0.9121581754967288,
+          "mean": 0.970719391832243,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 1.922878494951874,
+          "p95": 2.5773098022909835
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.8,
+      "top_k": 5,
+      "metrics": {
+        "recall_at_1": 0.3333,
+        "precision_at_1": 0.3333,
+        "mrr_at_1": 0.3333,
+        "recall_at_3": 0.3333,
+        "precision_at_3": 0.3333,
+        "mrr_at_3": 0.3333,
+        "recall_at_5": 0.3333,
+        "precision_at_5": 0.3333,
+        "mrr_at_5": 0.3333,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.3333,
+        "citation_page_accuracy": 0.3333,
+        "related_score_distribution": {
+          "count": 3.0,
+          "min": 0.9121581754967288,
+          "mean": 0.970719391832243,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 1.9696509989444166,
+          "p95": 2.263581092847744
+        }
+      }
+    },
+    {
+      "similarity_threshold": 0.8,
+      "top_k": 8,
+      "metrics": {
+        "recall_at_1": 0.3333,
+        "precision_at_1": 0.3333,
+        "mrr_at_1": 0.3333,
+        "recall_at_3": 0.3333,
+        "precision_at_3": 0.3333,
+        "mrr_at_3": 0.3333,
+        "recall_at_5": 0.3333,
+        "precision_at_5": 0.3333,
+        "mrr_at_5": 0.3333,
+        "empty_result_accuracy": 1.0,
+        "unrelated_false_positive_rate": 0.0,
+        "cross_user_leakage": 0,
+        "cross_knowledge_base_leakage": 0,
+        "citation_document_accuracy": 0.3333,
+        "citation_page_accuracy": 0.3333,
+        "related_score_distribution": {
+          "count": 3.0,
+          "min": 0.9121581754967288,
+          "mean": 0.970719391832243,
+          "max": 1.0
+        },
+        "unrelated_score_distribution": {
+          "count": 0.0,
+          "min": null,
+          "mean": null,
+          "max": null
+        },
+        "latency_ms": {
+          "p50": 1.8730145020526834,
+          "p95": 2.101897958345944
+        }
+      }
+    }
+  ],
+  "notes": [
+    "Metrics are calculated from scoped PostgreSQL/pgvector retrieval.",
+    "Precision, MRR and citation accuracy are averaged over positive queries.",
+    "Real text-embedding-v4 results use synthetic data and are an MVP baseline; they do not by themselves justify changing production defaults."
+  ]
+}

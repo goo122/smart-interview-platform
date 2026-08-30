@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.domain import User
@@ -21,6 +22,8 @@ from app.modules.interview.schemas import (
     SubmitInterviewAnswerResponse,
 )
 from app.modules.interview.service import InterviewService
+from app.modules.knowledge.dependencies import get_knowledge_service
+from app.modules.knowledge.service import KnowledgeService
 from app.modules.report.dependencies import get_interview_report_service
 from app.modules.report.schemas import (
     InterviewReportPageResponse,
@@ -142,6 +145,21 @@ async def cancel_session(
     session = await service.cancel(current_user.id, session_id)
     evaluation = await service.get_resume_evaluation(current_user.id, session_id)
     return InterviewSessionResponse.from_domain(session, evaluation)
+
+
+@router.get("/sessions/{session_id}/resume/preview")
+async def resume_preview(
+    session_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    interview_service: Annotated[InterviewService, Depends(get_interview_service)],
+    knowledge_service: Annotated[KnowledgeService, Depends(get_knowledge_service)],
+) -> Response:
+    session = await interview_service.get_session(current_user.id, session_id)
+    document = await knowledge_service.get_latest_ready_document(
+        current_user.id, session.knowledge_base_id
+    )
+    content = await knowledge_service.read_document_content(current_user.id, document.id)
+    return Response(content=content, media_type="application/pdf")
 
 
 @router.get(

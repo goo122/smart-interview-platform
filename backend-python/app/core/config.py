@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import Field, PostgresDsn, RedisDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.ai.capabilities import embedding_batch_limit
+
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables and a local .env file."""
@@ -21,6 +23,8 @@ class Settings(BaseSettings):
     ai_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
     embedding_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
     ai_fake_mode: Literal["normal", "follow_up", "failure"] = "normal"
+    ai_request_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    ai_max_retries: int = Field(default=2, ge=0, le=3)
     secret_key: str = Field(default_factory=lambda: token_urlsafe(32))
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
@@ -39,7 +43,7 @@ class Settings(BaseSettings):
     rag_no_result_policy: Literal["answer_without_context", "error"] = (
         "answer_without_context"
     )
-    embedding_batch_size: int = Field(default=32, ge=1, le=512)
+    embedding_batch_size: int = Field(default=10, ge=1, le=512)
     embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
     knowledge_max_file_size: int = Field(default=20 * 1024 * 1024, ge=1)
     knowledge_storage_dir: str = "./storage"
@@ -87,6 +91,14 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "openai_compatible embedding provider requires API key, base URL and model"
+            )
+        provider_limit = embedding_batch_limit(
+            self.embedding_provider, self.embedding_model
+        )
+        if provider_limit is not None and self.embedding_batch_size > provider_limit:
+            raise ValueError(
+                "embedding_batch_size must not exceed the configured provider limit "
+                f"of {provider_limit}"
             )
         if self.rag_chunk_overlap >= self.rag_chunk_size:
             raise ValueError("rag_chunk_overlap must be smaller than rag_chunk_size")

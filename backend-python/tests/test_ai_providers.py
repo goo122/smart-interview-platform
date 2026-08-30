@@ -41,6 +41,15 @@ from app.ai.resume import (
 from app.core.config import Settings
 
 
+def test_default_embedding_batch_size_is_ten() -> None:
+    assert Settings(_env_file=None).embedding_batch_size == 10
+
+
+def test_embedding_retries_are_bounded() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, ai_max_retries=4)
+
+
 def test_unavailable_provider_is_safe_default() -> None:
     bundle = AiProviderFactory.build(Settings(_env_file=None))
 
@@ -176,6 +185,18 @@ def test_openai_compatible_requires_complete_configuration(kwargs: dict[str, str
         Settings(_env_file=None, **kwargs)
 
 
+def test_text_embedding_v4_rejects_batch_size_above_provider_limit() -> None:
+    with pytest.raises(ValidationError, match="batch_size.*10"):
+        Settings(
+            _env_file=None,
+            embedding_provider="openai_compatible",
+            embedding_api_key="test-key",
+            embedding_base_url="https://embedding.invalid/v1",
+            embedding_model="text-embedding-v4",
+            embedding_batch_size=11,
+        )
+
+
 @pytest.mark.asyncio
 async def test_embedding_dimension_mismatch_is_rejected() -> None:
     class WrongEmbedding(FakeEmbedding):
@@ -231,6 +252,64 @@ def test_openai_compatible_uses_one_shared_chat_model(monkeypatch: pytest.Monkey
     assert isinstance(bundle.resume_evaluator, LangChainResumeEvaluatorAdapter)
     assert bundle.chat_model._model is bundle.interview_question_generator._model
     assert isinstance(bundle.embedding, LangChainEmbeddingAdapter)
+    assert bundle.chat_model._model.kwargs["timeout"] == settings.ai_request_timeout_seconds
+    assert bundle.chat_model._model.kwargs["max_retries"] == settings.ai_max_retries
+    assert bundle.embedding._embeddings.kwargs["timeout"] == settings.ai_request_timeout_seconds
+    assert bundle.embedding._embeddings.kwargs["max_retries"] == settings.ai_max_retries
+    assert bundle.embedding._embeddings.kwargs["chunk_size"] == settings.embedding_batch_size
+    assert bundle.embedding.max_batch_size is None
+
+
+def test_text_embedding_v4_sets_provider_batch_capability(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class FakeOpenAIEmbeddings:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        types.SimpleNamespace(ChatOpenAI=FakeChatOpenAI, OpenAIEmbeddings=FakeOpenAIEmbeddings),
+    )
+    settings = Settings(
+        _env_file=None,
+        embedding_provider="openai_compatible",
+        embedding_api_key="embedding-key",
+        embedding_base_url="https://embedding.invalid/v1",
+        embedding_model="text-embedding-v4",
+        embedding_batch_size=10,
+    )
+
+    bundle = AiProviderFactory.build(settings)
+
+    assert isinstance(bundle.embedding, LangChainEmbeddingAdapter)
+    assert bundle.embedding.max_batch_size == 10
+    assert bundle.embedding._embeddings.kwargs["chunk_size"] == 10
+
+
+@pytest.mark.asyncio
+async def test_embedding_adapter_does_not_retry_provider_configuration_errors() -> None:
+    class BadRequest(Exception):
+        status_code = 400
+
+    class Provider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def aembed_documents(self, _texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            raise BadRequest("invalid batch")
+
+    provider = Provider()
+    adapter = LangChainEmbeddingAdapter(provider, dimensions=1536, max_batch_size=10)
+
+    with pytest.raises(BadRequest):
+        await adapter.embed_documents(["text"])
+
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio

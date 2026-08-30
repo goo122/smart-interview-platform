@@ -36,7 +36,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -m 'not integration'"
 markers = [
     "integration: tests requiring Docker PostgreSQL, pgvector and Redis",
 ]

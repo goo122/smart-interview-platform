@@ -72,31 +72,53 @@ def _redis_url() -> str | None:
     return os.getenv("KNOWLEDGE_TEST_REDIS_URL") or os.getenv("APP_REDIS_URL")
 
 
+def _integration_enabled() -> bool:
+    return os.getenv("RUN_INTEGRATION_TESTS") == "1"
+
+
 @pytest_asyncio.fixture
 async def database_session() -> AsyncIterator[AsyncSession]:
+    if not _integration_enabled():
+        pytest.fail(
+            "Integration tests require RUN_INTEGRATION_TESTS=1 and the dedicated test runner"
+        )
     url = _database_url()
     if not url:
-        pytest.skip("KNOWLEDGE_TEST_DATABASE_URL is not configured")
+        pytest.fail("KNOWLEDGE_TEST_DATABASE_URL is not configured")
     engine = create_async_engine(url, pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as session:
-        yield session
-    await engine.dispose()
+    try:
+        async with engine.connect():
+            pass
+    except Exception as exc:
+        await engine.dispose()
+        pytest.fail(f"PostgreSQL integration service is not reachable: {type(exc).__name__}")
+    try:
+        async with factory() as session:
+            yield session
+    finally:
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def redis_client() -> AsyncIterator[Redis]:
+    if not _integration_enabled():
+        pytest.fail(
+            "Integration tests require RUN_INTEGRATION_TESTS=1 and the dedicated test runner"
+        )
     url = _redis_url()
     if not url:
-        pytest.skip("KNOWLEDGE_TEST_REDIS_URL is not configured")
+        pytest.fail("KNOWLEDGE_TEST_REDIS_URL is not configured")
     client = Redis.from_url(url, decode_responses=True)
     try:
         await client.ping()
-    except Exception:
+    except Exception as exc:
         await client.aclose()
-        pytest.skip("Redis is not reachable")
-    yield client
-    await client.aclose()
+        pytest.fail(f"Redis integration service is not reachable: {type(exc).__name__}")
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

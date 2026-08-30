@@ -69,37 +69,43 @@ def error_response(
     code: str,
     message: str,
     details: Any | None = None,
+    request_id: str | None = None,
 ) -> JSONResponse:
     """Build the single error envelope returned by this API."""
 
     error: dict[str, Any] = {"code": code, "message": message}
     if details is not None:
         error["details"] = details
-    return JSONResponse(status_code=status_code, content={"error": error})
+    headers = {"X-Request-ID": request_id} if request_id else None
+    return JSONResponse(status_code=status_code, content={"error": error}, headers=headers)
 
 
-async def http_exception_handler(
-    _request: Request, exc: StarletteHTTPException
-) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Convert framework HTTP errors, including 404, to the standard envelope."""
 
     code = "not_found" if exc.status_code == 404 else "http_error"
     message = exc.detail if isinstance(exc.detail, str) else "Request failed"
-    return error_response(status_code=exc.status_code, code=code, message=message)
+    return error_response(
+        status_code=exc.status_code,
+        code=code,
+        message=message,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
-async def app_exception_handler(_request: Request, exc: AppError) -> JSONResponse:
+async def app_exception_handler(request: Request, exc: AppError) -> JSONResponse:
     """Convert expected domain errors to the standard API error envelope."""
 
     return error_response(
         status_code=exc.status_code,
         code=exc.code,
         message=exc.message,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
 async def validation_exception_handler(
-    _request: Request, exc: RequestValidationError
+    request: Request, exc: RequestValidationError
 ) -> JSONResponse:
     """Return validation failures without exposing framework-specific response shapes."""
 
@@ -116,14 +122,16 @@ async def validation_exception_handler(
         code="validation_error",
         message="Request validation failed",
         details=details,
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
-async def unhandled_exception_handler(_request: Request, _exc: Exception) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, _exc: Exception) -> JSONResponse:
     """Avoid leaking internal error information to API clients."""
 
     return error_response(
         status_code=500,
         code="internal_server_error",
         message="An unexpected error occurred",
+        request_id=getattr(request.state, "request_id", None),
     )

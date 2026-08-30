@@ -1,0 +1,250 @@
+{
+  "version": "rag-eval-v1",
+  "description": "Synthetic resumes and queries for offline RAG retrieval evaluation.",
+  "documents": [
+    {
+      "id": "resume-java-spring",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "filename": "synthetic-java-spring.pdf",
+      "chunks": [
+        {
+          "id": "java-profile",
+          "page": 1,
+          "text": "候选人具备 5 年 Java 与 Spring Boot 后端经验，负责订单服务。"
+        },
+        {
+          "id": "java-redis",
+          "page": 2,
+          "text": "项目事实：使用 Redis 分布式锁和幂等键治理库存超卖，峰值达到 500 QPS。"
+        },
+        {
+          "id": "java-gateway",
+          "page": 3,
+          "text": "职责包括 Spring Cloud Gateway、MySQL 索引优化和灰度发布，维护微服务稳定性。"
+        }
+      ]
+    },
+    {
+      "id": "resume-python-fastapi",
+      "owner_id": "candidate-python",
+      "knowledge_base_id": "kb-python",
+      "filename": "synthetic-python-fastapi.pdf",
+      "chunks": [
+        {
+          "id": "python-profile",
+          "page": 1,
+          "text": "候选人有 3 年 Python 后端和 AI 工程经验，使用 FastAPI 构建异步 API。"
+        },
+        {
+          "id": "python-vector",
+          "page": 2,
+          "text": "项目事实：使用异步 SQLAlchemy、pgvector 和批量 Embedding 实现简历检索。"
+        },
+        {
+          "id": "python-queue",
+          "page": 3,
+          "text": "职责包括 Celery 任务编排、Redis 队列监控和 Python 服务的延迟优化。"
+        }
+      ]
+    },
+    {
+      "id": "resume-react",
+      "owner_id": "candidate-react",
+      "knowledge_base_id": "kb-react",
+      "filename": "synthetic-react-frontend.pdf",
+      "chunks": [
+        {
+          "id": "react-profile",
+          "page": 1,
+          "text": "候选人有 4 年 React 前端经验，使用 TypeScript 和 Vite 开发管理后台。"
+        },
+        {
+          "id": "react-state",
+          "page": 2,
+          "text": "项目事实：以 React Query 管理服务端状态，结合可访问性测试提升表单体验。"
+        },
+        {
+          "id": "react-build",
+          "page": 3,
+          "text": "职责包括组件设计、Playwright 端到端测试和前端性能监控。"
+        }
+      ]
+    },
+    {
+      "id": "resume-analytics",
+      "owner_id": "candidate-analytics",
+      "knowledge_base_id": "kb-analytics",
+      "filename": "synthetic-data-analytics.pdf",
+      "chunks": [
+        {
+          "id": "analytics-profile",
+          "page": 1,
+          "text": "候选人有 4 年数据分析经验，使用 Python、SQL 和 pandas 完成经营分析。"
+        },
+        {
+          "id": "analytics-model",
+          "page": 2,
+          "text": "项目事实：构建留存率指标模型和 A/B test 报表，为产品迭代提供证据。"
+        },
+        {
+          "id": "analytics-dashboard",
+          "page": 3,
+          "text": "职责包括数据清洗、指标口径治理和 Tableau 仪表盘维护。"
+        }
+      ]
+    },
+    {
+      "id": "resume-unrelated",
+      "owner_id": "candidate-unrelated",
+      "knowledge_base_id": "kb-unrelated",
+      "filename": "synthetic-baking.pdf",
+      "chunks": [
+        {
+          "id": "baking-profile",
+          "page": 1,
+          "text": "这是一份烘焙兴趣记录，内容包括面包配方、发酵时间和家庭摄影。"
+        },
+        {
+          "id": "baking-fact",
+          "page": 2,
+          "text": "独特事实：尝试低温冷藏发酵，并用自然光拍摄甜点成品。"
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-java-exact",
+      "category": "exact_match",
+      "text": "候选人具备 5 年 Java 与 Spring Boot 后端经验，负责订单服务。",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": ["resume-java-spring"],
+      "expected_chunk_ids": ["java-profile"],
+      "expected_pages": [1],
+      "should_return": true
+    },
+    {
+      "id": "q-java-synonym",
+      "category": "synonym_rewrite",
+      "text": "Java 微服务工程师做过 Spring 生态的订单后端开发吗？",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": ["resume-java-spring"],
+      "expected_chunk_ids": ["java-profile", "java-gateway"],
+      "expected_pages": [1, 3],
+      "should_return": true
+    },
+    {
+      "id": "q-java-english",
+      "category": "chinese_to_english_skill",
+      "text": "Which project used a Redis distributed lock to prevent inventory overselling?",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": ["resume-java-spring"],
+      "expected_chunk_ids": ["java-redis"],
+      "expected_pages": [2],
+      "should_return": true
+    },
+    {
+      "id": "q-java-project",
+      "category": "project_detail",
+      "text": "项目事实：使用 Redis 分布式锁和幂等键治理库存超卖，峰值达到 500 QPS。",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": ["resume-java-spring"],
+      "expected_chunk_ids": ["java-redis"],
+      "expected_pages": [2],
+      "should_return": true
+    },
+    {
+      "id": "q-python-chinese",
+      "category": "english_to_chinese_experience",
+      "text": "Python 异步接口和向量检索经验",
+      "owner_id": "candidate-python",
+      "knowledge_base_id": "kb-python",
+      "expected_document_ids": ["resume-python-fastapi"],
+      "expected_chunk_ids": ["python-profile", "python-vector"],
+      "expected_pages": [1, 2],
+      "should_return": true
+    },
+    {
+      "id": "q-python-combo",
+      "category": "skill_combination",
+      "text": "FastAPI pgvector SQLAlchemy",
+      "owner_id": "candidate-python",
+      "knowledge_base_id": "kb-python",
+      "expected_document_ids": ["resume-python-fastapi"],
+      "expected_chunk_ids": ["python-vector"],
+      "expected_pages": [2],
+      "should_return": true
+    },
+    {
+      "id": "q-python-role",
+      "category": "years_and_responsibility",
+      "text": "具有 3 年 Python 后端和 AI 工程经验，负责异步 API。",
+      "owner_id": "candidate-python",
+      "knowledge_base_id": "kb-python",
+      "expected_document_ids": ["resume-python-fastapi"],
+      "expected_chunk_ids": ["python-profile"],
+      "expected_pages": [1],
+      "should_return": true
+    },
+    {
+      "id": "q-react-long",
+      "category": "long_query",
+      "text": "请查找一位具有多年 React 与 TypeScript 前端经验、使用 Vite 构建管理后台，并且负责服务端状态管理和端到端测试的候选人经历。",
+      "owner_id": "candidate-react",
+      "knowledge_base_id": "kb-react",
+      "expected_document_ids": ["resume-react"],
+      "expected_chunk_ids": ["react-profile", "react-state", "react-build"],
+      "expected_pages": [1, 2, 3],
+      "should_return": true
+    },
+    {
+      "id": "q-short-redis",
+      "category": "short_query",
+      "text": "Redis",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": ["resume-java-spring"],
+      "expected_chunk_ids": ["java-redis"],
+      "expected_pages": [2],
+      "should_return": true
+    },
+    {
+      "id": "q-missing-rust",
+      "category": "missing_fact",
+      "text": "Rust 嵌入式内核开发和芯片驱动经验",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "expected_pages": [],
+      "should_return": false
+    },
+    {
+      "id": "q-unrelated-baking",
+      "category": "unrelated_query",
+      "text": "面包配方和家庭摄影的发酵时间",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "expected_pages": [],
+      "should_return": false
+    },
+    {
+      "id": "q-cross-knowledge-base",
+      "category": "cross_knowledge_base",
+      "text": "FastAPI pgvector SQLAlchemy",
+      "owner_id": "candidate-java",
+      "knowledge_base_id": "kb-java",
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "expected_pages": [],
+      "should_return": false
+    }
+  ]
+}

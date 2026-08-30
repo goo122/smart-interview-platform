@@ -1,0 +1,56 @@
+name: interviewplatform-real-smoke
+
+services:
+  migrate:
+    env_file:
+      - ./backend-python/.env
+    environment:
+      APP_ENV: development
+      APP_AI_PROVIDER: openai_compatible
+      APP_EMBEDDING_PROVIDER: openai_compatible
+      APP_AI_MAX_RETRIES: 0
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:real-smoke-only@postgres:5432/ai_interview
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_EMBEDDING_BATCH_SIZE: ${APP_EMBEDDING_BATCH_SIZE:-10}
+
+  api:
+    env_file:
+      - ./backend-python/.env
+    environment:
+      APP_ENV: development
+      APP_AI_PROVIDER: openai_compatible
+      APP_EMBEDDING_PROVIDER: openai_compatible
+      APP_AI_MAX_RETRIES: 0
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:real-smoke-only@postgres:5432/ai_interview
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_EMBEDDING_BATCH_SIZE: ${APP_EMBEDDING_BATCH_SIZE:-10}
+      APP_KNOWLEDGE_STORAGE_DIR: /app/storage
+      APP_INTERVIEW_MAX_FOLLOW_UP_DEPTH: 0
+      APP_INTERVIEW_MAX_FOLLOW_UPS_PER_SESSION: 0
+    volumes:
+      - knowledge-storage-real-smoke:/app/storage
+    ports: !override
+      - "28000:8000"
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: real-smoke-only
+    ports: !override
+      - "25432:5432"
+    volumes: !override
+      - postgres-data-real-smoke:/var/lib/postgresql/data
+
+  redis:
+    ports: !override
+      - "26379:6379"
+    volumes: !override
+      - redis-data-real-smoke:/data
+
+  frontend:
+    ports: !override
+      - "28080:80"
+
+volumes:
+  postgres-data-real-smoke:
+  redis-data-real-smoke:
+  knowledge-storage-real-smoke:

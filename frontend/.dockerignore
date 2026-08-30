@@ -4,3 +4,9 @@ dist
 .env
 .env.*
 *.log
+coverage
+playwright-report
+test-results
+blob-report
+*.mp4
+*.webm

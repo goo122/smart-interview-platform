@@ -1,12 +1,14 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import cast
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
 from starlette.types import ExceptionHandler
 
 from app.ai.factory import AiProviderFactory
@@ -67,6 +69,22 @@ def create_app() -> FastAPI:
     """Create the HTTP application without establishing external connections."""
 
     app = FastAPI(title="AI Interview API", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def request_id_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        candidate = request.headers.get("X-Request-ID", "").strip()
+        request_id = (
+            candidate
+            if candidate and len(candidate) <= 128 and all(ord(char) >= 32 for char in candidate)
+            else uuid4().hex
+        )
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     app.add_exception_handler(AppError, cast(ExceptionHandler, app_exception_handler))
     app.add_exception_handler(
         StarletteHTTPException, cast(ExceptionHandler, http_exception_handler)

@@ -10,6 +10,7 @@ services:
       APP_ENV: development
       APP_DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/ai_interview
       APP_REDIS_URL: redis://redis:6379/0
+      APP_EMBEDDING_BATCH_SIZE: ${APP_EMBEDDING_BATCH_SIZE:-10}
     command: ["alembic", "upgrade", "head"]
     depends_on:
       postgres:
@@ -40,6 +41,7 @@ services:
       APP_REDIS_URL: redis://redis:6379/0
       APP_KNOWLEDGE_STORAGE_DIR: /app/storage
       APP_EMBEDDING_DIMENSIONS: ${APP_EMBEDDING_DIMENSIONS:-1536}
+      APP_EMBEDDING_BATCH_SIZE: ${APP_EMBEDDING_BATCH_SIZE:-10}
     volumes:
       - knowledge-storage:/app/storage
     ports:

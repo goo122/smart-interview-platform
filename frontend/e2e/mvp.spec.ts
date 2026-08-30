@@ -80,6 +80,8 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   await expect(page.getByText("这是开发环境的模拟回答。", { exact: false })).toBeVisible();
   await page.reload();
   await expect(page.getByText("这是开发环境的模拟回答。", { exact: false })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("寻知开发测试模型", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Unknown model", { exact: true })).toHaveCount(0);
 
   const token = await page.evaluate(() => localStorage.getItem("token"));
   expect(token).toBeTruthy();
@@ -101,6 +103,29 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     });
     return { response, body: (await response.json()) as Record<string, unknown> };
   };
+
+  const unauthorizedResponse = await page.request.get(
+    apiUrl("/api/xunzhi/v1/ai-properties?isEnabled=1&size=100"),
+  );
+  expect(unauthorizedResponse.status()).toBe(401);
+  expect(unauthorizedResponse.headers()["x-request-id"]).toBeTruthy();
+
+  const aiProperties = await apiGet(
+    "/api/xunzhi/v1/ai-properties?isEnabled=1&size=100",
+  );
+  const aiRecords = aiProperties.records as Array<Record<string, unknown>>;
+  expect(aiRecords.length).toBeGreaterThan(0);
+  expect(aiRecords[0]?.aiName).toBe("寻知开发测试模型");
+  expect(aiRecords[0]?.modelName).toBe("fake-interview-model");
+  expect(aiRecords[0]?.isEnabled).toBe(1);
+  const safeMetadataJson = JSON.stringify(aiProperties).toLowerCase();
+  expect(safeMetadataJson).not.toMatch(
+    /apikey|apisecret|authorization|baseurl|systemprompt|safe-password|bearer\s+[a-z0-9._-]+/i,
+  );
+  const disabledAiProperties = await apiGet(
+    "/api/xunzhi/v1/ai-properties?isEnabled=0&size=100",
+  );
+  expect(disabledAiProperties.records).toEqual([]);
 
   const knowledgeBases = await apiGet("/api/xunzhi/v1/knowledge-bases?current=1&size=50");
   const selectedBase = knowledgeBases.records.find(
@@ -129,6 +154,47 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
       intervals: [500, 1000, 2000],
     })
     .toBe("READY");
+  const preparedSession = await apiGet(
+    `/api/xunzhi/v1/interview/sessions/${sessionId}`,
+  );
+  expect(preparedSession.resumeEvaluationStatus).toBe("COMPLETED");
+  const resumeScore = preparedSession.resumeScore;
+  expect(typeof resumeScore).toBe("number");
+  expect(resumeScore as number).toBeGreaterThanOrEqual(0);
+  expect(resumeScore as number).toBeLessThanOrEqual(100);
+  const documents = await apiGet(
+    `/api/xunzhi/v1/knowledge-bases/${selectedBase.id}/documents?current=1&size=20`,
+  );
+  const resumeDocument = (
+    documents.records as Array<Record<string, unknown>>
+  ).find(
+    (item) =>
+      item.originalFilename === "synthetic-resume.pdf" ||
+      item.original_filename === "synthetic-resume.pdf",
+  );
+  expect(resumeDocument?.id).toBeTruthy();
+  const previewResponse = await page.request.get(
+    apiUrl(`/api/xunzhi/v1/interview/sessions/${sessionId}/resume/preview`),
+    { headers },
+  );
+  expect(previewResponse.status()).toBe(200);
+  expect(previewResponse.headers()["content-type"]).toContain("application/pdf");
+  expect((await previewResponse.body()).subarray(0, 5).toString("ascii")).toBe("%PDF-");
+
+  const resumableConversations = await apiGet(
+    "/api/xunzhi/v1/interview/conversations?current=1&size=20",
+  );
+  const resumableRecord = (
+    resumableConversations.records as Array<Record<string, unknown>>
+  ).find((item) => item.sessionId === sessionId);
+  expect(resumableRecord?.status).toBe("READY");
+  expect(resumableRecord?.conversationTitle).toBe("后端工程师");
+
+  await page.goto("/interview");
+  const continueButton = page.getByRole("link", { name: "继续上次面试" });
+  await expect(continueButton).toBeVisible();
+  await continueButton.click();
+  await expect(page).toHaveURL(new RegExp(`/interview/room/${sessionId}$`));
 
   const { response: startResponse, body: startedSession } = await apiPost(
     `/api/xunzhi/v1/interview/sessions/${sessionId}/start`,
@@ -198,8 +264,22 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   expect(report.overallScore).toBeGreaterThanOrEqual(0);
   expect(report.radarData.length).toBeGreaterThan(0);
   expect(report.items.length).toBeGreaterThan(0);
+  expect(report.resumeScore).toBe(resumeScore);
+  const resumeEvaluation = report.resumeEvaluation as Record<string, unknown>;
+  expect(resumeEvaluation.status).toBe("COMPLETED");
+  expect(resumeEvaluation.evaluationVersion).toBeTruthy();
+  expect(
+    (report.radarData as Array<Record<string, unknown>>).some(
+      (point) => point.dimension === "resume",
+    ),
+  ).toBeTruthy();
   const reports = await apiGet("/api/xunzhi/v1/interview/reports?current=1&size=20");
   expect(reports.records.some((item: Record<string, string>) => item.sessionId === sessionId)).toBeTruthy();
+
+  await page.goto(`/interview/report?sessionId=${encodeURIComponent(sessionId)}`);
+  await expect(page.getByText("简历得分", { exact: true })).toBeVisible();
+  await expect(page.getByText(String(resumeScore), { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("简历匹配度", { exact: true }).first()).toBeVisible();
 
   await page.getByRole("button", { name: "用户菜单" }).click();
   await page.getByRole("button", { name: "退出登录" }).click();

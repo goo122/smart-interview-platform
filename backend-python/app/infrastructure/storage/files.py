@@ -15,6 +15,9 @@ class FileStoragePort(Protocol):
     async def save_pdf(self, content: bytes) -> StoredFile:
         raise NotImplementedError
 
+    async def read(self, path: str) -> bytes:
+        raise NotImplementedError
+
     async def delete(self, path: str) -> None:
         raise NotImplementedError
 
@@ -31,6 +34,12 @@ class LocalFileStorage(FileStoragePort):
         path = self.root / safe_filename
         await asyncio.to_thread(path.write_bytes, content)
         return StoredFile(safe_filename=safe_filename, path=str(path))
+
+    async def read(self, path: str) -> bytes:
+        candidate = Path(path).expanduser().resolve()
+        if self.root not in candidate.parents:
+            raise FileNotFoundError(path)
+        return await asyncio.to_thread(candidate.read_bytes)
 
     async def delete(self, path: str) -> None:
         candidate = Path(path).expanduser().resolve()
@@ -53,6 +62,13 @@ class FakeFileStorage(FileStoragePort):
         safe_filename = f"{uuid4().hex}.pdf"
         self.files[safe_filename] = content
         return StoredFile(safe_filename=safe_filename, path=f"/fake-storage/{safe_filename}")
+
+    async def read(self, path: str) -> bytes:
+        safe_filename = Path(path).name
+        try:
+            return self.files[safe_filename]
+        except KeyError as exc:
+            raise FileNotFoundError(path) from exc
 
     async def delete(self, path: str) -> None:
         safe_filename = Path(path).name

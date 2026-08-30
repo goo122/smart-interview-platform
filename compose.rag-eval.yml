@@ -1,0 +1,79 @@
+name: interviewplatform-rag-eval
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ai_interview_rag_eval
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: rag-eval-only
+    ports:
+      - "26433:5432"
+    volumes:
+      - postgres-data-rag-eval:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_interview_rag_eval"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "27380:6379"
+    volumes:
+      - redis-data-rag-eval:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  migrate:
+    build:
+      context: ./backend-python
+    environment:
+      APP_ENV: test
+      APP_AI_PROVIDER: unavailable
+      APP_EMBEDDING_PROVIDER: fake
+      APP_EMBEDDING_DIMENSIONS: "1536"
+      APP_EMBEDDING_BATCH_SIZE: "10"
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:rag-eval-only@postgres:5432/ai_interview_rag_eval
+      APP_REDIS_URL: redis://redis:6379/0
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  evaluator:
+    build:
+      context: ./backend-python
+    environment:
+      APP_ENV: test
+      APP_AI_PROVIDER: unavailable
+      APP_EMBEDDING_PROVIDER: ${RAG_EVAL_EMBEDDING_PROVIDER:-fake}
+      APP_EMBEDDING_API_KEY: ${APP_EMBEDDING_API_KEY:-}
+      APP_EMBEDDING_BASE_URL: ${APP_EMBEDDING_BASE_URL:-}
+      APP_EMBEDDING_MODEL: ${APP_EMBEDDING_MODEL:-}
+      APP_EMBEDDING_DIMENSIONS: ${APP_EMBEDDING_DIMENSIONS:-1536}
+      APP_EMBEDDING_BATCH_SIZE: ${APP_EMBEDDING_BATCH_SIZE:-10}
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:rag-eval-only@postgres:5432/ai_interview_rag_eval
+      RAG_EVAL_DATABASE_URL: postgresql+asyncpg://postgres:rag-eval-only@postgres:5432/ai_interview_rag_eval
+      RAG_EVAL_OUTPUT_DIR: /workspace/evals/rag/results
+      RAG_EVAL_MODE: ${RAG_EVAL_MODE:-fake}
+      RUN_REAL_RAG_EVAL: ${RUN_REAL_RAG_EVAL:-0}
+    working_dir: /workspace
+    volumes:
+      - ./evals/rag:/workspace/evals/rag
+    command: ["python", "/workspace/evals/rag/evaluate.py"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+volumes:
+  postgres-data-rag-eval:
+  redis-data-rag-eval:

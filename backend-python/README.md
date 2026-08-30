@@ -136,6 +136,42 @@ uv run ruff check .
 uv run mypy
 ```
 
+## PostgreSQL/pgvector/Redis 集成测试门禁
+
+集成测试位于 `tests/test_knowledge_integration.py`，覆盖 pgvector 写入与检索、事务和
+唯一约束、用户/知识库隔离、PDF 分块、面试与报告持久化，以及 Redis TTL 和刷新会话。
+它们不会调用 Chat 或 Embedding Provider；测试使用 Fake/Unavailable 实现。
+
+前置条件：安装 Docker Desktop 并确保 Docker Engine 可访问。Windows、Linux 和 CI
+均可使用同一个 Python 入口（入口只查找 PATH 中的 `docker`，找不到时使用 Docker
+Desktop 的标准安装路径）：
+
+```powershell
+python backend-python/scripts/run_integration_tests.py
+```
+
+入口会校验 Compose、创建 `interviewplatform-integration` 专用 PostgreSQL 16/pgvector
+和 Redis 容器，从空卷执行全部 Alembic 迁移，验证 `0009_resume_report_snapshot`、
+`vector` 扩展和 1536 维向量列，然后连续运行两次 `pytest -m integration`，最后在
+`finally` 中删除本轮容器、网络和数据卷。测试使用专用端口和密码，不读取
+`backend-python/.env`，也不会触碰普通开发项目的资源。
+
+普通测试默认排除 integration 标记：
+
+```powershell
+python -m pytest -m "not integration"
+```
+
+集成测试 fixture 要求 `RUN_INTEGRATION_TESTS=1`。一键入口显式设置该开关并注入
+测试专用数据库/Redis 地址；如果变量缺失、服务不可达或迁移失败，测试会失败，
+不会再用 `pytest.skip` 掩盖环境问题。直接手动运行时需同时提供该开关和两个
+`KNOWLEDGE_TEST_*` 变量。
+
+常见问题：Docker 不在 PATH 时入口会自动尝试 Docker Desktop 默认路径；端口被占用时
+请先停止占用 25433/26380 的进程，或在专用 Compose 文件中调整端口。迁移失败时先
+检查 PostgreSQL/Redis 健康状态和容器日志；不要连接开发数据库，也不要把真实
+`.env`、密钥或连接字符串提交到 Git。
+
 Copy `.env.example` to `.env` for local configuration. The example contains only
 local-development placeholders and must be replaced for any shared environment.
 
@@ -155,6 +191,15 @@ required credential or endpoint setting is missing. `APP_AI_FAKE_MODE` accepts
 `normal`, `follow_up` and `failure` for deterministic local workflow tests.
 Embedding startup validation probes the selected provider and rejects a vector
 dimension that does not match `APP_EMBEDDING_DIMENSIONS` (1536 by default).
+
+Document embeddings use `APP_EMBEDDING_BATCH_SIZE=10` by default. The known
+DashScope-compatible `text-embedding-v4` capability is limited to ten inputs
+per provider request; configuring a larger value is rejected during Settings
+validation instead of failing later during PDF import. The application and
+LangChain SDK both receive the effective batch size, while query embeddings
+remain single-text requests. Fake and unavailable providers have no additional
+provider limit, but the same application batch setting is used for predictable
+tests and local runs.
 
 The root Compose file loads `backend-python/.env` with `env_file`; its explicit
 PostgreSQL and Redis environment values still override those endpoints to the

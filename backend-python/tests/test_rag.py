@@ -23,6 +23,17 @@ from app.modules.knowledge.exceptions import KnowledgeBaseNotFoundError
 from app.modules.knowledge.retrieval import FakeRetriever
 
 
+@pytest.mark.asyncio
+async def test_query_embedding_remains_a_single_text_request() -> None:
+    embedding = FakeEmbedding()
+
+    vector = await embedding.embed_query("single query")
+
+    assert len(vector) == 1536
+    assert embedding.query_calls == ["single query"]
+    assert embedding.batch_calls == []
+
+
 class InMemoryConversationRepository:
     def __init__(self) -> None:
         self.items: dict[UUID, Conversation] = {}

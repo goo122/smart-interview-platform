@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from pydantic import SecretStr
 
+from app.ai.capabilities import embedding_batch_limit
 from app.ai.chat import (
     ChatModelPort,
     FakeChatModel,
@@ -215,6 +216,8 @@ class AiProviderFactory:
                 base_url=settings.llm_base_url,
                 model=settings.llm_model,
                 temperature=0,
+                timeout=settings.ai_request_timeout_seconds,
+                max_retries=settings.ai_max_retries,
             )
             chat_model = LangChainChatModelAdapter(model)
             question_generator = LangChainInterviewQuestionGeneratorAdapter(model)
@@ -239,12 +242,22 @@ class AiProviderFactory:
                 base_url=settings.embedding_base_url,
                 model=settings.embedding_model,
                 dimensions=settings.embedding_dimensions,
+                timeout=settings.ai_request_timeout_seconds,
+                max_retries=settings.ai_max_retries,
+                # Keep the SDK's own batching aligned with the application
+                # batch size so it cannot regroup ten-item batches into a
+                # larger provider request.
+                chunk_size=settings.embedding_batch_size,
                 # DashScope's OpenAI-compatible endpoint expects text input;
                 # LangChain's OpenAI-specific tokenization would send token IDs.
                 check_embedding_ctx_length=False,
             )
             embedding: EmbeddingPort = LangChainEmbeddingAdapter(
-                embeddings, settings.embedding_dimensions
+                embeddings,
+                settings.embedding_dimensions,
+                max_batch_size=embedding_batch_limit(
+                    settings.embedding_provider, settings.embedding_model
+                ),
             )
         else:
             embedding = (

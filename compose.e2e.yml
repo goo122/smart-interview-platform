@@ -11,6 +11,7 @@ services:
       APP_AI_FAKE_MODE: follow_up
       APP_DATABASE_URL: postgresql+asyncpg://postgres:e2e-only@postgres:5432/ai_interview
       APP_REDIS_URL: redis://redis:6379/0
+      APP_EMBEDDING_BATCH_SIZE: "10"
 
   api:
     env_file:
@@ -23,27 +24,28 @@ services:
       APP_DATABASE_URL: postgresql+asyncpg://postgres:e2e-only@postgres:5432/ai_interview
       APP_REDIS_URL: redis://redis:6379/0
       APP_KNOWLEDGE_STORAGE_DIR: /app/storage
+      APP_EMBEDDING_BATCH_SIZE: "10"
     volumes:
       - knowledge-storage-e2e:/app/storage
-    ports:
+    ports: !override
       - "18000:8000"
 
   postgres:
     environment:
       POSTGRES_PASSWORD: e2e-only
-    ports:
+    ports: !override
       - "55432:5432"
     volumes:
       - postgres-data-e2e:/var/lib/postgresql/data
 
   redis:
-    ports:
+    ports: !override
       - "56379:6379"
     volumes:
       - redis-data-e2e:/data
 
   frontend:
-    ports:
+    ports: !override
       - "18080:80"
 
 volumes:

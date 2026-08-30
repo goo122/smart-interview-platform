@@ -7,6 +7,9 @@ class EmbeddingPort(Protocol):
     @property
     def dimensions(self) -> int: ...
 
+    @property
+    def max_batch_size(self) -> int | None: ...
+
     async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]: ...
 
     async def embed_query(self, text: str) -> Sequence[float]: ...
@@ -25,6 +28,10 @@ class FakeEmbedding:
     @property
     def dimensions(self) -> int:
         return self._dimensions
+
+    @property
+    def max_batch_size(self) -> int | None:
+        return None
 
     async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         self.batch_calls.append(tuple(texts))
@@ -52,6 +59,10 @@ class UnavailableEmbedding:
     def dimensions(self) -> int:
         return self._dimensions
 
+    @property
+    def max_batch_size(self) -> int | None:
+        return None
+
     async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         del texts
         raise RuntimeError("No embedding model is configured")
@@ -64,13 +75,23 @@ class UnavailableEmbedding:
 class LangChainEmbeddingAdapter:
     """Adapter for a LangChain-compatible embeddings object."""
 
-    def __init__(self, embeddings: Any, dimensions: int) -> None:
+    def __init__(
+        self,
+        embeddings: Any,
+        dimensions: int,
+        max_batch_size: int | None = None,
+    ) -> None:
         self._embeddings = embeddings
         self._dimensions = dimensions
+        self._max_batch_size = max_batch_size
 
     @property
     def dimensions(self) -> int:
         return self._dimensions
+
+    @property
+    def max_batch_size(self) -> int | None:
+        return self._max_batch_size
 
     async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         result = self._embeddings.aembed_documents(list(texts))
