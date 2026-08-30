@@ -33,7 +33,9 @@ from app.modules.interview.domain import (
     utc_now,
 )
 from app.modules.interview.exceptions import (
+    InterviewFinishWithoutCompletedAnswersError,
     InterviewKnowledgeUnavailableError,
+    InterviewNotFoundError,
     InvalidInterviewRequestError,
     InvalidInterviewTransitionError,
 )
@@ -233,6 +235,99 @@ class InMemoryInterviewRepository:
         session.updated_at = session.finished_at
         session.version += 1
         self.events[session.id].append(self._event(session, previous, session.status))
+        return session
+
+    async def finish(self, session_id: UUID, user_id: UUID) -> InterviewSession:
+        session = self.sessions[session_id]
+        assert session.user_id == user_id
+        if session.status == InterviewStatus.COMPLETED:
+            return session
+        if session.status != InterviewStatus.IN_PROGRESS:
+            raise InvalidInterviewTransitionError("cannot finish")
+        completed_turn_ids = {
+            turn.id
+            for turn in self.turns[session_id]
+            if turn.status == TurnStatus.COMPLETED
+            and turn.id in self.answers
+            and turn.id in self.evaluations
+        }
+        if not completed_turn_ids:
+            raise InterviewFinishWithoutCompletedAnswersError(
+                "至少完成并提交一道题后才能结束面试并生成报告"
+            )
+
+        skipped_sequences: list[int] = []
+        for turn in self.turns[session_id]:
+            if turn.status not in {TurnStatus.WAITING_ANSWER, TurnStatus.EVALUATING}:
+                continue
+            turn.status = TurnStatus.SKIPPED
+            skipped_sequences.append(turn.sequence)
+            self.events[session_id].append(
+                InterviewEvent(
+                    id=uuid4(),
+                    session_id=session_id,
+                    event_type="TURN_SKIPPED",
+                    from_status=InterviewStatus.IN_PROGRESS,
+                    to_status=InterviewStatus.IN_PROGRESS,
+                    payload={"turn_sequence": turn.sequence, "reason": "EARLY_FINISH"},
+                    idempotency_key=f"finish:{session_id}:turn:{turn.id}",
+                    created_at=utc_now(),
+                )
+            )
+
+        represented_question_ids = {
+            turn.question_id
+            for turn in self.turns[session_id]
+            if turn.question_id is not None
+        }
+        next_sequence = max(
+            (turn.sequence for turn in self.turns[session_id]), default=0
+        ) + 1
+        for question in self.questions.get(session_id, []):
+            if question.id in represented_question_ids:
+                continue
+            self.turns[session_id].append(
+                InterviewTurn(
+                    id=uuid4(),
+                    session_id=session_id,
+                    question_id=question.id,
+                    parent_turn_id=None,
+                    sequence=next_sequence,
+                    turn_type=TurnType.PRIMARY,
+                    question_content=question.content,
+                    status=TurnStatus.SKIPPED,
+                    follow_up_depth=0,
+                    created_at=utc_now(),
+                    answered_at=None,
+                    evaluated_at=None,
+                )
+            )
+            skipped_sequences.append(next_sequence)
+            next_sequence += 1
+
+        previous = session.status
+        session.status = InterviewStatus.COMPLETED
+        session.finished_at = utc_now()
+        session.updated_at = session.finished_at
+        session.version += 1
+        self.events[session_id].append(
+            InterviewEvent(
+                id=uuid4(),
+                session_id=session_id,
+                event_type="INTERVIEW_FINISHED_EARLY",
+                from_status=previous,
+                to_status=InterviewStatus.COMPLETED,
+                payload={
+                    "finish_mode": "EARLY",
+                    "completed_turn_count": len(completed_turn_ids),
+                    "skipped_turn_count": len(skipped_sequences),
+                    "skipped_turn_sequences": skipped_sequences,
+                    "version": session.version,
+                },
+                idempotency_key=f"finish:{session_id}",
+                created_at=utc_now(),
+            )
+        )
         return session
 
     async def list_questions(self, session_id: UUID) -> list[InterviewQuestion]:
@@ -553,6 +648,42 @@ def _seed_conversation(
     return session
 
 
+def _mark_first_turn_completed(
+    repository: InMemoryInterviewRepository, session: InterviewSession, user_id: UUID
+) -> None:
+    turn = repository.turns[session.id][0]
+    now = utc_now()
+    turn.status = TurnStatus.COMPLETED
+    turn.answered_at = now
+    turn.evaluated_at = now
+    repository.answers[turn.id] = InterviewAnswer(
+        id=uuid4(),
+        turn_id=turn.id,
+        session_id=session.id,
+        user_id=user_id,
+        content="我完成了方案设计并验证了结果。",
+        request_id="finish-answer-1",
+        created_at=now,
+    )
+    repository.evaluations[turn.id] = InterviewEvaluation(
+        id=uuid4(),
+        turn_id=turn.id,
+        overall_score=88,
+        technical_score=90,
+        relevance_score=88,
+        clarity_score=86,
+        depth_score=87,
+        strengths=["结构清晰"],
+        weaknesses=["可以补充更多指标"],
+        feedback="回答完成了评分。",
+        suggested_improvements=["补充量化结果"],
+        llm_should_follow_up=False,
+        follow_up_focus=None,
+        follow_up_question=None,
+        created_at=now,
+    )
+
+
 @pytest.mark.asyncio
 async def test_state_machine_transitions_and_invalid_states() -> None:
     machine = InterviewStateMachine()
@@ -640,6 +771,67 @@ async def test_start_cancel_permissions_and_ready_requirement() -> None:
     with pytest.raises(InvalidInterviewTransitionError):
         await service.cancel(user_id, ready.id)
     assert await repository.list_events(ready.id)
+
+
+@pytest.mark.asyncio
+async def test_early_finish_preserves_data_skips_turns_and_is_idempotent() -> None:
+    user_id, base_id = uuid4(), uuid4()
+    service, repository, _, _ = _service(context=_context())
+    session = await service.create_session(**_create_args(user_id, base_id))
+    started = await service.start(user_id, session.id)
+    _mark_first_turn_completed(repository, started, user_id)
+
+    finished = await service.finish(user_id, session.id)
+    repeated = await service.finish(user_id, session.id)
+
+    assert finished.status == InterviewStatus.COMPLETED
+    assert repeated.version == finished.version
+    first_turn = repository.turns[session.id][0]
+    assert first_turn.status == TurnStatus.COMPLETED
+    assert repository.answers[first_turn.id].content.startswith("我完成了")
+    assert repository.evaluations[first_turn.id].overall_score == 88
+    assert [turn.status for turn in repository.turns[session.id]] == [
+        TurnStatus.COMPLETED,
+        TurnStatus.SKIPPED,
+        TurnStatus.SKIPPED,
+    ]
+    events = await repository.list_events(session.id)
+    assert sum(event.event_type == "INTERVIEW_FINISHED_EARLY" for event in events) == 1
+
+
+@pytest.mark.asyncio
+async def test_early_finish_without_completed_answer_is_rejected() -> None:
+    user_id, base_id = uuid4(), uuid4()
+    service, _, _, _ = _service(context=_context())
+    session = await service.create_session(**_create_args(user_id, base_id))
+    await service.start(user_id, session.id)
+
+    with pytest.raises(InterviewFinishWithoutCompletedAnswersError):
+        await service.finish(user_id, session.id)
+
+
+@pytest.mark.asyncio
+async def test_finish_has_explicit_terminal_and_user_rules() -> None:
+    user_id, base_id = uuid4(), uuid4()
+    service, repository, _, _ = _service(context=_context())
+    session = await service.create_session(**_create_args(user_id, base_id))
+    await service.start(user_id, session.id)
+
+    with pytest.raises(InterviewNotFoundError):
+        await service.finish(uuid4(), session.id)
+
+    cancelled = _seed_conversation(
+        repository, user_id, InterviewStatus.CANCELLED, "cancelled", utc_now()
+    )
+    failed = _seed_conversation(repository, user_id, InterviewStatus.FAILED, "failed", utc_now())
+    with pytest.raises(InvalidInterviewTransitionError):
+        await service.finish(user_id, cancelled.id)
+    with pytest.raises(InvalidInterviewTransitionError):
+        await service.finish(user_id, failed.id)
+
+    _mark_first_turn_completed(repository, session, user_id)
+    completed = await service.finish(user_id, session.id)
+    assert await service.finish(user_id, completed.id) == completed
 
 
 @pytest.mark.asyncio
@@ -903,5 +1095,52 @@ def test_interview_api_requires_auth_and_exposes_contract() -> None:
             assert questions.status_code == 200
             assert len(questions.json()) == 1
             assert questions.json()[0]["citations"][0]["sourceId"] == "[S1]"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_finish_api_completes_active_session_and_rejects_other_user() -> None:
+    user = User(
+        id=uuid4(),
+        username="finish-user",
+        email="finish@example.com",
+        password_hash="hidden",
+        is_active=True,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    service, repository, _, _ = _service(context=_context())
+    session = __import__("asyncio").run(
+        service.create_session(**_create_args(user.id, uuid4()))
+    )
+    __import__("asyncio").run(service.start(user.id, session.id))
+    _mark_first_turn_completed(repository, session, user.id)
+
+    try:
+        with TestClient(app) as client:
+            app.dependency_overrides[get_current_user] = lambda: user
+            app.dependency_overrides[get_interview_service] = lambda: service
+            response = client.post(
+                f"/api/xunzhi/v1/interview/sessions/{session.id}/finish",
+                headers={"Authorization": "Bearer test"},
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "COMPLETED"
+
+            other_user = User(
+                id=uuid4(),
+                username="other-finish-user",
+                email="other-finish@example.com",
+                password_hash="hidden",
+                is_active=True,
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+            app.dependency_overrides[get_current_user] = lambda: other_user
+            forbidden = client.post(
+                f"/api/xunzhi/v1/interview/sessions/{session.id}/finish",
+                headers={"Authorization": "Bearer test"},
+            )
+            assert forbidden.status_code == 404
     finally:
         app.dependency_overrides.clear()

@@ -11,6 +11,10 @@ class ReportSessionNotCompletedError(AppError):
     code = "interview_report_session_not_completed"
 
 
+class ReportWithoutCompletedAnswersError(ReportSessionNotCompletedError):
+    code = "interview_report_without_completed_answers"
+
+
 class ReportGenerationError(AppError):
     status_code = 422
     code = "interview_report_generation_failed"

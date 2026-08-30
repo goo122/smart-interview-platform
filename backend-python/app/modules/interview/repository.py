@@ -25,6 +25,7 @@ from app.modules.interview.domain import (
     utc_now,
 )
 from app.modules.interview.exceptions import (
+    InterviewFinishWithoutCompletedAnswersError,
     InterviewNotFoundError,
     InterviewRequestAlreadyExistsError,
     InvalidInterviewTransitionError,
@@ -112,6 +113,8 @@ class InterviewRepository(Protocol):
     async def start(self, session_id: UUID, user_id: UUID) -> InterviewSession: ...
 
     async def cancel(self, session_id: UUID, user_id: UUID) -> InterviewSession: ...
+
+    async def finish(self, session_id: UUID, user_id: UUID) -> InterviewSession: ...
 
     async def get_current_turn(self, session_id: UUID, user_id: UUID) -> InterviewTurn | None: ...
 
@@ -634,6 +637,132 @@ class SqlAlchemyInterviewRepository:
         await self._session.refresh(row)
         return _session_to_domain(row)
 
+    async def finish(self, session_id: UUID, user_id: UUID) -> InterviewSession:
+        row = await self._locked_row(session_id, user_id)
+        if row is None:
+            raise InterviewNotFoundError("Interview session not found")
+        current = InterviewStatus(row.status)
+        if current == InterviewStatus.COMPLETED:
+            return _session_to_domain(row)
+        self._state_machine.transition(current, InterviewStatus.COMPLETED)
+
+        completed_result = await self._session.execute(
+            select(InterviewTurnModel.id)
+            .join(
+                InterviewAnswerModel,
+                InterviewAnswerModel.turn_id == InterviewTurnModel.id,
+            )
+            .join(
+                InterviewEvaluationModel,
+                InterviewEvaluationModel.turn_id == InterviewTurnModel.id,
+            )
+            .where(
+                InterviewTurnModel.session_id == session_id,
+                InterviewTurnModel.status == TurnStatus.COMPLETED.value,
+                InterviewAnswerModel.session_id == session_id,
+                InterviewAnswerModel.user_id == user_id,
+            )
+        )
+        completed_turn_ids = set(completed_result.scalars().all())
+        if not completed_turn_ids:
+            raise InterviewFinishWithoutCompletedAnswersError(
+                "至少完成并提交一道题后才能结束面试并生成报告"
+            )
+
+        turn_result = await self._session.execute(
+            select(InterviewTurnModel)
+            .where(InterviewTurnModel.session_id == session_id)
+            .order_by(InterviewTurnModel.sequence.asc())
+        )
+        turn_rows = list(turn_result.scalars().all())
+        skipped_sequences: list[int] = []
+        for turn_row in turn_rows:
+            turn_status = TurnStatus(turn_row.status)
+            if turn_status not in {TurnStatus.WAITING_ANSWER, TurnStatus.EVALUATING}:
+                continue
+            self._state_machine.transition_turn(turn_status, TurnStatus.SKIPPED)
+            turn_row.status = TurnStatus.SKIPPED.value
+            skipped_sequences.append(turn_row.sequence)
+            self._session.add(
+                _event_row(
+                    session_id,
+                    "TURN_SKIPPED",
+                    InterviewStatus.IN_PROGRESS,
+                    InterviewStatus.IN_PROGRESS,
+                    {"turn_sequence": turn_row.sequence, "reason": "EARLY_FINISH"},
+                    f"finish:{session_id}:turn:{turn_row.id}",
+                )
+            )
+
+        questions = await self._session.scalars(
+            select(InterviewQuestionModel)
+            .where(InterviewQuestionModel.session_id == session_id)
+            .order_by(InterviewQuestionModel.sequence.asc())
+        )
+        represented_question_ids = {
+            turn.question_id for turn in turn_rows if turn.question_id is not None
+        }
+        next_sequence = max((turn.sequence for turn in turn_rows), default=0) + 1
+        for question in questions:
+            if question.id in represented_question_ids:
+                continue
+            skipped_turn = InterviewTurnModel(
+                id=uuid4(),
+                session_id=session_id,
+                question_id=question.id,
+                parent_turn_id=None,
+                sequence=next_sequence,
+                turn_type=TurnType.PRIMARY.value,
+                question_content=question.content,
+                status=TurnStatus.SKIPPED.value,
+                follow_up_depth=0,
+                created_at=utc_now(),
+            )
+            self._session.add(skipped_turn)
+            turn_rows.append(skipped_turn)
+            represented_question_ids.add(question.id)
+            skipped_sequences.append(next_sequence)
+            self._session.add(
+                _event_row(
+                    session_id,
+                    "TURN_SKIPPED",
+                    InterviewStatus.IN_PROGRESS,
+                    InterviewStatus.IN_PROGRESS,
+                    {
+                        "turn_sequence": next_sequence,
+                        "question_sequence": question.sequence,
+                        "reason": "EARLY_FINISH",
+                    },
+                    f"finish:{session_id}:question:{question.id}",
+                )
+            )
+            next_sequence += 1
+
+        now = utc_now()
+        row.status = InterviewStatus.COMPLETED.value
+        row.finished_at = now
+        row.updated_at = now
+        row.version += 1
+        self._session.add(
+            _event_row(
+                session_id,
+                "INTERVIEW_FINISHED_EARLY",
+                current,
+                InterviewStatus.COMPLETED,
+                {
+                    "finish_mode": "EARLY",
+                    "completed_turn_count": len(completed_turn_ids),
+                    "skipped_turn_count": len(skipped_sequences),
+                    "skipped_turn_sequences": skipped_sequences,
+                    "version": row.version,
+                },
+                f"finish:{session_id}",
+            )
+        )
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _session_to_domain(row)
+
     async def get_current_turn(self, session_id: UUID, user_id: UUID) -> InterviewTurn | None:
         session = await self.get_for_user(session_id, user_id)
         if session is None:
@@ -870,6 +999,10 @@ class SqlAlchemyInterviewRepository:
         )
         if existing is not None:
             return _session_to_domain(session_row)
+        if InterviewStatus(session_row.status) == InterviewStatus.COMPLETED and TurnStatus(
+            turn_row.status
+        ) == TurnStatus.SKIPPED:
+            return _session_to_domain(session_row)
         if TurnStatus(turn_row.status) != TurnStatus.EVALUATING:
             raise InvalidInterviewTransitionError("Turn is not being evaluated")
         evaluation_row = InterviewEvaluationModel(
@@ -1021,7 +1154,11 @@ class SqlAlchemyInterviewRepository:
             InterviewStatus.FAILED,
             InterviewStatus.COMPLETED,
             InterviewStatus.CANCELLED,
-        } or TurnStatus(turn_row.status) in {TurnStatus.COMPLETED, TurnStatus.FAILED}:
+        } or TurnStatus(turn_row.status) in {
+            TurnStatus.COMPLETED,
+            TurnStatus.FAILED,
+            TurnStatus.SKIPPED,
+        }:
             return _session_to_domain(session_row)
         now = utc_now()
         await self._session.execute(

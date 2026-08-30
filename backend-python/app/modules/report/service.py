@@ -16,6 +16,7 @@ from app.modules.interview.domain import (
     InterviewSession,
     InterviewStatus,
     ResumeEvaluation,
+    TurnStatus,
 )
 from app.modules.interview.exceptions import InterviewNotFoundError
 from app.modules.interview.repository import InterviewRepository
@@ -35,6 +36,7 @@ from app.modules.report.exceptions import (
     ReportGenerationError,
     ReportNotFoundError,
     ReportSessionNotCompletedError,
+    ReportWithoutCompletedAnswersError,
 )
 from app.modules.report.repository import InterviewReportRepository
 from app.modules.report.snapshot import InterviewReportSnapshotBuilder
@@ -74,6 +76,22 @@ class InterviewReportService:
         if session.status != InterviewStatus.COMPLETED:
             raise ReportSessionNotCompletedError(
                 "Reports can only be generated for completed interviews"
+            )
+        turns = await self._interview_repository.list_turns(session_id, user_id)
+        has_completed_answer = False
+        for turn in turns:
+            if turn.status != TurnStatus.COMPLETED:
+                continue
+            answer = await self._interview_repository.get_answer_for_turn(turn.id, user_id)
+            evaluation = await self._interview_repository.get_evaluation_for_turn(
+                turn.id, user_id
+            )
+            if answer is not None and evaluation is not None:
+                has_completed_answer = True
+                break
+        if not has_completed_answer:
+            raise ReportWithoutCompletedAnswersError(
+                "至少完成并提交一道题后才能生成报告"
             )
         report = await self._report_repository.create_pending(session_id, user_id)
         if report.status != ReportStatus.READY:

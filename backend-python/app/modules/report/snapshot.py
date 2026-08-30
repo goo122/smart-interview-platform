@@ -22,13 +22,12 @@ class InterviewReportSnapshotBuilder:
         evaluations: dict[UUID, InterviewEvaluation],
         questions: Iterable[InterviewQuestion],
     ) -> tuple[ReportTurnSnapshot, ...]:
-        if not turns:
+        completed_turns = [turn for turn in turns if turn.status == TurnStatus.COMPLETED]
+        if not completed_turns:
             raise ValueError("Interview has no completed turns")
         question_map = {question.id: question for question in questions}
         snapshots: list[ReportTurnSnapshot] = []
-        for turn in sorted(turns, key=lambda item: item.sequence):
-            if turn.status != TurnStatus.COMPLETED:
-                raise ValueError("All interview turns must be completed")
+        for turn in sorted(completed_turns, key=lambda item: item.sequence):
             answer = answers.get(turn.id)
             evaluation = evaluations.get(turn.id)
             if answer is None or evaluation is None:

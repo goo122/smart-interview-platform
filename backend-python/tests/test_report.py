@@ -34,7 +34,10 @@ from app.modules.report.domain import (
     ReportGeneratedBy,
     ReportStatus,
 )
-from app.modules.report.exceptions import ReportSessionNotCompletedError
+from app.modules.report.exceptions import (
+    ReportSessionNotCompletedError,
+    ReportWithoutCompletedAnswersError,
+)
 from app.modules.report.service import InterviewReportService
 
 
@@ -407,6 +410,45 @@ async def test_uncompleted_interview_cannot_generate_report() -> None:
     interview_repository.sessions[session_id].status = InterviewStatus.IN_PROGRESS
     with pytest.raises(ReportSessionNotCompletedError):
         await service.generate(user_id, session_id)
+
+
+@pytest.mark.asyncio
+async def test_early_finished_report_ignores_skipped_turns_and_keeps_completed_items() -> None:
+    service, _, interview_repository, user_id, session_id = _service()
+    skipped = InterviewTurn(
+        id=uuid4(),
+        session_id=session_id,
+        question_id=None,
+        parent_turn_id=None,
+        sequence=3,
+        turn_type=TurnType.PRIMARY,
+        question_content="未作答的问题",
+        status=TurnStatus.SKIPPED,
+        follow_up_depth=0,
+        created_at=datetime.now(UTC),
+        answered_at=None,
+        evaluated_at=None,
+    )
+    interview_repository.turns[session_id].append(skipped)
+
+    detail = await service.generate(user_id, session_id)
+
+    assert detail.report.status == ReportStatus.READY
+    assert [item.sequence for item in detail.items] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_completed_session_without_completed_answers_cannot_create_report() -> None:
+    service, reports, interview_repository, user_id, session_id = _service()
+    interview_repository.sessions[session_id].status = InterviewStatus.COMPLETED
+    for turn in interview_repository.turns[session_id]:
+        turn.status = TurnStatus.SKIPPED
+    interview_repository.answers.clear()
+    interview_repository.evaluations.clear()
+
+    with pytest.raises(ReportWithoutCompletedAnswersError):
+        await service.generate(user_id, session_id)
+    assert reports.reports == {}
 
 
 @pytest.mark.asyncio

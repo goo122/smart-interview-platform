@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CHAT_MESSAGE_STATUS } from "@/lib/chat";
 import {
   AUTO_SAVE_FAILED_TEXT,
@@ -23,6 +23,9 @@ export function useInterviewAutoSave({
   invalidateInterviewRecords,
 }: UseInterviewAutoSaveParams) {
   const autoSaveAttemptedSessionRef = useRef<string | null>(null);
+  const [autoSaveFailedSessionId, setAutoSaveFailedSessionId] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (!isInterviewFinished || !interviewerSessionId) {
@@ -48,6 +51,7 @@ export function useInterviewAutoSave({
           return;
         }
         console.error("Auto save interview record failed:", error);
+        setAutoSaveFailedSessionId(interviewerSessionId);
         appendSystemMessage(AUTO_SAVE_FAILED_TEXT, CHAT_MESSAGE_STATUS.error);
       }
     };
@@ -66,9 +70,11 @@ export function useInterviewAutoSave({
 
   const resetAutoSaveAttempt = useCallback(() => {
     autoSaveAttemptedSessionRef.current = null;
+    setAutoSaveFailedSessionId(null);
   }, []);
 
   return {
+    isAutoSaveFailed: autoSaveFailedSessionId === interviewerSessionId,
     resetAutoSaveAttempt,
   };
 }

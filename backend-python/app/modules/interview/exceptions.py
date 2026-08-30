@@ -21,6 +21,10 @@ class InvalidInterviewTransitionError(AppError):
     code = "invalid_interview_transition"
 
 
+class InterviewFinishWithoutCompletedAnswersError(InvalidInterviewTransitionError):
+    code = "interview_finish_without_completed_answers"
+
+
 class InterviewPreparationError(AppError):
     status_code = 422
     code = "interview_preparation_failed"

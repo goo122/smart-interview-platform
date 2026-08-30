@@ -386,4 +386,91 @@ describe("useInterviewSessionFlow", () => {
       },
     );
   });
+
+  it("only sends one finish request when the end action is triggered twice", async () => {
+    useParamsMock.mockReturnValue({
+      sessionId: "session-1",
+    });
+    let resolveFinish: (() => void) | undefined;
+    finishInterviewSessionMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFinish = resolve;
+        }),
+    );
+
+    const { result } = renderSessionFlow();
+    await waitFor(() => {
+      expect(
+        result.current.messages.some(
+          (message) => message.content === "Initial question",
+        ),
+      ).toBe(true);
+    });
+
+    let firstEnd = Promise.resolve();
+    let secondEnd = Promise.resolve();
+    act(() => {
+      firstEnd = result.current.handleEndInterview();
+      secondEnd = result.current.handleEndInterview();
+    });
+    expect(finishInterviewSessionMock).toHaveBeenCalledTimes(1);
+
+    resolveFinish?.();
+    await act(async () => {
+      await Promise.all([firstEnd, secondEnd]);
+    });
+  });
+
+  it("stays on the interview page and displays the error when finishing fails", async () => {
+    useParamsMock.mockReturnValue({
+      sessionId: "session-1",
+    });
+    finishInterviewSessionMock.mockRejectedValueOnce(
+      new Error("至少完成并提交一道题后才能结束面试并生成报告"),
+    );
+
+    const { result } = renderSessionFlow();
+    await waitFor(() => {
+      expect(
+        result.current.messages.some(
+          (message) => message.content === "Initial question",
+        ),
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      await result.current.handleEndInterview();
+    });
+
+    expect(result.current.interviewError).toBe(
+      "至少完成并提交一道题后才能结束面试并生成报告",
+    );
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(storageState.clearStoredSession).not.toHaveBeenCalled();
+  });
+
+  it("does not call finish again for an already completed session", async () => {
+    useParamsMock.mockReturnValue({
+      sessionId: "session-1",
+    });
+    getCurrentQuestionMock.mockResolvedValueOnce({
+      isSuccess: true,
+      finished: true,
+      totalScore: 90,
+    });
+
+    const { result } = renderSessionFlow();
+    await waitFor(() => {
+      expect(result.current.isInterviewFinished).toBe(true);
+      expect(finishInterviewSessionMock).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await result.current.handleEndInterview();
+    });
+
+    expect(finishInterviewSessionMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
 });

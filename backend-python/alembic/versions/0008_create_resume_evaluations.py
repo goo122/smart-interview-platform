@@ -38,8 +38,18 @@ def upgrade() -> None:
         sa.Column("provider_name", sa.String(length=64), nullable=True),
         sa.Column("failure_code", sa.String(length=64), nullable=True),
         sa.Column("failure_message", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.CheckConstraint(
             "status IN ('PENDING', 'EVALUATING', 'COMPLETED', 'FAILED', 'UNAVAILABLE')",

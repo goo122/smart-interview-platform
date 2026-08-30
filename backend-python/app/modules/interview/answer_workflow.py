@@ -160,7 +160,11 @@ class InterviewAnswerWorkflow:
             raise InterviewEvaluationError("Interview turn not found")
         state["session"] = session
         state["turn"] = turn
-        state["skip"] = turn.status in {TurnStatus.COMPLETED, TurnStatus.FAILED}
+        state["skip"] = turn.status in {
+            TurnStatus.COMPLETED,
+            TurnStatus.FAILED,
+            TurnStatus.SKIPPED,
+        }
         if not state["skip"]:
             questions = await self._repository.list_questions(session.id)
             state["question"] = next(

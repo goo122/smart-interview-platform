@@ -24,6 +24,7 @@ from app.modules.interview.exceptions import (
     InterviewNotFoundError,
     InterviewRequestAlreadyExistsError,
     InvalidInterviewRequestError,
+    InvalidInterviewTransitionError,
 )
 from app.modules.interview.repository import InterviewRepository
 from app.modules.interview.workflow import InterviewPreparationWorkflow
@@ -231,3 +232,15 @@ class InterviewService:
     async def cancel(self, user_id: UUID, session_id: UUID) -> InterviewSession:
         await self.get_session(user_id, session_id)
         return await self._repository.cancel(session_id, user_id)
+
+    async def finish(self, user_id: UUID, session_id: UUID) -> InterviewSession:
+        session = await self.get_session(user_id, session_id)
+        if session.status == InterviewStatus.COMPLETED:
+            return session
+        if session.status in {InterviewStatus.CANCELLED, InterviewStatus.FAILED}:
+            raise InvalidInterviewTransitionError(
+                f"Cannot finish an interview with status {session.status.value}"
+            )
+        if session.status != InterviewStatus.IN_PROGRESS:
+            raise InvalidInterviewTransitionError("Only an in-progress interview can be finished")
+        return await self._repository.finish(session_id, user_id)

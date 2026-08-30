@@ -188,6 +188,33 @@ describe("interviewService reports", () => {
   });
 });
 
+describe("interviewService.finishInterviewSession", () => {
+  it("uses the dedicated finish endpoint with request deduplication", async () => {
+    const postSpy = vi.spyOn(service, "post").mockResolvedValue({
+      sessionId: "session-1",
+      status: "COMPLETED",
+    });
+
+    try {
+      await interviewService.finishInterviewSession("session-1");
+
+      expect(postSpy).toHaveBeenCalledWith(
+        "/xunzhi/v1/interview/sessions/session-1/finish",
+        {},
+        {
+          timeout: 180_000,
+          requestPolicy: {
+            key: "interview-finish:session-1",
+            dedupe: "join",
+          },
+        },
+      );
+    } finally {
+      postSpy.mockRestore();
+    }
+  });
+});
+
 describe("interviewService.restoreInterviewSession", () => {
   it("forwards persisted resume evaluation metadata", async () => {
     const getSpy = vi.spyOn(service, "get").mockResolvedValue({

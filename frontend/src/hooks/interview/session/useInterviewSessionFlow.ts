@@ -28,6 +28,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   const [isInterviewSubmitting, setIsInterviewSubmitting] = useState(false);
   const [interviewError, setInterviewError] = useState<string | null>(null);
   const [isEndingInterview, setIsEndingInterview] = useState(false);
+  const endingInterviewRef = useRef(false);
   const answerRequestRef = useRef<{ key: string; requestId: string } | null>(
     null,
   );
@@ -138,7 +139,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     setInterviewError,
   });
 
-  const { resetAutoSaveAttempt } = useInterviewAutoSave({
+  const { isAutoSaveFailed, resetAutoSaveAttempt } = useInterviewAutoSave({
     interviewerSessionId,
     isInterviewFinished,
     appendSystemMessage,
@@ -279,20 +280,29 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   ]);
 
   const handleEndInterview = useCallback(async () => {
-    if (isEndingInterview) {
+    if (
+      endingInterviewRef.current ||
+      isEndingInterview ||
+      (isInterviewFinished && !isAutoSaveFailed) ||
+      isInterviewFailed
+    ) {
       return;
     }
+    const reportSessionId = interviewerSessionId;
+    if (!reportSessionId) {
+      const message = "当前没有可结束的面试会话。";
+      setInterviewError(message);
+      appendErrorMessage(message);
+      return;
+    }
+
+    endingInterviewRef.current = true;
     setIsEndingInterview(true);
 
-    const reportSessionId = interviewerSessionId;
     try {
-      if (reportSessionId) {
-        await interviewService.finishInterviewSession(reportSessionId);
-        await invalidateInterviewRecords();
-      }
-    } catch (error) {
-      console.error("Save interview record failed:", error);
-    } finally {
+      await interviewService.finishInterviewSession(reportSessionId);
+      await invalidateInterviewRecords();
+
       stopThinkingIndicator();
       cancelActiveQuestionStream();
       answerRequestRef.current = null;
@@ -300,20 +310,33 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
       clearStoredSession();
       resetProgressState();
       resetAutoSaveAttempt();
-      navigate(
-        `${ROUTES.interviewReport}${buildReportSearch(reportSessionId)}`,
-        {
-          state: reportSessionId ? { sessionId: reportSessionId } : undefined,
-        },
-      );
+      navigate(`${ROUTES.interviewReport}${buildReportSearch(reportSessionId)}`, {
+        state: { sessionId: reportSessionId },
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "结束面试失败，请稍后重试。";
+      setInterviewError(message);
+      appendErrorMessage(message);
+    } finally {
+      stopThinkingIndicator();
+      cancelActiveQuestionStream();
+      answerRequestRef.current = null;
+      endingInterviewRef.current = false;
       setIsEndingInterview(false);
     }
   }, [
+    appendErrorMessage,
     cancelActiveQuestionStream,
     clearStoredSession,
     interviewerSessionId,
     invalidateInterviewRecords,
     isEndingInterview,
+    isInterviewFailed,
+    isInterviewFinished,
+    isAutoSaveFailed,
     navigate,
     persistInterviewerSessionId,
     resetAutoSaveAttempt,

@@ -1243,21 +1243,17 @@ export const interviewService = {
     );
   },
   finishInterviewSession: async (sessionId: string) => {
-    try {
-      const session = await interviewService.getInterviewSession(sessionId);
-      if (session.status === "COMPLETED" || session.status === "CANCELLED") {
-        return;
-      }
-      await interviewService.cancelInterviewSession(sessionId);
-    } catch (error) {
-      if (!shouldFallbackToLegacyPath(error)) {
-        throw error;
-      }
-      await service.put<void, Record<string, never>>(
-        `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/finish`,
-        {},
-      );
-    }
+    return service.post<InterviewSessionResponse, Record<string, never>>(
+      `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/finish`,
+      {},
+      {
+        timeout: INTERVIEW_LONG_TIMEOUT_MS,
+        requestPolicy: {
+          key: `interview-finish:${sessionId}`,
+          dedupe: "join",
+        },
+      },
+    );
   },
   saveInterviewRecordFromRedis: async (sessionId: string) => {
     return postWithPathFallback<void>(

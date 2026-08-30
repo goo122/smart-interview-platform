@@ -144,6 +144,38 @@ async def test_submit_answer_is_idempotent_and_only_one_answer_is_saved() -> Non
 
 
 @pytest.mark.asyncio
+async def test_early_finish_skips_pending_evaluation_after_a_completed_answer() -> None:
+    service, repository, user_id, session_id, queue = await _started_service(
+        evaluator=FakeInterviewAnswerEvaluator(output=_evaluation(follow_up=False))
+    )
+    first_turn = await service.current_turn(user_id, session_id)
+    await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=first_turn.turn.id,
+        answer="我完成了第一个方案并验证了效果。",
+        request_id="early-finish-first",
+    )
+    await queue.tasks.pop(0)()
+    second_turn = await service.current_turn(user_id, session_id)
+    await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=second_turn.turn.id,
+        answer="我已经提交了第二题的回答，等待评分。",
+        request_id="early-finish-pending",
+    )
+
+    finished = await repository.finish(session_id, user_id)
+
+    assert finished.status == InterviewStatus.COMPLETED
+    assert repository.answers[second_turn.turn.id].content.startswith("我已经提交")
+    assert second_turn.turn.status == TurnStatus.SKIPPED
+    await queue.tasks.pop(0)()
+    assert repository.sessions[session_id].status == InterviewStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_answer_validation_rejects_empty_short_and_long_answers() -> None:
     service, _, user_id, session_id, _ = await _started_service(
         settings=Settings(interview_min_answer_length=3, interview_max_answer_length=20)

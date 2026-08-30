@@ -182,6 +182,17 @@ async def cancel_session(
     return InterviewSessionResponse.from_domain(session, evaluation)
 
 
+@router.post("/sessions/{session_id}/finish", response_model=InterviewSessionResponse)
+async def finish_session(
+    session_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewService, Depends(get_interview_service)],
+) -> InterviewSessionResponse:
+    session = await service.finish(current_user.id, session_id)
+    evaluation = await service.get_resume_evaluation(current_user.id, session_id)
+    return InterviewSessionResponse.from_domain(session, evaluation)
+
+
 @router.get("/sessions/{session_id}/resume/preview")
 async def resume_preview(
     session_id: UUID,

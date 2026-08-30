@@ -45,6 +45,7 @@ class TurnStatus(StrEnum):
     EVALUATING = "EVALUATING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
 
 
 def utc_now() -> datetime:

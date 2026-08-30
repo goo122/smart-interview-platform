@@ -24,10 +24,13 @@ class InterviewStateMachine:
     }
 
     _allowed_turn: dict[TurnStatus, frozenset[TurnStatus]] = {
-        TurnStatus.WAITING_ANSWER: frozenset({TurnStatus.EVALUATING}),
-        TurnStatus.EVALUATING: frozenset({TurnStatus.COMPLETED, TurnStatus.FAILED}),
+        TurnStatus.WAITING_ANSWER: frozenset({TurnStatus.EVALUATING, TurnStatus.SKIPPED}),
+        TurnStatus.EVALUATING: frozenset(
+            {TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.SKIPPED}
+        ),
         TurnStatus.COMPLETED: frozenset(),
         TurnStatus.FAILED: frozenset(),
+        TurnStatus.SKIPPED: frozenset(),
     }
 
     def transition(self, current: InterviewStatus, target: InterviewStatus) -> None:
