@@ -17,6 +17,9 @@ export type SmartComposerViewProps = {
   className?: string;
   isRecording?: boolean;
   onMicClick?: (event: React.MouseEvent) => void;
+  voiceDisabled?: boolean;
+  voiceDisabledReason?: string | null;
+  voiceStatusMessage?: string | null;
 };
 
 export default function SmartComposerView({
@@ -32,6 +35,9 @@ export default function SmartComposerView({
   className,
   isRecording = false,
   onMicClick,
+  voiceDisabled = false,
+  voiceDisabledReason = null,
+  voiceStatusMessage = null,
 }: SmartComposerViewProps) {
   const textareaRef = useTextareaAutosize(value);
 
@@ -81,21 +87,33 @@ export default function SmartComposerView({
         <div className="flex items-center gap-2">
           {actions}
           {showVoiceButton && (
-            <Button
-              variant={isRecording ? "destructive" : "ghost"}
-              size="icon"
-              className={cn(
-                "h-9 w-9 rounded-full transition-all",
-                isRecording
-                  ? "animate-pulse bg-red-500 text-white hover:bg-red-600"
-                  : "text-slate-500 hover:bg-slate-100",
-              )}
-              onClick={onMicClick}
-              type="button"
-              disabled={disabled}
-            >
-              <Mic className="h-5 w-5" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {voiceStatusMessage ? (
+                <span
+                  className="max-w-[16rem] text-right text-xs text-slate-400"
+                  role="status"
+                >
+                  {voiceStatusMessage}
+                </span>
+              ) : null}
+              <Button
+                variant={isRecording ? "destructive" : "ghost"}
+                size="icon"
+                className={cn(
+                  "h-9 w-9 rounded-full transition-all",
+                  isRecording
+                    ? "animate-pulse bg-red-500 text-white hover:bg-red-600"
+                    : "text-slate-500 hover:bg-slate-100",
+                )}
+                onClick={onMicClick}
+                type="button"
+                disabled={disabled || voiceDisabled}
+                title={voiceDisabledReason ?? undefined}
+                aria-label={isRecording ? "停止语音转写" : "开始语音转写"}
+              >
+                <Mic className="h-5 w-5" />
+              </Button>
+            </div>
           )}
         </div>
       </div>

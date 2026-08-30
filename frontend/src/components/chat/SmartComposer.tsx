@@ -24,8 +24,16 @@ export default function SmartComposer({
   actions,
   className,
 }: SmartComposerProps) {
-  const { isRecording, transcription, error, startRecording, stopRecording } =
-    useAudioToText();
+  const {
+    isRecording,
+    transcription,
+    error,
+    speechAvailable,
+    speechAvailabilityMessage,
+    capabilitiesLoading,
+    startRecording,
+    stopRecording,
+  } = useAudioToText();
 
   useAudioToTextComposerBridge({
     enabled: showVoiceButton,
@@ -62,6 +70,9 @@ export default function SmartComposer({
       disabled={disabled}
       showDefaultLeading={showDefaultLeading}
       showVoiceButton={showVoiceButton}
+      voiceDisabled={!speechAvailable || capabilitiesLoading}
+      voiceDisabledReason={speechAvailabilityMessage}
+      voiceStatusMessage={error || speechAvailabilityMessage}
       leading={leading}
       actions={actions}
       className={className}

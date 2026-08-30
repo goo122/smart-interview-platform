@@ -3,6 +3,9 @@ import { AudioToTextWebSocket } from "@/services/audioToTextWs";
 
 type UseAudioTranscriptionTransportParams = {
   userId: string | null;
+  sampleRate: number;
+  audioFormat: string;
+  maxFrameBytes?: number;
   onReplace: (text: string) => void;
   onArchive: (text: string) => void;
   onError: (message: string) => void;
@@ -10,6 +13,9 @@ type UseAudioTranscriptionTransportParams = {
 
 export function useAudioTranscriptionTransport({
   userId,
+  sampleRate,
+  audioFormat,
+  maxFrameBytes,
   onReplace,
   onArchive,
   onError,
@@ -31,7 +37,7 @@ export function useAudioTranscriptionTransport({
     onErrorRef.current = onError;
   }, [onError]);
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async (graceful = false) => {
     const transport = transportRef.current;
     transportRef.current = null;
 
@@ -39,10 +45,12 @@ export function useAudioTranscriptionTransport({
       return;
     }
 
-    try {
-      transport.sendCommand("stop_transcription");
-    } catch (error) {
-      console.error("Failed to send stop command", error);
+    if (graceful) {
+      try {
+        await transport.stopTranscription();
+      } catch (error) {
+        console.error("Failed to finish transcription", error);
+      }
     }
 
     transport.disconnect();
@@ -53,11 +61,17 @@ export function useAudioTranscriptionTransport({
       throw new Error("Audio transcription requires a valid user id");
     }
 
-    disconnect();
+    void disconnect(false);
 
     const transport = new AudioToTextWebSocket(userId);
     transport.onConnected = () => {
-      transport.sendCommand("start_transcription");
+      transport.sendCommand("start_transcription", {
+        audio_format: {
+          encoding: audioFormat,
+          sample_rate: sampleRate,
+          channels: 1,
+        },
+      });
     };
     transport.onTranscription = (text) => {
       onReplaceRef.current(text);
@@ -71,13 +85,21 @@ export function useAudioTranscriptionTransport({
 
     transportRef.current = transport;
     transport.connect();
-  }, [disconnect, userId]);
+  }, [audioFormat, disconnect, sampleRate, userId]);
 
   const sendAudioChunk = useCallback((data: ArrayBuffer) => {
+    if (maxFrameBytes !== undefined && data.byteLength > maxFrameBytes) {
+      onErrorRef.current("单个音频帧超过允许大小。");
+      return;
+    }
     transportRef.current?.sendAudio(data);
-  }, []);
+  }, [maxFrameBytes]);
 
-  useEffect(() => disconnect, [disconnect]);
+  useEffect(() => {
+    return () => {
+      void disconnect(false);
+    };
+  }, [disconnect, userId]);
 
   return useMemo(
     () => ({

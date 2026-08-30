@@ -50,6 +50,19 @@ const currentUser = {
   username: "tester",
 } as const;
 
+const unavailableCapabilities = {
+  available: false,
+  provider: "unavailable",
+  audioFormat: "pcm_s16le",
+  sampleRate: 16000,
+  channels: 1,
+  supportedAudioFormats: ["pcm_s16le"],
+  supportedSampleRates: [16000],
+  maxSessionSeconds: 120,
+  maxFrameBytes: 65536,
+  maxAudioBytes: 5242880,
+};
+
 describe("useAudioTranscriptionController", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -141,6 +154,59 @@ describe("useAudioTranscriptionController", () => {
       expect(transportState.disconnect).toHaveBeenCalledTimes(1);
       expect(streamState.stop).toHaveBeenCalledTimes(1);
     });
+
+    await act(async () => {
+      unmount();
+    });
+  });
+
+  it("does not start when the capability endpoint reports an unavailable provider", async () => {
+    const { result, unmount } = renderHook(() =>
+      useAudioTranscriptionController(currentUser, {
+        capabilities: unavailableCapabilities,
+        availabilityMessage: "当前环境未配置语音转写服务。",
+      }),
+    );
+
+    await act(async () => {
+      await result.current.startRecording();
+    });
+
+    expect(transportState.connect).not.toHaveBeenCalled();
+    expect(streamState.start).not.toHaveBeenCalled();
+    expect(result.current.error).toBe("当前环境未配置语音转写服务。");
+
+    await act(async () => {
+      unmount();
+    });
+  });
+
+  it("does not create a second connection while the first microphone start is pending", async () => {
+    let resolveStart: (() => void) | undefined;
+    streamState.start.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+
+    const { result, unmount } = renderHook(() =>
+      useAudioTranscriptionController(currentUser),
+    );
+    let firstStart: Promise<void>;
+
+    await act(async () => {
+      firstStart = result.current.startRecording();
+      await Promise.resolve();
+      await result.current.startRecording();
+    });
+
+    expect(transportState.connect).toHaveBeenCalledTimes(1);
+    resolveStart?.();
+    await act(async () => {
+      await firstStart;
+    });
+    expect(result.current.isRecording).toBe(true);
 
     await act(async () => {
       unmount();

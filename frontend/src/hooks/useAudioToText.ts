@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useAudioTranscriptionController } from "@/hooks/audio/useAudioTranscriptionController";
+import { useSpeechCapabilities } from "@/hooks/audio/useSpeechCapabilities";
 import { useAppSelector } from "@/store/hooks";
 
 type AudioToTextComposerBridgeOptions = {
@@ -47,6 +48,11 @@ export function useAudioToTextComposerBridge({
 
 export function useAudioToText() {
   const { currentUser } = useAppSelector((state) => state.user);
+  const speech = useSpeechCapabilities(currentUser);
 
-  return useAudioTranscriptionController(currentUser);
+  return useAudioTranscriptionController(currentUser, {
+    capabilities: speech.capabilities,
+    capabilitiesLoading: speech.isLoading,
+    availabilityMessage: speech.availabilityMessage,
+  });
 }

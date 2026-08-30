@@ -43,6 +43,17 @@ APP_EMBEDDING_DIMENSIONS=1536
 
 `qwen-plus` 可按账号权限替换为其他兼容模型；Embedding 模型必须返回 1536 维向量。应用启动时会检查 Key、Base URL、Model 和实际向量维度。本仓库的自动化测试默认使用 Fake Provider，不会自动调用真实千问或产生费用。
 
+### 语音转文字（ASR）
+
+语音输入使用认证 WebSocket：
+`/api/xunzhi/v1/xunfei/audio-to-text/{userId}`；能力查询使用
+`GET /api/xunzhi/v1/speech/capabilities`。浏览器发送 PCM16、16kHz、单声道二进制音频，
+服务端返回增量快照和最终快照，结果只会填入聊天输入框或面试构思板，不会自动提交。
+
+后端通过 `APP_SPEECH_TO_TEXT_PROVIDER` 选择 `unavailable`、`fake` 或 `xunfei`。
+Fake 仅限 development/test，真实讯飞凭据只配置在后端环境变量中；自动化测试使用 Fake，
+不会连接讯飞或产生费用。
+
 ## Docker Compose 启动
 
 ```powershell

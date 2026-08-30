@@ -389,6 +389,18 @@ export interface components {
       "current": number;
       "pages": number;
     };
+    SpeechCapabilitiesResponse: {
+      "available": boolean;
+      "provider": string;
+      "audioFormat": string;
+      "sampleRate": number;
+      "channels": number;
+      "supportedAudioFormats": Array<string>;
+      "supportedSampleRates": Array<number>;
+      "maxSessionSeconds": number;
+      "maxFrameBytes": number;
+      "maxAudioBytes": number;
+    };
   };
 }
 
@@ -433,3 +445,4 @@ export type InterviewReportItemResponse = components["schemas"]["InterviewReport
 export type InterviewReportResponse = components["schemas"]["InterviewReportResponse"];
 export type ResumeEvaluationSnapshotResponse = components["schemas"]["ResumeEvaluationSnapshotResponse"];
 export type InterviewReportPage = components["schemas"]["InterviewReportPage"];
+export type SpeechCapabilitiesResponse = components["schemas"]["SpeechCapabilitiesResponse"];

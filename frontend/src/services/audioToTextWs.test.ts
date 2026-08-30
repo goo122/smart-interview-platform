@@ -84,4 +84,29 @@ describe("AudioToTextWebSocket message handling", () => {
 
     expect(onTranscription).toHaveBeenCalledWith("");
   });
+
+  it("archives one final snapshot without appending a duplicate packet", () => {
+    const onFinal = vi.fn();
+    instance.onFinal = onFinal;
+    const message = {
+      type: "final",
+      data: "最终答案",
+      revision: 3,
+      timestamp: 30,
+    };
+
+    (
+      instance as unknown as {
+        handleMessage: (incoming: typeof message) => void;
+      }
+    ).handleMessage(message);
+    (
+      instance as unknown as {
+        handleMessage: (incoming: typeof message) => void;
+      }
+    ).handleMessage(message);
+
+    expect(onFinal).toHaveBeenCalledTimes(1);
+    expect(onFinal).toHaveBeenCalledWith("最终答案");
+  });
 });

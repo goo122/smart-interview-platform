@@ -270,3 +270,31 @@ uv run alembic upgrade head --sql > migration.sql
 The deterministic defaults are configurable with `APP_REPORT_*` settings in
 `.env.example`; no real model key or secret is required for local startup or
 tests.
+
+## Speech-to-text WebSocket
+
+The authenticated speech capability endpoint is:
+
+- `GET /api/xunzhi/v1/speech/capabilities`
+
+The browser streaming endpoint remains:
+
+- `WS /api/xunzhi/v1/xunfei/audio-to-text/{userId}`
+
+The browser sends a `start_transcription` JSON command, binary PCM16 little-endian
+mono frames at 16kHz, and a `stop_transcription` command. The server returns
+`connected`, `transcription` replacement snapshots, `final` archive snapshots,
+safe `error` messages, and `closed`. The browser token is carried in the existing
+`token` query parameter because the WebSocket browser API cannot set an
+Authorization header; the Nginx WebSocket location disables access logging so the
+token is not written to ordinary proxy logs.
+
+Runtime selection uses `APP_SPEECH_TO_TEXT_PROVIDER`:
+
+- `unavailable`: safe default; capability is unavailable and no external call is made;
+- `fake`: deterministic local/test adapter, rejected when `APP_ENV=production`;
+- `xunfei`: server-side Xunfei IAT WebSocket adapter using `APP_XUNFEI_ASR_APP_ID`,
+  `APP_XUNFEI_ASR_API_KEY` and `APP_XUNFEI_ASR_API_SECRET`.
+
+The credentials are never returned by the capability endpoint or sent to the
+browser. Automated tests inject `FakeSpeechToTextAdapter` and do not call Xunfei.

@@ -22,9 +22,20 @@ class Settings(BaseSettings):
     debug: bool = False
     ai_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
     embedding_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
+    speech_to_text_provider: Literal["unavailable", "fake", "xunfei"] = "unavailable"
     ai_fake_mode: Literal["normal", "follow_up", "failure"] = "normal"
     ai_request_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
     ai_max_retries: int = Field(default=2, ge=0, le=3)
+    xunfei_asr_app_id: str | None = None
+    xunfei_asr_api_key: str | None = None
+    xunfei_asr_api_secret: str | None = None
+    xunfei_asr_url: str = "wss://iat-api.xfyun.cn/v2/iat"
+    asr_audio_format: Literal["pcm_s16le"] = "pcm_s16le"
+    asr_sample_rate: int = Field(default=16000, ge=8000, le=48000)
+    asr_channels: int = Field(default=1, ge=1, le=1)
+    asr_max_session_seconds: int = Field(default=120, ge=1, le=3600)
+    asr_max_frame_bytes: int = Field(default=64 * 1024, ge=2, le=1024 * 1024)
+    asr_max_audio_bytes: int = Field(default=5 * 1024 * 1024, ge=2, le=100 * 1024 * 1024)
     secret_key: str = Field(default_factory=lambda: token_urlsafe(32))
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
@@ -71,9 +82,24 @@ class Settings(BaseSettings):
     def validate_chunking(self) -> "Settings":
         environment = self.app_env.strip().lower()
         if environment == "production" and (
-            self.ai_provider == "fake" or self.embedding_provider == "fake"
+            self.ai_provider == "fake"
+            or self.embedding_provider == "fake"
+            or self.speech_to_text_provider == "fake"
         ):
             raise ValueError("fake AI providers are not allowed in production")
+        if self.speech_to_text_provider == "xunfei" and not all(
+            self._has_value(value)
+            for value in (
+                self.xunfei_asr_app_id,
+                self.xunfei_asr_api_key,
+                self.xunfei_asr_api_secret,
+            )
+        ):
+            raise ValueError(
+                "xunfei speech provider requires app ID, API key and API secret"
+            )
+        if self.asr_max_frame_bytes > self.asr_max_audio_bytes:
+            raise ValueError("asr_max_frame_bytes must not exceed asr_max_audio_bytes")
         if self.ai_provider == "openai_compatible" and not all(
             self._has_value(value)
             for value in (self.llm_api_key, self.llm_base_url, self.llm_model)

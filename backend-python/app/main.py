@@ -17,6 +17,7 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.interview import router as interview_router
 from app.api.v1.knowledge import router as knowledge_router
 from app.api.v1.router import router as v1_router
+from app.api.v1.speech import audio_router, capabilities_router
 from app.core.config import get_settings
 from app.core.database import create_database_engine, create_session_factory
 from app.core.exceptions import (
@@ -29,6 +30,8 @@ from app.core.exceptions import (
 from app.core.redis import create_redis_client
 from app.infrastructure.storage.files import LocalFileStorage
 from app.infrastructure.storage.pdf import PypdfPdfParser
+from app.modules.speech.factory import SpeechToTextProviderFactory
+from app.modules.speech.service import SpeechToTextService
 from app.workers.queue import InlineTaskQueue
 
 
@@ -38,6 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     settings = get_settings()
     providers = AiProviderFactory.build(settings)
+    speech_provider = SpeechToTextProviderFactory.build(settings)
     if settings.embedding_provider != "unavailable":
         await AiProviderFactory.validate_embedding_dimensions(
             providers.embedding,
@@ -59,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.file_storage = LocalFileStorage(settings.knowledge_storage_dir)
     app.state.pdf_parser = PypdfPdfParser()
     app.state.task_queue = InlineTaskQueue()
+    app.state.speech_to_text_service = SpeechToTextService(speech_provider, settings)
     try:
         yield
     finally:
@@ -99,6 +104,8 @@ def create_app() -> FastAPI:
     app.include_router(ai_properties_router, prefix="/api")
     app.include_router(knowledge_router, prefix="/api")
     app.include_router(interview_router, prefix="/api")
+    app.include_router(capabilities_router, prefix="/api")
+    app.include_router(audio_router, prefix="/api")
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

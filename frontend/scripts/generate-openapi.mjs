@@ -142,6 +142,10 @@ const selected = [
     exportName: "InterviewReportPage",
     schemaName: "InterviewReportPageResponse_InterviewReportResponse_",
   },
+  {
+    exportName: "SpeechCapabilitiesResponse",
+    schemaName: "SpeechCapabilitiesResponse",
+  },
 ];
 
 const exportNameBySchema = new Map(selected.map((entry) => [entry.schemaName, entry.exportName]));

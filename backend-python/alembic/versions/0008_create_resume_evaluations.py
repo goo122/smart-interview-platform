@@ -75,9 +75,13 @@ def upgrade() -> None:
             "clarity_score IS NULL OR clarity_score BETWEEN 0 AND 100",
             name="ck_interview_resume_evaluations_clarity_score",
         ),
-        sa.ForeignKeyConstraint(["session_id"], ["interview_sessions.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["session_id"], ["interview_sessions.id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["knowledge_base_id"], ["knowledge_bases.id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["knowledge_base_id"], ["knowledge_bases.id"], ondelete="RESTRICT"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("session_id", name="uq_interview_resume_evaluations_session"),
     )

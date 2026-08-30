@@ -37,6 +37,17 @@ Axios 客户端会自动附加 Bearer Token，并使用 single-flight 机制刷�
 
 聊天使用 POST SSE（`start`、`delta`、`complete`、`error`）而不是原生 EventSource，支持 AbortController、401 刷新重试、稳定 `requestId`、跨网络块 UTF-8 和引用展开。普通对话不会发送 `knowledgeBaseId`，RAG 对话发送 `knowledgeBaseId` 与限定范围内的 `topK`。
 
+## 语音转文字
+
+页面登录后会查询 `GET /api/xunzhi/v1/speech/capabilities`。语音输入通过
+`/api/xunzhi/v1/xunfei/audio-to-text/{userId}` 建立认证 WebSocket：先发送
+`{"type":"start_transcription","audio_format":{"encoding":"pcm_s16le","sample_rate":16000,"channels":1}}`，
+再发送裸 PCM16 二进制帧，停止时发送 `{"type":"stop_transcription"}`。服务端返回完整增量快照
+（`transcription`）和最终快照（`final`），前端只填充聊天输入框或面试构思板，不会自动提交。
+
+后端 `APP_SPEECH_TO_TEXT_PROVIDER=unavailable` 时安全禁用麦克风；开发/测试可使用
+`fake`，生产环境会拒绝 Fake Provider。真实讯飞模式使用 `xunfei`，并且只从后端环境变量读取凭据。
+
 ## 模拟面试创建与面试房间
 
 `/interview` 会从 `/api/xunzhi/v1/knowledge-bases` 及其文档接口筛选至少包含一个 `READY` 文档的知识库。创建请求使用后端 OpenAPI 类型，字段包括 `knowledgeBaseId`、`jobTitle`、`jobDescription`、`interviewType`、`difficulty`、`questionCount` 和稳定的 `requestId`，成功后进入 `/interview/:sessionId`。

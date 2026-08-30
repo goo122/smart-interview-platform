@@ -18,6 +18,15 @@ export class AudioToTextWebSocket {
   private hasOpened = false;
   private lastMessageTimestamp = 0;
   private lastMessageKey: string | null = null;
+  private lastMessageRevision = 0;
+  private gracefulCloseRequested = false;
+  private serverClosed = false;
+  private errorReported = false;
+  private stopWaiter: {
+    promise: Promise<void>;
+    resolve: () => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
 
   public onTranscription?: (text: string) => void;
   public onFinal?: (text: string) => void;
@@ -64,11 +73,13 @@ export class AudioToTextWebSocket {
 
     this.ws = new WebSocket(this.url);
     this.resetMessageCursor();
+    this.gracefulCloseRequested = false;
+    this.serverClosed = false;
+    this.errorReported = false;
 
     this.ws.onopen = () => {
       console.log("WebSocket Connected");
       this.hasOpened = true;
-      this.flushPendingBinaryQueue();
       this.startPing();
     };
 
@@ -83,7 +94,7 @@ export class AudioToTextWebSocket {
 
     this.ws.onerror = (error) => {
       console.error("WebSocket Error", error);
-      this.onError?.("WebSocket connection error");
+      this.reportError("WebSocket connection error");
     };
 
     this.ws.onclose = (event) => {
@@ -97,12 +108,21 @@ export class AudioToTextWebSocket {
         const details = [event.code ? `code=${event.code}` : null, event.reason]
           .filter(Boolean)
           .join(", ");
-        this.onError?.(
+        this.reportError(
           details
             ? `WebSocket closed before ready: ${details}`
             : "WebSocket closed before ready",
         );
       }
+      if (
+        this.hasOpened &&
+        !this.gracefulCloseRequested &&
+        !this.serverClosed &&
+        event.code !== 1000
+      ) {
+        this.reportError("语音转写连接已断开，请重新开始录音。");
+      }
+      this.resolveStopWaiter();
       this.onDisconnected?.();
       this.ws = null;
       this.hasOpened = false;
@@ -127,12 +147,17 @@ export class AudioToTextWebSocket {
         break;
       case "connected":
         this.onConnected?.();
+        this.flushPendingBinaryQueue();
         break;
       case "control":
       case "heartbeat":
         break;
       case "error":
-        this.onError?.(event.message);
+        this.reportError(event.message);
+        break;
+      case "closed":
+        this.serverClosed = true;
+        this.resolveStopWaiter();
         break;
       case "unknown":
         console.warn("Unknown message type:", event.type);
@@ -156,10 +181,37 @@ export class AudioToTextWebSocket {
 
   sendCommand(
     type: "ping" | "start_transcription" | "stop_transcription" | "get_status",
+    payload?: Record<string, unknown>,
   ) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type }));
+      this.ws.send(JSON.stringify({ type, ...payload }));
     }
+  }
+
+  async stopTranscription(timeoutMs = 3000) {
+    if (!this.ws) {
+      return;
+    }
+
+    this.gracefulCloseRequested = true;
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      this.resolveStopWaiter();
+      return;
+    }
+
+    if (this.stopWaiter) {
+      await this.stopWaiter.promise;
+      return;
+    }
+
+    let resolveWaiter: () => void = () => undefined;
+    const promise = new Promise<void>((resolve) => {
+      resolveWaiter = resolve;
+    });
+    const timer = setTimeout(resolveWaiter, timeoutMs);
+    this.stopWaiter = { promise, resolve: resolveWaiter, timer };
+    this.sendCommand("stop_transcription");
+    await promise;
   }
 
   sendAudio(data: Blob | ArrayBuffer) {
@@ -176,9 +228,11 @@ export class AudioToTextWebSocket {
   }
 
   disconnect() {
+    this.gracefulCloseRequested = true;
     this.stopPing();
     this.pendingBinaryQueue = [];
     this.resetMessageCursor();
+    this.resolveStopWaiter();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -202,6 +256,25 @@ export class AudioToTextWebSocket {
   private resetMessageCursor() {
     this.lastMessageTimestamp = 0;
     this.lastMessageKey = null;
+    this.lastMessageRevision = 0;
+  }
+
+  private reportError(message: string) {
+    if (this.errorReported) {
+      return;
+    }
+    this.errorReported = true;
+    this.onError?.(message);
+  }
+
+  private resolveStopWaiter() {
+    if (!this.stopWaiter) {
+      return;
+    }
+    const waiter = this.stopWaiter;
+    this.stopWaiter = null;
+    clearTimeout(waiter.timer);
+    waiter.resolve();
   }
 
   private shouldApplyEvent(
@@ -217,6 +290,21 @@ export class AudioToTextWebSocket {
     const nextKey = `${event.kind}:${message.type ?? ""}:${text}`;
     const nextTimestamp =
       typeof message.timestamp === "number" ? message.timestamp : null;
+    const nextRevision =
+      typeof message.revision === "number" ? message.revision : null;
+
+    if (nextRevision !== null) {
+      if (nextRevision < this.lastMessageRevision) {
+        return false;
+      }
+      if (
+        nextRevision === this.lastMessageRevision &&
+        nextKey === this.lastMessageKey
+      ) {
+        return false;
+      }
+      this.lastMessageRevision = nextRevision;
+    }
 
     if (nextTimestamp !== null) {
       if (nextTimestamp < this.lastMessageTimestamp) {

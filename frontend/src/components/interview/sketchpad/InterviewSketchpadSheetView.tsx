@@ -34,6 +34,9 @@ type InterviewSketchpadSheetViewProps = {
   hasTranscriptionBuffer: boolean;
   isRecording: boolean;
   transcriptionError: string | null;
+  speechAvailable: boolean;
+  speechAvailabilityMessage: string | null;
+  capabilitiesLoading: boolean;
   saveHint: string;
   actions: SketchpadActions;
 };
@@ -47,9 +50,16 @@ export function InterviewSketchpadSheetView({
   hasTranscriptionBuffer,
   isRecording,
   transcriptionError,
+  speechAvailable = true,
+  speechAvailabilityMessage = null,
+  capabilitiesLoading = false,
   saveHint,
   actions,
 }: InterviewSketchpadSheetViewProps) {
+  const voiceStatusError =
+    transcriptionError ||
+    ((!speechAvailable || capabilitiesLoading) && speechAvailabilityMessage) ||
+    null;
   const [isTranscriptionUpdated, setIsTranscriptionUpdated] = useState(false);
   const previousTranscriptionRef = useRef(displayedTranscriptionBuffer);
 
@@ -186,7 +196,7 @@ export function InterviewSketchpadSheetView({
                 className={cn(
                   "rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-4 transition-colors duration-200",
                   isRecording && "border-red-200 bg-red-50/40",
-                  transcriptionError && "border-red-300 bg-red-50/50",
+                  voiceStatusError && "border-red-300 bg-red-50/50",
                 )}
               >
                 <div className="flex flex-wrap items-center gap-2">
@@ -197,7 +207,7 @@ export function InterviewSketchpadSheetView({
                     aria-live="polite"
                     className={cn(
                       "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs",
-                      transcriptionError
+                      voiceStatusError
                         ? "bg-red-100 text-red-700"
                         : isRecording
                           ? "bg-red-100 text-red-700"
@@ -209,7 +219,7 @@ export function InterviewSketchpadSheetView({
                     <span
                       className={cn(
                         "h-1.5 w-1.5 rounded-full",
-                        transcriptionError
+                        voiceStatusError
                           ? "bg-red-500"
                           : isRecording
                             ? "bg-red-500 sketchpad-status-dot-pulse"
@@ -218,7 +228,7 @@ export function InterviewSketchpadSheetView({
                               : "bg-slate-400",
                       )}
                     />
-                    {transcriptionError
+                    {voiceStatusError
                       ? "转写异常"
                       : isRecording
                         ? "正在转写"
@@ -265,6 +275,8 @@ export function InterviewSketchpadSheetView({
                     onClick={() => {
                       void actions.toggleRecording();
                     }}
+                    disabled={!speechAvailable || capabilitiesLoading}
+                    title={speechAvailabilityMessage ?? undefined}
                   >
                     {isRecording ? (
                       <Square className="mr-2 h-4 w-4 sketchpad-recording-icon" />
@@ -305,9 +317,9 @@ export function InterviewSketchpadSheetView({
                     清空缓冲区
                   </Button>
                 </div>
-                {transcriptionError ? (
+                {voiceStatusError ? (
                   <p className="mt-3 text-xs text-red-500">
-                    {transcriptionError}
+                    {voiceStatusError}
                   </p>
                 ) : null}
               </div>

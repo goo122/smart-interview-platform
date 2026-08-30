@@ -80,6 +80,9 @@ function InterviewSketchpadSheetContent({
       hasTranscriptionBuffer={transcription.hasTranscriptionBuffer}
       isRecording={transcription.isRecording}
       transcriptionError={transcription.transcriptionError}
+      speechAvailable={transcription.speechAvailable}
+      speechAvailabilityMessage={transcription.speechAvailabilityMessage}
+      capabilitiesLoading={transcription.capabilitiesLoading}
       saveHint={saveHint}
       actions={{
         setNotes,

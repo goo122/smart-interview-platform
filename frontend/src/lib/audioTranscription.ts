@@ -5,6 +5,14 @@ export type AudioToTextIncomingMessage = {
   isSnapshot?: boolean | null;
   updateAction?: string | null;
   timestamp?: number | null;
+  revision?: number | null;
+  provider?: string | null;
+  audioFormat?: string | null;
+  sampleRate?: number | null;
+  channels?: number | null;
+  code?: string | null;
+  recoverable?: boolean | null;
+  severity?: string | null;
 };
 
 export type AudioTranscriptionEvent =
@@ -12,6 +20,7 @@ export type AudioTranscriptionEvent =
   | { kind: "replace"; text: string }
   | { kind: "archive"; text: string }
   | { kind: "connected" }
+  | { kind: "closed" }
   | { kind: "control" }
   | { kind: "heartbeat" }
   | { kind: "error"; message: string }
@@ -78,7 +87,10 @@ export const resolveAudioTranscriptionEvent = (
 
   switch (message.type) {
     case "connected":
+    case "ready":
       return { kind: "connected" };
+    case "closed":
+      return { kind: "closed" };
     case "transcription_started":
       return { kind: "reset" };
     case "transcription_stopped":
@@ -148,6 +160,8 @@ export const reduceAudioTranscriptionState = (
         finalText: nextFinalText,
       };
     }
+    case "closed":
+      return state;
     default:
       return state;
   }

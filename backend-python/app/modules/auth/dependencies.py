@@ -1,7 +1,8 @@
 from collections.abc import AsyncIterator
-from typing import Annotated, cast
+from typing import Annotated, NoReturn, cast
+from uuid import UUID
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,8 +27,23 @@ async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def get_websocket_db_session(websocket: WebSocket) -> AsyncIterator[AsyncSession]:
+    session_factory = cast(
+        async_sessionmaker[AsyncSession],
+        websocket.app.state.session_factory,
+    )
+    async with session_factory() as session:
+        yield session
+
+
 async def get_user_repository(
     session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> UserRepository:
+    return SqlAlchemyUserRepository(session)
+
+
+async def get_websocket_user_repository(
+    session: Annotated[AsyncSession, Depends(get_websocket_db_session)],
 ) -> UserRepository:
     return SqlAlchemyUserRepository(session)
 
@@ -61,3 +77,54 @@ async def get_current_user(
     if credentials is None:
         raise AuthenticationError("Authentication failed")
     return await service.current_user(credentials.credentials)
+
+
+def _websocket_token(websocket: WebSocket) -> str | None:
+    for name in ("token", "access_token", "Authorization", "authorization"):
+        value = websocket.query_params.get(name)
+        if not value:
+            continue
+        normalized = value.strip()
+        if normalized.lower().startswith("bearer "):
+            normalized = normalized[7:].strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _reject_websocket_auth() -> NoReturn:
+    raise WebSocketException(
+        code=status.WS_1008_POLICY_VIOLATION,
+        reason="Authentication failed",
+    )
+
+
+async def get_current_websocket_user(
+    websocket: WebSocket,
+    user_id: str,
+    settings: Annotated[Settings, Depends(get_settings)],
+    repository: Annotated[UserRepository, Depends(get_websocket_user_repository)],
+) -> User:
+    """Authenticate a browser websocket without trusting the path user ID."""
+
+    token = _websocket_token(websocket)
+    if token is None:
+        _reject_websocket_auth()
+
+    try:
+        claims = TokenService(settings).decode_access(token)
+    except AuthenticationError:
+        _reject_websocket_auth()
+
+    current_user = await repository.get_by_id(claims.sub)
+    if current_user is None or not current_user.is_active:
+        _reject_websocket_auth()
+
+    target_user = None
+    try:
+        target_user = await repository.get_by_id(UUID(user_id))
+    except ValueError:
+        target_user = await repository.get_by_username(user_id)
+    if target_user is None or target_user.id != current_user.id:
+        _reject_websocket_auth()
+    return current_user
