@@ -1,9 +1,10 @@
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,6 +107,10 @@ class InterviewRepository(Protocol):
     async def claim_preparation(
         self, session_id: UUID, user_id: UUID, stale_before: datetime, attempt: int = 1
     ) -> InterviewSession | None: ...
+
+    async def release_preparation_for_retry(
+        self, session_id: UUID, user_id: UUID
+    ) -> InterviewSession: ...
 
     async def list_recoverable_preparations(
         self, stale_before: datetime, limit: int = 100
@@ -469,7 +474,7 @@ class SqlAlchemyInterviewRepository:
 
         expected_attempt = max(attempt - 1, 0)
         started_at = utc_now()
-        result = await self._session.execute(
+        result = cast(CursorResult[Any], await self._session.execute(
             update(InterviewSessionModel)
             .where(
                 InterviewSessionModel.id == session_id,
@@ -484,14 +489,36 @@ class SqlAlchemyInterviewRepository:
             .values(
                 preparation_started_at=started_at,
                 preparation_attempt_count=InterviewSessionModel.preparation_attempt_count + 1,
+                failure_code=None,
+                failure_message=None,
                 updated_at=started_at,
             )
-        )
+        ))
         if result.rowcount != 1:
             await self._session.rollback()
             return None
         await self._session.commit()
         return await self.get_for_user(session_id, user_id)
+
+    async def release_preparation_for_retry(
+        self, session_id: UUID, user_id: UUID
+    ) -> InterviewSession:
+        """Leave a newly queued session recoverable when Redis submission fails."""
+
+        row = await self._locked_row(session_id, user_id)
+        if row is None:
+            raise InterviewNotFoundError("Interview session not found")
+        if (
+            row.status == InterviewStatus.PREPARING.value
+            and row.preparation_attempt_count == 0
+            and row.preparation_started_at is None
+        ):
+            row.failure_code = "INTERVIEW_QUEUE_UNAVAILABLE"
+            row.failure_message = "Interview preparation is waiting to be rescheduled"
+            row.updated_at = utc_now()
+            await self._session.commit()
+            await self._session.refresh(row)
+        return _session_to_domain(row)
 
     async def list_recoverable_preparations(
         self, stale_before: datetime, limit: int = 100

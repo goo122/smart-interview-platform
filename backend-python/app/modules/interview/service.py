@@ -46,6 +46,7 @@ CONVERSATION_STATUS_TO_DOMAIN: dict[str, InterviewStatus] = {
     "FAILED": InterviewStatus.FAILED,
     "CANCELLED": InterviewStatus.CANCELLED,
 }
+INTERVIEW_QUEUE_FAILURE_CODE = "INTERVIEW_QUEUE_UNAVAILABLE"
 
 
 class InterviewService:
@@ -116,9 +117,18 @@ class InterviewService:
         if clean_request_id and len(clean_request_id) > 128:
             raise InvalidInterviewRequestError("requestId is too long")
         await self._context_provider.validate_knowledge_base(user_id, knowledge_base_id)
+        enqueue_preparation = getattr(
+            self._task_queue, "enqueue_interview_preparation", None
+        )
         if clean_request_id:
             existing = await self._repository.find_by_request(user_id, clean_request_id)
             if existing is not None:
+                if callable(enqueue_preparation) and self._should_enqueue_existing(existing):
+                    return await self._enqueue_preparation(
+                        existing,
+                        user_id,
+                        cast(InterviewPreparationTaskQueuePort, self._task_queue),
+                    )
                 return existing
         session = InterviewSession.new(
             user_id=user_id,
@@ -138,31 +148,19 @@ class InterviewService:
             existing = await self._repository.find_by_request(user_id, clean_request_id)
             if existing is None:
                 raise
-            return existing
-        enqueue_preparation = getattr(
-            self._task_queue, "enqueue_interview_preparation", None
-        )
-        if callable(enqueue_preparation):
-            queued, _ = await self._repository.begin_preparing(created.id, user_id)
-            try:
-                await enqueue_preparation(
-                    InterviewPreparationJob(
-                        session_id=created.id,
-                        user_id=user_id,
-                        request_id=clean_request_id or f"interview:{created.id}",
-                    )
-                )
-            except Exception as exc:
-                await self._repository.mark_failed(
-                    created.id,
+            if callable(enqueue_preparation) and self._should_enqueue_existing(existing):
+                return await self._enqueue_preparation(
+                    existing,
                     user_id,
-                    "INTERVIEW_QUEUE_FAILED",
-                    "Interview preparation could not be queued",
+                    cast(InterviewPreparationTaskQueuePort, self._task_queue),
                 )
-                raise InterviewPreparationQueueUnavailableError(
-                    "Interview preparation is temporarily unavailable"
-                ) from exc
-            return queued
+            return existing
+        if callable(enqueue_preparation):
+            return await self._enqueue_preparation(
+                created,
+                user_id,
+                cast(InterviewPreparationTaskQueuePort, self._task_queue),
+            )
 
         # Legacy in-process behavior is intentionally kept for unit tests and
         # workflows that have not moved to ARQ. Production interview creation
@@ -171,7 +169,7 @@ class InterviewService:
             async def prepare_task() -> None:
                 await self._workflow.prepare(user_id, created.id)
 
-            await self._task_queue.enqueue(prepare_task)
+            await cast(TaskQueuePort, self._task_queue).enqueue(prepare_task)
         except Exception:
             await self._repository.mark_failed(
                 created.id,
@@ -183,6 +181,40 @@ class InterviewService:
         if result is None:
             raise InterviewNotFoundError("Interview session not found")
         return result
+
+    @staticmethod
+    def _should_enqueue_existing(session: InterviewSession) -> bool:
+        return session.status == InterviewStatus.CREATED or (
+            session.status == InterviewStatus.PREPARING
+            and session.failure_code == INTERVIEW_QUEUE_FAILURE_CODE
+        )
+
+    async def _enqueue_preparation(
+        self,
+        session: InterviewSession,
+        user_id: UUID,
+        queue: InterviewPreparationTaskQueuePort,
+    ) -> InterviewSession:
+        queued, _ = await self._repository.begin_preparing(session.id, user_id)
+        try:
+            await queue.enqueue_interview_preparation(
+                InterviewPreparationJob(
+                    session_id=session.id,
+                    user_id=user_id,
+                    request_id=session.request_id or f"interview:{session.id}",
+                )
+            )
+        except Exception as exc:
+            try:
+                await self._repository.release_preparation_for_retry(session.id, user_id)
+            except Exception as release_exc:
+                raise InterviewPreparationQueueUnavailableError(
+                    "Interview preparation is temporarily unavailable"
+                ) from release_exc
+            raise InterviewPreparationQueueUnavailableError(
+                "Interview preparation is temporarily unavailable"
+            ) from exc
+        return queued
 
     async def prepare(self, user_id: UUID, session_id: UUID) -> InterviewSession:
         await self.get_session(user_id, session_id)

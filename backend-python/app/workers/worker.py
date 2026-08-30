@@ -18,6 +18,7 @@ from app.infrastructure.storage.files import LocalFileStorage
 from app.infrastructure.storage.pdf import PypdfPdfParser
 from app.infrastructure.vectorstore.retriever import PgVectorRetriever
 from app.infrastructure.vectorstore.sqlalchemy import SqlAlchemyVectorStore
+from app.modules.auth.models import UserModel  # noqa: F401
 from app.modules.interview.context import InterviewContextProvider
 from app.modules.interview.domain import InterviewStatus
 from app.modules.interview.exceptions import RetryableInterviewPreparationError

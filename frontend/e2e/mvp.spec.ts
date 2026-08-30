@@ -204,7 +204,7 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     },
   );
   expect(createInterviewResponse.status()).toBe(201);
-  expect(["PREPARING", "READY"]).toContain(createdSession.status);
+  expect(createdSession.status).toBe("PREPARING");
   const sessionId = createdSession.sessionId as string;
   expect(sessionId).toBeTruthy();
   await expect
@@ -374,6 +374,64 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   await expect(page.getByText("简历得分", { exact: true })).toBeVisible();
   await expect(page.getByText(String(resumeScore), { exact: true }).first()).toBeVisible();
   await expect(page.getByText("简历匹配度", { exact: true }).first()).toBeVisible();
+
+  const { response: earlyCreateResponse, body: earlyCreatedSession } = await apiPost(
+    "/api/xunzhi/v1/interview/sessions",
+    {
+      knowledgeBaseId: selectedBase.id,
+      jobTitle: "后端工程师",
+      jobDescription: "负责服务端开发、稳定性建设和性能优化。",
+      interviewType: "TECHNICAL",
+      difficulty: "MEDIUM",
+      questionCount: 3,
+      requestId: `interview-early-${unique}`,
+    },
+  );
+  expect(earlyCreateResponse.status()).toBe(201);
+  expect(earlyCreatedSession.status).toBe("PREPARING");
+  const earlySessionId = earlyCreatedSession.sessionId as string;
+  await expect
+    .poll(async () => (await apiGet(`/api/xunzhi/v1/interview/sessions/${earlySessionId}`)).status, {
+      timeout: 60_000,
+      intervals: [500, 1000, 2000],
+    })
+    .toBe("READY");
+
+  await page.goto(`/interview/room/${earlySessionId}`);
+  const { response: earlyStartResponse, body: earlyStartedSession } = await apiPost(
+    `/api/xunzhi/v1/interview/sessions/${earlySessionId}/start`,
+  );
+  expect(earlyStartResponse.ok()).toBeTruthy();
+  expect(earlyStartedSession.status).toBe("IN_PROGRESS");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "结束面试", exact: true })).toBeVisible();
+
+  const earlyTurn = await apiGet(
+    `/api/xunzhi/v1/interview/sessions/${earlySessionId}/current-turn`,
+  );
+  const earlyTurnId = earlyTurn.turnId as string;
+  const earlyComposer = page.locator('textarea[placeholder="输入你的回答，或点击麦克风开始语音作答..."]');
+  await earlyComposer.fill("这是提前结束流程的测试回答。");
+  await earlyComposer.press("Enter");
+  await expect
+    .poll(async () => (await apiGet(`/api/xunzhi/v1/interview/sessions/${earlySessionId}/turns/${earlyTurnId}`)).status, {
+      timeout: 60_000,
+      intervals: [500, 1000, 2000],
+    })
+    .toBe("COMPLETED");
+
+  const finishResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith(`/sessions/${earlySessionId}/finish`),
+  );
+  await page.getByRole("button", { name: "结束面试", exact: true }).click();
+  const finishResponse = await finishResponsePromise;
+  expect(finishResponse.ok()).toBeTruthy();
+  await expect(page).toHaveURL(
+    new RegExp(`/interview/report\\?sessionId=${earlySessionId}$`),
+  );
+  await expect(page.getByText("面试表现报告", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "用户菜单" }).click();
   await page.getByRole("button", { name: "退出登录" }).click();

@@ -232,7 +232,7 @@ export interface components {
       "preparedAt"?: string | null;
       "preparationQueuedAt"?: string | null;
       "preparationStartedAt"?: string | null;
-      "preparationAttemptCount": number;
+      "preparationAttemptCount"?: number;
       "startedAt"?: string | null;
       "finishedAt"?: string | null;
       "resumeScore"?: number | null;

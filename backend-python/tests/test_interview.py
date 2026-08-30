@@ -139,6 +139,15 @@ class InMemoryInterviewRepository:
         )
         return session, True
 
+    async def release_preparation_for_retry(
+        self, session_id: UUID, user_id: UUID
+    ) -> InterviewSession:
+        session = self.sessions[session_id]
+        assert session.user_id == user_id
+        session.failure_code = "INTERVIEW_QUEUE_UNAVAILABLE"
+        session.failure_message = "Interview preparation is waiting to be rescheduled"
+        return session
+
     async def persist_questions_and_ready(
         self, session_id: UUID, user_id: UUID, questions: list[InterviewQuestion]
     ) -> InterviewSession:
@@ -582,6 +591,18 @@ class FailingInterviewPreparationQueue:
         raise RuntimeError("redis unavailable")
 
 
+class FailOnceInterviewPreparationQueue:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.jobs: list[InterviewPreparationJob] = []
+
+    async def enqueue_interview_preparation(self, job: InterviewPreparationJob) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("redis unavailable")
+        self.jobs.append(job)
+
+
 def _context() -> InterviewContext:
     return InterviewContext(
         prompt="resume context",
@@ -751,25 +772,40 @@ async def test_interview_creation_enqueues_preparation_and_returns_immediately()
 
 
 @pytest.mark.asyncio
-async def test_interview_queue_failure_is_safe_and_does_not_run_generator() -> None:
+async def test_interview_queue_failure_leaves_session_recoverable() -> None:
     user_id, base_id = uuid4(), uuid4()
     repository = InMemoryInterviewRepository()
     provider = FakeInterviewContextProvider(_context())
     generator = FakeInterviewQuestionGenerator()
-    service = InterviewService(
-        repository,
-        provider,
-        generator,
-        FailingInterviewPreparationQueue(),
-        Settings(),
-    )
+    queue = FailingInterviewPreparationQueue()
+    service = InterviewService(repository, provider, generator, queue, Settings())
 
     with pytest.raises(InterviewPreparationQueueUnavailableError):
         await service.create_session(**_create_args(user_id, base_id, "queue-failure"))
 
-    failed = next(iter(repository.sessions.values()))
-    assert failed.status == InterviewStatus.FAILED
-    assert failed.failure_code == "INTERVIEW_QUEUE_FAILED"
+    queued = next(iter(repository.sessions.values()))
+    assert queued.status == InterviewStatus.PREPARING
+    assert queued.failure_code == "INTERVIEW_QUEUE_UNAVAILABLE"
+    assert generator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_retrying_same_request_requeues_recoverable_preparation() -> None:
+    user_id, base_id = uuid4(), uuid4()
+    repository = InMemoryInterviewRepository()
+    provider = FakeInterviewContextProvider(_context())
+    generator = FakeInterviewQuestionGenerator()
+    queue = FailOnceInterviewPreparationQueue()
+    service = InterviewService(repository, provider, generator, queue, Settings())
+
+    with pytest.raises(InterviewPreparationQueueUnavailableError):
+        await service.create_session(**_create_args(user_id, base_id, "retry-queue"))
+
+    recovered = await service.create_session(**_create_args(user_id, base_id, "retry-queue"))
+
+    assert recovered.status == InterviewStatus.PREPARING
+    assert queue.calls == 2
+    assert len(queue.jobs) == 1
     assert generator.calls == 0
 
 
