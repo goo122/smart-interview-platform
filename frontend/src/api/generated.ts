@@ -401,6 +401,29 @@ export interface components {
       "maxFrameBytes": number;
       "maxAudioBytes": number;
     };
+    TtsCapabilitiesResponse: {
+      "available": boolean;
+      "provider": string;
+      "supportedAudioFormats": Array<string>;
+      "supportedVoices": Array<string>;
+      "maxTextLength": number;
+      "supportsStreaming": boolean;
+    };
+    TtsTaskResponse: {
+      "sid"?: string | null;
+      "taskId": string;
+      "taskStatus"?: string;
+      "code"?: number;
+      "message"?: string;
+      "audioBase64": string;
+      "audioUrl"?: null;
+      "pybufContent"?: null;
+      "pybufUrl"?: null;
+      "audioFormat": string;
+      "contentType": string;
+      "completed"?: boolean;
+      "success"?: boolean;
+    };
   };
 }
 
@@ -446,3 +469,5 @@ export type InterviewReportResponse = components["schemas"]["InterviewReportResp
 export type ResumeEvaluationSnapshotResponse = components["schemas"]["ResumeEvaluationSnapshotResponse"];
 export type InterviewReportPage = components["schemas"]["InterviewReportPage"];
 export type SpeechCapabilitiesResponse = components["schemas"]["SpeechCapabilitiesResponse"];
+export type TtsCapabilitiesResponse = components["schemas"]["TtsCapabilitiesResponse"];
+export type TtsTaskResponse = components["schemas"]["TtsTaskResponse"];

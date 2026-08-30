@@ -25,6 +25,16 @@ const createSyntheticPdf = () => {
 };
 
 test("completes the MVP loop with fake providers", async ({ page }) => {
+  await page.addInitScript(() => {
+    const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
+    URL.revokeObjectURL = (url: string) => {
+      const count = Number(
+        window.localStorage.getItem("__tts_revoke_count") || "0",
+      );
+      window.localStorage.setItem("__tts_revoke_count", String(count + 1));
+      revokeObjectUrl(url);
+    };
+  });
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const username = `e2e_${unique}`;
   const email = `${username}@example.test`;
@@ -103,6 +113,46 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     });
     return { response, body: (await response.json()) as Record<string, unknown> };
   };
+
+  const ttsCapabilities = await apiGet(
+    "/api/xunzhi/v1/speech/tts/capabilities",
+  );
+  expect(ttsCapabilities.available).toBe(true);
+  expect(ttsCapabilities.provider).toBe("fake");
+  expect(ttsCapabilities.supportedAudioFormats).toContain("wav");
+  const ttsSynthesis = await apiPost(
+    "/api/xunzhi/v1/xunfei/tts/synthesize",
+    { text: "浏览器 TTS E2E", requestId: `tts-${unique}` },
+  );
+  expect(ttsSynthesis.response.ok()).toBeTruthy();
+  expect(ttsSynthesis.response.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(ttsSynthesis.response.headers()["cache-control"]).toBe("no-store");
+  const ttsAudioBase64 = ttsSynthesis.body.audioBase64 as string;
+  const ttsAudio = Buffer.from(ttsAudioBase64, "base64");
+  expect(ttsAudio.subarray(0, 4).toString("ascii")).toBe("RIFF");
+  expect(ttsAudio.subarray(8, 12).toString("ascii")).toBe("WAVE");
+  expect(ttsSynthesis.body.contentType).toBe("audio/wav");
+
+  const oversizedTtsResponse = await page.request.post(
+    apiUrl("/api/xunzhi/v1/xunfei/tts/synthesize"),
+    {
+      headers,
+      data: { text: "a".repeat(300_000), requestId: `tts-oversized-${unique}` },
+    },
+  );
+  expect(oversizedTtsResponse.status()).toBe(413);
+
+  const ttsRequests: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/xunfei/tts/synthesize")
+    ) {
+      ttsRequests.push(request.url());
+    }
+  });
 
   const unauthorizedResponse = await page.request.get(
     apiUrl("/api/xunzhi/v1/ai-properties?isEnabled=1&size=100"),
@@ -202,6 +252,33 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   expect(startResponse.ok()).toBeTruthy();
   expect(startedSession.status).toBe("IN_PROGRESS");
 
+  const questionAudioButton = page
+    .locator('button[aria-label="播放题目播报"], button[aria-label="暂停题目播报"]')
+    .first();
+  await expect(questionAudioButton).toBeVisible({ timeout: 60_000 });
+  if ((await questionAudioButton.getAttribute("aria-label")) === "暂停题目播报") {
+    await questionAudioButton.click();
+    await expect(questionAudioButton).toHaveAttribute("aria-label", "播放题目播报");
+  }
+  await questionAudioButton.click();
+  const audioElement = page.locator('audio[data-tts-playback="true"]');
+  await expect(audioElement).toBeAttached();
+  await expect
+    .poll(() => audioElement.evaluate((audio) => audio.readyState), {
+      timeout: 10_000,
+    })
+    .toBeGreaterThanOrEqual(3);
+  await expect
+    .poll(() => ttsRequests.length, { timeout: 10_000 })
+    .toBeLessThanOrEqual(1);
+  const requestsAfterFirstPlay = ttsRequests.length;
+  await expect(questionAudioButton).toHaveAttribute("aria-label", /播放|暂停/);
+  if ((await questionAudioButton.getAttribute("aria-label")) === "暂停题目播报") {
+    await questionAudioButton.click();
+  }
+  await questionAudioButton.click();
+  await expect.poll(() => ttsRequests.length, { timeout: 10_000 }).toBe(requestsAfterFirstPlay);
+
   const seenTurns = new Set<string>();
   let completedSession = false;
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -276,7 +353,15 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   const reports = await apiGet("/api/xunzhi/v1/interview/reports?current=1&size=20");
   expect(reports.records.some((item: Record<string, string>) => item.sessionId === sessionId)).toBeTruthy();
 
+  const revokedBeforeReport = await page.evaluate(() =>
+    Number(localStorage.getItem("__tts_revoke_count") || "0"),
+  );
   await page.goto(`/interview/report?sessionId=${encodeURIComponent(sessionId)}`);
+  await expect
+    .poll(() =>
+      page.evaluate(() => Number(localStorage.getItem("__tts_revoke_count") || "0")),
+    )
+    .toBeGreaterThan(revokedBeforeReport);
   await expect(page.getByText("简历得分", { exact: true })).toBeVisible();
   await expect(page.getByText(String(resumeScore), { exact: true }).first()).toBeVisible();
   await expect(page.getByText("简历匹配度", { exact: true }).first()).toBeVisible();

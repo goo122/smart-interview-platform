@@ -73,12 +73,30 @@ describe("useChatTtsAudioCache", () => {
         success: true,
         audioBase64: "QQ==",
         audioUrl: null,
+        audioFormat: "wav",
+        contentType: "audio/wav",
       },
       new AbortController().signal,
     );
 
     expect(objectUrl).toBe("blob:tts-audio");
     expect(createObjectUrlMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("revokes a replaced cache entry and prunes deleted messages", () => {
+    const { result } = renderHook(() => useChatTtsAudioCache());
+    const first = createMessage("m-replace");
+    const second = createMessage("m-delete");
+
+    result.current.cacheObjectUrl(first, "blob:old");
+    result.current.cacheObjectUrl(first, "blob:new");
+    result.current.cacheObjectUrl(second, "blob:delete");
+    result.current.pruneCachedObjectUrls([first]);
+
+    expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:old");
+    expect(revokeObjectUrlMock).toHaveBeenCalledWith("blob:delete");
+    expect(result.current.getCachedObjectUrl(first)).toBe("blob:new");
+    expect(result.current.getCachedObjectUrl(second)).toBeUndefined();
   });
 
   it("downloads remote audio when no base64 payload is present", async () => {

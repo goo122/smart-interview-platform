@@ -5,6 +5,8 @@ import ChatBubble from "@/components/chat/ChatBubble";
 import { type ChatMessage } from "@/lib/chat";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useChatTtsPlayback } from "@/hooks/audio/useChatTtsPlayback";
+import { useTtsCapabilities } from "@/hooks/audio/useTtsCapabilities";
+import { useAppSelector } from "@/store/hooks";
 
 type ChatListProps = {
   messages: ChatMessage[];
@@ -20,13 +22,26 @@ function ChatList({
   className,
 }: ChatListProps) {
   const scrollRef = useAutoScroll(messages);
-  const { loadingMessageId, playingMessageId, toggleMessagePlayback } =
-    useChatTtsPlayback(messages);
+  const { currentUser } = useAppSelector((state) => state.user);
+  const ttsCapabilities = useTtsCapabilities(currentUser);
+  const ttsAvailable = Boolean(ttsCapabilities.capabilities?.available);
+  const {
+    loadingMessageId,
+    playingMessageId,
+    errorMessage,
+    errorMessageId,
+    toggleMessagePlayback,
+  } = useChatTtsPlayback(messages, { enabled: ttsAvailable });
 
   return (
     <ScrollArea className={className} ref={scrollRef}>
       <div className="max-w-3xl mx-auto space-y-6 pb-20 ">
         {topContent}
+        {ttsCapabilities.availabilityMessage ? (
+          <p className="text-xs text-slate-500" role="status">
+            {ttsCapabilities.availabilityMessage}
+          </p>
+        ) : null}
         <AnimatePresence initial={false}>
           {messages.map((msg) => (
             <motion.div
@@ -47,8 +62,11 @@ function ChatList({
                 isTtsLoading={loadingMessageId === msg.id}
                 isTtsPlaying={playingMessageId === msg.id}
                 onTtsToggle={
-                  msg.tts ? () => toggleMessagePlayback(msg) : undefined
+                  msg.tts && ttsAvailable
+                    ? () => toggleMessagePlayback(msg)
+                    : undefined
                 }
+                ttsError={errorMessageId === msg.id ? errorMessage : null}
                 progressSteps={msg.progressSteps}
                 activeProgressStep={msg.activeProgressStep}
                 citations={msg.citations}

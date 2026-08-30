@@ -146,6 +146,11 @@ const selected = [
     exportName: "SpeechCapabilitiesResponse",
     schemaName: "SpeechCapabilitiesResponse",
   },
+  {
+    exportName: "TtsCapabilitiesResponse",
+    schemaName: "TtsCapabilitiesResponse",
+  },
+  { exportName: "TtsTaskResponse", schemaName: "TtsTaskResponse" },
 ];
 
 const exportNameBySchema = new Map(selected.map((entry) => [entry.schemaName, entry.exportName]));

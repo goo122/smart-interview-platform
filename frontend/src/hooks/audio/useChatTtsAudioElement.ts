@@ -40,8 +40,12 @@ export function useChatTtsAudioElement({
     if (!audioRef.current) {
       const audio = new Audio();
       audio.preload = "auto";
+      audio.dataset.ttsPlayback = "true";
+      audio.setAttribute("aria-hidden", "true");
+      audio.style.display = "none";
       audio.onended = onPlaybackEnded;
       audio.onerror = onPlaybackEnded;
+      document.body.appendChild(audio);
       audioRef.current = audio;
     }
 
@@ -160,6 +164,7 @@ export function useChatTtsAudioElement({
 
     audio.pause();
     audio.src = "";
+    audio.remove();
     audioRef.current = null;
   }, []);
 

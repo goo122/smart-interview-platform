@@ -276,6 +276,21 @@ tests.
 The authenticated speech capability endpoint is:
 
 - `GET /api/xunzhi/v1/speech/capabilities`
+- `GET /api/xunzhi/v1/speech/tts/capabilities`
+- `POST /api/xunzhi/v1/xunfei/tts/synthesize`
+- `POST /api/xunzhi/v1/xunfei/tts/tasks`
+- `GET /api/xunzhi/v1/xunfei/tts/tasks/{task_id}`
+
+### Text-to-speech
+
+TTS is selected with `APP_TEXT_TO_SPEECH_PROVIDER`. `fake` returns a short,
+browser-playable WAV and is intended for local development, tests and the E2E
+compose profile. `unavailable` is the safe default and returns a generic 503.
+`xunfei` uses the server-only `APP_XUNFEI_TTS_APP_ID`,
+`APP_XUNFEI_TTS_API_KEY`, `APP_XUNFEI_TTS_API_SECRET` and
+`APP_XUNFEI_TTS_URL` settings. Credentials are never returned to clients or
+written to logs. The task endpoints are compatibility endpoints backed by
+short-lived in-memory completed results; they are not a persistent job queue.
 
 The browser streaming endpoint remains:
 

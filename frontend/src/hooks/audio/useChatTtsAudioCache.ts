@@ -16,7 +16,32 @@ export function useChatTtsAudioCache() {
 
   const cacheObjectUrl = useCallback(
     (message: ChatMessage, objectUrl: string) => {
-      preparedObjectUrlMapRef.current.set(getPreparedAudioKey(message), objectUrl);
+      const key = getPreparedAudioKey(message);
+      const previousObjectUrl = preparedObjectUrlMapRef.current.get(key);
+      if (previousObjectUrl && previousObjectUrl !== objectUrl) {
+        URL.revokeObjectURL(previousObjectUrl);
+      }
+      preparedObjectUrlMapRef.current.set(key, objectUrl);
+    },
+    [getPreparedAudioKey],
+  );
+
+  const releaseUncachedObjectUrl = useCallback((objectUrl: string | null) => {
+    if (!objectUrl || [...preparedObjectUrlMapRef.current.values()].includes(objectUrl)) {
+      return;
+    }
+    URL.revokeObjectURL(objectUrl);
+  }, []);
+
+  const pruneCachedObjectUrls = useCallback(
+    (messages: ChatMessage[]) => {
+      const activeKeys = new Set(messages.map(getPreparedAudioKey));
+      for (const [key, objectUrl] of preparedObjectUrlMapRef.current) {
+        if (!activeKeys.has(key)) {
+          URL.revokeObjectURL(objectUrl);
+          preparedObjectUrlMapRef.current.delete(key);
+        }
+      }
     },
     [getPreparedAudioKey],
   );
@@ -48,7 +73,9 @@ export function useChatTtsAudioCache() {
 
         return URL.createObjectURL(
           new Blob([byteArray], {
-            type: "audio/mpeg",
+            type:
+              task.contentType ||
+              (task.audioFormat === "wav" ? "audio/wav" : "audio/mpeg"),
           }),
         );
       }
@@ -77,7 +104,8 @@ export function useChatTtsAudioCache() {
           type:
             contentType && contentType !== "application/octet-stream"
               ? contentType
-              : "audio/mpeg",
+              : task.contentType ||
+                (task.audioFormat === "wav" ? "audio/wav" : "audio/mpeg"),
         }),
       );
     },
@@ -97,6 +125,8 @@ export function useChatTtsAudioCache() {
       getCachedObjectUrl,
       cacheObjectUrl,
       removeCachedObjectUrl,
+      releaseUncachedObjectUrl,
+      pruneCachedObjectUrls,
       resolvePlayableAudioUrl,
       revokePreparedObjectUrls,
     }),
@@ -104,7 +134,9 @@ export function useChatTtsAudioCache() {
       cacheObjectUrl,
       getCachedObjectUrl,
       getPreparedAudioKey,
+      pruneCachedObjectUrls,
       removeCachedObjectUrl,
+      releaseUncachedObjectUrl,
       resolvePlayableAudioUrl,
       revokePreparedObjectUrls,
     ],

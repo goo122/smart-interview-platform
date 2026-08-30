@@ -8,7 +8,18 @@ import { useChatTtsAudioCache } from "@/hooks/audio/useChatTtsAudioCache";
 import { useChatTtsAudioElement } from "@/hooks/audio/useChatTtsAudioElement";
 import { xunfeiTtsService } from "@/services/xunfeiTtsService";
 
-export function useChatTtsPlayback(messages: ChatMessage[]) {
+const isAutoplayBlockedError = (error: unknown) =>
+  (error instanceof DOMException && error.name === "NotAllowedError") ||
+  (error instanceof Error && error.name === "NotAllowedError");
+
+type TtsPlaybackOptions = {
+  enabled?: boolean;
+};
+
+export function useChatTtsPlayback(
+  messages: ChatMessage[],
+  { enabled = true }: TtsPlaybackOptions = {},
+) {
   const loadingControllerRef = useRef<AbortController | null>(null);
   const autoPlayedMessageIdsRef = useRef(new Set<string>());
   const activeMessageIdRef = useRef<string | null>(null);
@@ -16,6 +27,8 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
 
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
   const [loadingMessageId, setLoadingMessageId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessageId, setErrorMessageId] = useState<string | null>(null);
 
   const clearPlaybackState = useCallback(() => {
     activeMessageIdRef.current = null;
@@ -28,6 +41,8 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
     getCachedObjectUrl,
     cacheObjectUrl,
     removeCachedObjectUrl,
+    releaseUncachedObjectUrl,
+    pruneCachedObjectUrls,
     resolvePlayableAudioUrl,
     revokePreparedObjectUrls,
   } = useChatTtsAudioCache();
@@ -41,20 +56,44 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
     onPlaybackEnded: clearPlaybackState,
   });
 
+  const releaseActiveObjectUrl = useCallback(() => {
+    releaseUncachedObjectUrl(activeObjectUrlRef.current);
+    activeObjectUrlRef.current = null;
+  }, [releaseUncachedObjectUrl]);
+
   const stopPlayback = useCallback(() => {
     loadingControllerRef.current?.abort();
     loadingControllerRef.current = null;
+    releaseActiveObjectUrl();
     resetAudioElement();
     clearPlaybackState();
-  }, [clearPlaybackState, resetAudioElement]);
+  }, [clearPlaybackState, releaseActiveObjectUrl, resetAudioElement]);
+
+  const releaseTtsResources = useCallback(() => {
+    stopPlayback();
+    disposeAudioElement();
+    activeObjectUrlRef.current = null;
+    revokePreparedObjectUrls();
+  }, [disposeAudioElement, revokePreparedObjectUrls, stopPlayback]);
 
   const playPreparedObjectUrl = useCallback(
-    async (messageId: string, objectUrl: string) => {
+    async (
+      messageId: string,
+      objectUrl: string,
+      controller: AbortController,
+    ) => {
       activeObjectUrlRef.current = objectUrl;
       await playObjectUrl(objectUrl);
+      if (
+        controller.signal.aborted ||
+        loadingControllerRef.current !== controller
+      ) {
+        return false;
+      }
       activeMessageIdRef.current = messageId;
       setPlayingMessageId(messageId);
       setLoadingMessageId(null);
+      return true;
     },
     [playObjectUrl],
   );
@@ -65,7 +104,7 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
       options?: { userInitiated?: boolean; forceRefresh?: boolean },
     ) => {
       const ttsText = message.tts?.text?.trim() || message.content.trim();
-      if (!message.tts || !ttsText) {
+      if (!enabled || !message.tts || !ttsText) {
         return;
       }
 
@@ -74,11 +113,13 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
 
       loadingControllerRef.current?.abort();
       loadingControllerRef.current = controller;
+      releaseActiveObjectUrl();
       resetAudioElement();
-      activeObjectUrlRef.current = null;
       activeMessageIdRef.current = messageId;
       setLoadingMessageId(messageId);
       setPlayingMessageId(null);
+      setErrorMessage(null);
+      setErrorMessageId(null);
 
       try {
         if (options?.userInitiated) {
@@ -94,13 +135,12 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
           : getCachedObjectUrl(message);
         if (cachedObjectUrl) {
           try {
-            await playPreparedObjectUrl(messageId, cachedObjectUrl);
+            await playPreparedObjectUrl(messageId, cachedObjectUrl, controller);
             return;
           } catch (error) {
-            if (isAbortError(error)) {
+            if (isAbortError(error) || isAutoplayBlockedError(error)) {
               throw error;
             }
-
             removeCachedObjectUrl(message);
           }
         }
@@ -109,42 +149,49 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
           {
             ...INTERVIEW_QUESTION_TTS_REQUEST,
             text: ttsText,
+            requestId: `message-${message.tts?.cacheKey || message.id}`.slice(0, 128),
           },
           { signal: controller.signal },
         );
-        const objectUrl = await resolvePlayableAudioUrl(
-          task,
-          controller.signal,
-        );
-        activeObjectUrlRef.current = objectUrl;
+        const objectUrl = await resolvePlayableAudioUrl(task, controller.signal);
 
-        if (controller.signal.aborted) {
+        if (
+          controller.signal.aborted ||
+          loadingControllerRef.current !== controller
+        ) {
+          releaseUncachedObjectUrl(objectUrl);
           return;
         }
 
-        await playPreparedObjectUrl(messageId, objectUrl);
-        cacheObjectUrl(message, objectUrl);
+        const played = await playPreparedObjectUrl(
+          messageId,
+          objectUrl,
+          controller,
+        );
+        if (!played) {
+          releaseUncachedObjectUrl(objectUrl);
+          return;
+        }
 
+        cacheObjectUrl(message, objectUrl);
         if (controller.signal.aborted) {
           audioRef.current?.pause();
         }
       } catch (error) {
         if (!isAbortError(error)) {
-          console.error("Failed to play TTS audio:", error);
-          if (
-            error instanceof DOMException &&
-            error.name === "NotAllowedError"
-          ) {
-            console.warn(
-              "Audio playback was blocked by the browser. Click the play button again after the audio finishes loading.",
-            );
-          }
+          setErrorMessage(
+            isAutoplayBlockedError(error)
+              ? "浏览器阻止了自动播放，请点击播放按钮重试。"
+              : "语音播放失败，请稍后重试。",
+          );
+          setErrorMessageId(messageId);
         }
 
         if (
           loadingControllerRef.current === controller ||
           activeMessageIdRef.current === messageId
         ) {
+          releaseActiveObjectUrl();
           clearPlaybackState();
         }
       } finally {
@@ -157,9 +204,12 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
       audioRef,
       cacheObjectUrl,
       clearPlaybackState,
+      enabled,
       getCachedObjectUrl,
       playPreparedObjectUrl,
       primePlaybackFromGesture,
+      releaseActiveObjectUrl,
+      releaseUncachedObjectUrl,
       removeCachedObjectUrl,
       resetAudioElement,
       resolvePlayableAudioUrl,
@@ -168,21 +218,28 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
 
   const toggleMessagePlayback = useCallback(
     (message: ChatMessage) => {
+      if (!enabled) {
+        return;
+      }
       if (playingMessageId === message.id) {
         stopPlayback();
         return;
       }
-
       if (loadingMessageId === message.id) {
         stopPlayback();
+        return;
       }
-
-      void playMessage(message, { userInitiated: true, forceRefresh: true });
+      void playMessage(message, { userInitiated: true });
     },
-    [loadingMessageId, playMessage, playingMessageId, stopPlayback],
+    [enabled, loadingMessageId, playMessage, playingMessageId, stopPlayback],
   );
 
   useEffect(() => {
+    if (!enabled) {
+      stopPlayback();
+      return;
+    }
+
     const latestAutoPlayMessage = [...messages]
       .reverse()
       .find(
@@ -198,7 +255,7 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
 
     autoPlayedMessageIdsRef.current.add(latestAutoPlayMessage.id);
     void playMessage(latestAutoPlayMessage);
-  }, [messages, playMessage]);
+  }, [enabled, messages, playMessage, stopPlayback]);
 
   useEffect(() => {
     const activeMessageId = activeMessageIdRef.current;
@@ -212,19 +269,24 @@ export function useChatTtsPlayback(messages: ChatMessage[]) {
     }
   }, [messages, stopPlayback]);
 
-  useEffect(
-    () => () => {
-      stopPlayback();
-      disposeAudioElement();
-      activeObjectUrlRef.current = null;
-      revokePreparedObjectUrls();
-    },
-    [disposeAudioElement, revokePreparedObjectUrls, stopPlayback],
-  );
+  useEffect(() => {
+    pruneCachedObjectUrls(messages);
+  }, [messages, pruneCachedObjectUrls]);
+
+  useEffect(() => {
+    window.addEventListener("pagehide", releaseTtsResources);
+    return () => {
+      window.removeEventListener("pagehide", releaseTtsResources);
+      releaseTtsResources();
+    };
+  }, [releaseTtsResources]);
 
   return {
     loadingMessageId,
     playingMessageId,
+    errorMessage,
+    errorMessageId,
+    ttsAvailable: enabled,
     stopPlayback,
     toggleMessagePlayback,
   };

@@ -21,6 +21,7 @@ services:
       APP_AI_PROVIDER: fake
       APP_EMBEDDING_PROVIDER: fake
       APP_SPEECH_TO_TEXT_PROVIDER: fake
+      APP_TEXT_TO_SPEECH_PROVIDER: fake
       APP_AI_FAKE_MODE: follow_up
       APP_DATABASE_URL: postgresql+asyncpg://postgres:e2e-only@postgres:5432/ai_interview
       APP_REDIS_URL: redis://redis:6379/0

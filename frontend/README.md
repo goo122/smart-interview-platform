@@ -49,6 +49,13 @@ Axios 客户端会自动附加 Bearer Token，并使用 single-flight 机制刷�
 后端 `APP_SPEECH_TO_TEXT_PROVIDER=unavailable` 时安全禁用麦克风；开发/测试可使用
 `fake`，生产环境会拒绝 Fake Provider。真实讯飞模式使用 `xunfei`，并且只从后端环境变量读取凭据。
 
+## 语音合成
+
+登录后页面会查询 `GET /api/xunzhi/v1/speech/tts/capabilities`。可播放的 AI 消息通过
+`POST /api/xunzhi/v1/xunfei/tts/synthesize` 获取短期音频结果；当前前端支持播放、暂停、重播，
+同一消息会复用 Object URL 缓存，不会自动提交。`fake` Provider 返回浏览器可播放的 WAV，
+`unavailable` 会隐藏播放按钮；真实讯飞凭据只保存在后端环境变量中。切换会话、删除消息、退出登录和页面卸载时会释放音频资源。
+
 ## 模拟面试创建与面试房间
 
 `/interview` 会从 `/api/xunzhi/v1/knowledge-bases` 及其文档接口筛选至少包含一个 `READY` 文档的知识库。创建请求使用后端 OpenAPI 类型，字段包括 `knowledgeBaseId`、`jobTitle`、`jobDescription`、`interviewType`、`difficulty`、`questionCount` 和稳定的 `requestId`，成功后进入 `/interview/:sessionId`。

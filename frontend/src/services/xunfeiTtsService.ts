@@ -14,6 +14,7 @@ export type CreateXunfeiTtsTaskParams = {
   sampleRate?: number;
   timeoutSeconds?: number;
   pollIntervalMs?: number;
+  requestId?: string;
 };
 
 export type XunfeiTtsTaskResult = {
@@ -28,11 +29,19 @@ export type XunfeiTtsTaskResult = {
   pybufUrl?: string | null;
   completed?: boolean;
   success?: boolean;
+  audioFormat?: string | null;
+  contentType?: string | null;
 };
 
 type RequestOptions = {
   signal?: AbortSignal;
+  timeoutMs?: number;
 };
+
+const buildRequestConfig = (params: CreateXunfeiTtsTaskParams, options?: RequestOptions) => ({
+  signal: options?.signal,
+  timeout: options?.timeoutMs ?? Math.ceil((params.timeoutSeconds ?? 90) * 1000) + 5_000,
+});
 
 const toTrimmedString = (value: unknown) => {
   if (typeof value !== "string" && typeof value !== "number") {
@@ -86,6 +95,8 @@ export const normalizeTaskResult = (
     audioUrl,
     pybufContent: toTrimmedString(payload.pybufContent) ?? null,
     pybufUrl: toTrimmedString(payload.pybufUrl) ?? null,
+    audioFormat: toTrimmedString(payload.audioFormat) ?? null,
+    contentType: toTrimmedString(payload.contentType) ?? null,
     completed,
     success,
   };
@@ -103,7 +114,7 @@ export const xunfeiTtsService = {
       XunfeiTtsTaskResult,
       CreateXunfeiTtsTaskParams
     >("/xunzhi/v1/xunfei/tts/tasks", params, {
-      signal: options?.signal,
+      ...buildRequestConfig(params, options),
     });
     return normalizeTaskResult(response);
   },
@@ -126,7 +137,7 @@ export const xunfeiTtsService = {
       XunfeiTtsTaskResult,
       CreateXunfeiTtsTaskParams
     >("/xunzhi/v1/xunfei/tts/synthesize", params, {
-      signal: options?.signal,
+      ...buildRequestConfig(params, options),
     });
     const task = normalizeTaskResult(response);
 

@@ -54,6 +54,14 @@ APP_EMBEDDING_DIMENSIONS=1536
 Fake 仅限 development/test，真实讯飞凭据只配置在后端环境变量中；自动化测试使用 Fake，
 不会连接讯飞或产生费用。
 
+### 语音合成（TTS）
+
+登录后可查询 `GET /api/xunzhi/v1/speech/tts/capabilities`，并通过兼容的
+`POST /api/xunzhi/v1/xunfei/tts/synthesize` 合成消息音频。默认的
+`APP_TEXT_TO_SPEECH_PROVIDER=unavailable` 会安全拒绝请求；本地测试和 E2E 使用 `fake`，
+返回浏览器可播放的短 WAV。真实讯飞模式只在后端配置 `APP_XUNFEI_TTS_APP_ID`、
+`APP_XUNFEI_TTS_API_KEY`、`APP_XUNFEI_TTS_API_SECRET` 后启用，凭据不会返回给前端或提交到 Git。
+
 ## Docker Compose 启动
 
 ```powershell

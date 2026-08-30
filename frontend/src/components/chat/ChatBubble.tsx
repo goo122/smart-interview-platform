@@ -25,6 +25,7 @@ type ChatBubbleProps = {
   isTtsPlaying?: boolean;
   isTtsLoading?: boolean;
   onTtsToggle?: () => void;
+  ttsError?: string | null;
   progressSteps?: string[];
   activeProgressStep?: number;
   citations?: AiCitation[];
@@ -40,6 +41,7 @@ export default function ChatBubble({
   isTtsPlaying = false,
   isTtsLoading = false,
   onTtsToggle,
+  ttsError,
   progressSteps,
   activeProgressStep = 0,
   citations,
@@ -155,6 +157,11 @@ export default function ChatBubble({
                   </div>
                 ) : null}
               </div>
+              {shouldRenderTtsControl && ttsError ? (
+                <p className="mt-1 text-xs text-amber-700" role="status">
+                  {ttsError}
+                </p>
+              ) : null}
             </div>
           )
         ) : null}
