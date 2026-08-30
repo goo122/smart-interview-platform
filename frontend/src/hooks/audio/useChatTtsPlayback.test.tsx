@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { StrictMode, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/lib/chat";
 
@@ -19,6 +20,9 @@ const mocks = vi.hoisted(() => {
   const getCachedObjectUrl = vi.fn((message: ChatMessage) =>
     cachedUrls.get(message.tts?.cacheKey || message.id),
   );
+  const getPreparedAudioKey = vi.fn(
+    (message: ChatMessage) => message.tts?.cacheKey || message.id,
+  );
   return {
     cachedUrls,
     synthesize,
@@ -30,6 +34,7 @@ const mocks = vi.hoisted(() => {
     removeCachedObjectUrl,
     cacheObjectUrl,
     getCachedObjectUrl,
+    getPreparedAudioKey,
     audioRef: { current: { pause: vi.fn() } as unknown as HTMLAudioElement },
     pruneCachedObjectUrls: vi.fn(),
     revokePreparedObjectUrls: vi.fn(),
@@ -46,6 +51,7 @@ vi.mock("@/services/xunfeiTtsService", () => ({
 vi.mock("@/hooks/audio/useChatTtsAudioCache", () => ({
   useChatTtsAudioCache: () => ({
     getCachedObjectUrl: mocks.getCachedObjectUrl,
+    getPreparedAudioKey: mocks.getPreparedAudioKey,
     cacheObjectUrl: mocks.cacheObjectUrl,
     removeCachedObjectUrl: mocks.removeCachedObjectUrl,
     releaseUncachedObjectUrl: mocks.releaseUncachedObjectUrl,
@@ -110,6 +116,116 @@ describe("useChatTtsPlayback", () => {
     await waitFor(() => expect(result.current.playingMessageId).toBe("m-1"));
     expect(mocks.synthesize).toHaveBeenCalledTimes(1);
     expect(mocks.playObjectUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not synthesize twice when autoplay and a manual click share an in-flight request", async () => {
+    let resolveSynthesis!: (value: unknown) => void;
+    mocks.synthesize.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSynthesis = resolve;
+        }),
+    );
+    const message = createMessage("m-in-flight", true);
+    const { result } = renderHook(() => useChatTtsPlayback([message]));
+
+    await waitFor(() => expect(result.current.loadingMessageId).toBe(message.id));
+    act(() => result.current.toggleMessagePlayback(message));
+    act(() => result.current.toggleMessagePlayback(message));
+    expect(mocks.synthesize).toHaveBeenCalledTimes(1);
+
+    resolveSynthesis({
+      taskId: "task-in-flight",
+      completed: true,
+      success: true,
+      audioBase64: "UklGRg==",
+      audioUrl: null,
+      audioFormat: "wav",
+      contentType: "audio/wav",
+    });
+    await waitFor(() => expect(result.current.playingMessageId).toBe(message.id));
+    expect(mocks.synthesize).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not duplicate autoplay under StrictMode or repeated message renders", async () => {
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <StrictMode>{children}</StrictMode>
+    );
+    const message = createMessage("m-strict", true);
+    const { result, rerender } = renderHook(
+      ({ messages }: { messages: ChatMessage[] }) =>
+        useChatTtsPlayback(messages),
+      {
+        initialProps: { messages: [message] },
+        wrapper,
+      },
+    );
+
+    await waitFor(() => expect(result.current.playingMessageId).toBe(message.id));
+    rerender({ messages: [{ ...message }] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.synthesize).toHaveBeenCalledTimes(1);
+  });
+
+  it("only starts autoplay when a streaming message becomes done", async () => {
+    const streaming: ChatMessage = {
+      ...createMessage("m-streaming", true),
+      status: "streaming",
+    };
+    const done: ChatMessage = { ...streaming, status: "done" };
+    const { result, rerender } = renderHook(
+      ({ messages }: { messages: ChatMessage[] }) =>
+        useChatTtsPlayback(messages),
+      { initialProps: { messages: [streaming] } },
+    );
+
+    expect(mocks.synthesize).not.toHaveBeenCalled();
+    rerender({ messages: [done] });
+    await waitFor(() => expect(result.current.playingMessageId).toBe(done.id));
+    rerender({ messages: [{ ...done }] });
+    expect(mocks.synthesize).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry after an aborted autoplay request", async () => {
+    let resolveSynthesis!: (value: unknown) => void;
+    mocks.synthesize.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSynthesis = resolve;
+        }),
+    );
+    const message = createMessage("m-aborted-autoplay", true);
+    const { result, rerender } = renderHook(
+      ({ messages }: { messages: ChatMessage[] }) =>
+        useChatTtsPlayback(messages),
+      { initialProps: { messages: [message] } },
+    );
+
+    await waitFor(() => expect(result.current.loadingMessageId).toBe(message.id));
+    act(() => result.current.stopPlayback());
+    rerender({ messages: [{ ...message }] });
+    resolveSynthesis({
+      taskId: "task-aborted-autoplay",
+      completed: true,
+      success: true,
+      audioBase64: "UklGRg==",
+      audioUrl: null,
+      audioFormat: "wav",
+      contentType: "audio/wav",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.synthesize).toHaveBeenCalledTimes(1);
+  });
+
+  it("only calls the provider twice when an explicit refresh is requested", async () => {
+    const message = createMessage("m-refresh");
+    const { result } = renderHook(() => useChatTtsPlayback([message]));
+
+    await act(async () => result.current.toggleMessagePlayback(message));
+    await waitFor(() => expect(result.current.playingMessageId).toBe(message.id));
+    await act(async () => result.current.refreshMessagePlayback(message));
+    await waitFor(() => expect(result.current.playingMessageId).toBe(message.id));
+    expect(mocks.synthesize).toHaveBeenCalledTimes(2);
   });
 
   it("stops the previous message when a new message starts", async () => {

@@ -3,6 +3,7 @@ import { CHAT_MESSAGE_STATUS, type ChatMessage } from "@/lib/chat";
 import {
   INTERVIEW_QUESTION_TTS_REQUEST,
   isAbortError,
+  type SynthesizedTtsTask,
 } from "@/hooks/audio/chatTtsPlayback.shared";
 import { useChatTtsAudioCache } from "@/hooks/audio/useChatTtsAudioCache";
 import { useChatTtsAudioElement } from "@/hooks/audio/useChatTtsAudioElement";
@@ -16,11 +17,17 @@ type TtsPlaybackOptions = {
   enabled?: boolean;
 };
 
+type SynthesisRequest = {
+  controller: AbortController;
+  promise: Promise<SynthesizedTtsTask>;
+};
+
 export function useChatTtsPlayback(
   messages: ChatMessage[],
   { enabled = true }: TtsPlaybackOptions = {},
 ) {
   const loadingControllerRef = useRef<AbortController | null>(null);
+  const synthesisRequestsRef = useRef(new Map<string, SynthesisRequest>());
   const autoPlayedMessageIdsRef = useRef(new Set<string>());
   const activeMessageIdRef = useRef<string | null>(null);
   const activeObjectUrlRef = useRef<string | null>(null);
@@ -45,6 +52,7 @@ export function useChatTtsPlayback(
     pruneCachedObjectUrls,
     resolvePlayableAudioUrl,
     revokePreparedObjectUrls,
+    getPreparedAudioKey,
   } = useChatTtsAudioCache();
   const {
     audioRef,
@@ -61,6 +69,55 @@ export function useChatTtsPlayback(
     activeObjectUrlRef.current = null;
   }, [releaseUncachedObjectUrl]);
 
+  const abortSynthesisRequests = useCallback(() => {
+    for (const request of synthesisRequestsRef.current.values()) {
+      request.controller.abort();
+    }
+    synthesisRequestsRef.current.clear();
+  }, []);
+
+  const getSynthesisTask = useCallback(
+    (message: ChatMessage, text: string) => {
+      const key = getPreparedAudioKey(message);
+      const existingRequest = synthesisRequestsRef.current.get(key);
+      if (existingRequest) {
+        return existingRequest.promise;
+      }
+
+      const controller = new AbortController();
+      const requestId = `message-${key}`.slice(0, 128);
+      const promise = xunfeiTtsService
+        .synthesize(
+          {
+            ...INTERVIEW_QUESTION_TTS_REQUEST,
+            text,
+            requestId,
+          },
+          { signal: controller.signal },
+        )
+        .catch((error: unknown) => {
+          if (synthesisRequestsRef.current.get(key)?.promise === promise) {
+            synthesisRequestsRef.current.delete(key);
+          }
+          throw error;
+        });
+
+      synthesisRequestsRef.current.set(key, { controller, promise });
+      return promise;
+    },
+    [getPreparedAudioKey],
+  );
+
+  const refreshSynthesisTask = useCallback(
+    (message: ChatMessage) => {
+      const key = getPreparedAudioKey(message);
+      const existingRequest = synthesisRequestsRef.current.get(key);
+      existingRequest?.controller.abort();
+      synthesisRequestsRef.current.delete(key);
+    },
+    [getPreparedAudioKey],
+  );
+
   const stopPlayback = useCallback(() => {
     loadingControllerRef.current?.abort();
     loadingControllerRef.current = null;
@@ -71,10 +128,11 @@ export function useChatTtsPlayback(
 
   const releaseTtsResources = useCallback(() => {
     stopPlayback();
+    abortSynthesisRequests();
     disposeAudioElement();
     activeObjectUrlRef.current = null;
     revokePreparedObjectUrls();
-  }, [disposeAudioElement, revokePreparedObjectUrls, stopPlayback]);
+  }, [abortSynthesisRequests, disposeAudioElement, revokePreparedObjectUrls, stopPlayback]);
 
   const playPreparedObjectUrl = useCallback(
     async (
@@ -128,6 +186,7 @@ export function useChatTtsPlayback(
 
         if (options?.forceRefresh) {
           removeCachedObjectUrl(message);
+          refreshSynthesisTask(message);
         }
 
         const cachedObjectUrl = options?.forceRefresh
@@ -145,14 +204,13 @@ export function useChatTtsPlayback(
           }
         }
 
-        const task = await xunfeiTtsService.synthesize(
-          {
-            ...INTERVIEW_QUESTION_TTS_REQUEST,
-            text: ttsText,
-            requestId: `message-${message.tts?.cacheKey || message.id}`.slice(0, 128),
-          },
-          { signal: controller.signal },
-        );
+        const task = await getSynthesisTask(message, ttsText);
+        if (
+          controller.signal.aborted ||
+          loadingControllerRef.current !== controller
+        ) {
+          return;
+        }
         const objectUrl = await resolvePlayableAudioUrl(task, controller.signal);
 
         if (
@@ -206,11 +264,13 @@ export function useChatTtsPlayback(
       clearPlaybackState,
       enabled,
       getCachedObjectUrl,
+      getSynthesisTask,
       playPreparedObjectUrl,
       primePlaybackFromGesture,
       releaseActiveObjectUrl,
       releaseUncachedObjectUrl,
       removeCachedObjectUrl,
+      refreshSynthesisTask,
       resetAudioElement,
       resolvePlayableAudioUrl,
     ],
@@ -234,9 +294,20 @@ export function useChatTtsPlayback(
     [enabled, loadingMessageId, playMessage, playingMessageId, stopPlayback],
   );
 
+  const refreshMessagePlayback = useCallback(
+    (message: ChatMessage) => {
+      if (!enabled) {
+        return;
+      }
+      void playMessage(message, { userInitiated: true, forceRefresh: true });
+    },
+    [enabled, playMessage],
+  );
+
   useEffect(() => {
     if (!enabled) {
       stopPlayback();
+      abortSynthesisRequests();
       return;
     }
 
@@ -255,19 +326,22 @@ export function useChatTtsPlayback(
 
     autoPlayedMessageIdsRef.current.add(latestAutoPlayMessage.id);
     void playMessage(latestAutoPlayMessage);
-  }, [enabled, messages, playMessage, stopPlayback]);
+  }, [abortSynthesisRequests, enabled, messages, playMessage, stopPlayback]);
 
   useEffect(() => {
     const activeMessageId = activeMessageIdRef.current;
-    if (!activeMessageId) {
-      return;
-    }
-
-    const stillExists = messages.some((message) => message.id === activeMessageId);
-    if (!stillExists) {
+    if (activeMessageId && !messages.some((message) => message.id === activeMessageId)) {
       stopPlayback();
     }
-  }, [messages, stopPlayback]);
+
+    const activeKeys = new Set(messages.map(getPreparedAudioKey));
+    for (const [key, request] of synthesisRequestsRef.current) {
+      if (!activeKeys.has(key)) {
+        request.controller.abort();
+        synthesisRequestsRef.current.delete(key);
+      }
+    }
+  }, [getPreparedAudioKey, messages, stopPlayback]);
 
   useEffect(() => {
     pruneCachedObjectUrls(messages);
@@ -284,6 +358,7 @@ export function useChatTtsPlayback(
   return {
     loadingMessageId,
     playingMessageId,
+    refreshMessagePlayback,
     errorMessage,
     errorMessageId,
     ttsAvailable: enabled,
