@@ -147,6 +147,41 @@ describe("useChatTtsPlayback", () => {
     expect(mocks.synthesize).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let a stale playback failure clear a newer playback", async () => {
+    let rejectFirstPlayback!: (error: Error) => void;
+    mocks.playObjectUrl
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirstPlayback = reject;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    mocks.resolvePlayableAudioUrl
+      .mockResolvedValueOnce("blob:stale-audio")
+      .mockResolvedValueOnce("blob:current-audio");
+
+    const message = createMessage("m-stale-playback");
+    const { result } = renderHook(() => useChatTtsPlayback([message]));
+
+    act(() => result.current.toggleMessagePlayback(message));
+    await waitFor(() => expect(result.current.loadingMessageId).toBe(message.id));
+    act(() => result.current.stopPlayback());
+    act(() => result.current.toggleMessagePlayback(message));
+    await waitFor(() => expect(result.current.playingMessageId).toBe(message.id));
+
+    await act(async () => {
+      rejectFirstPlayback(new Error("stale playback failed"));
+      await Promise.resolve();
+    });
+
+    expect(result.current.playingMessageId).toBe(message.id);
+    expect(result.current.errorMessageId).toBeNull();
+    expect(mocks.releaseUncachedObjectUrl).not.toHaveBeenCalledWith(
+      "blob:current-audio",
+    );
+  });
+
   it("does not duplicate autoplay under StrictMode or repeated message renders", async () => {
     const wrapper = ({ children }: PropsWithChildren) => (
       <StrictMode>{children}</StrictMode>

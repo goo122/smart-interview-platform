@@ -236,7 +236,8 @@ export function useChatTtsPlayback(
           audioRef.current?.pause();
         }
       } catch (error) {
-        if (!isAbortError(error)) {
+        const isCurrentPlayback = loadingControllerRef.current === controller;
+        if (!isAbortError(error) && isCurrentPlayback) {
           setErrorMessage(
             isAutoplayBlockedError(error)
               ? "浏览器阻止了自动播放，请点击播放按钮重试。"
@@ -245,10 +246,7 @@ export function useChatTtsPlayback(
           setErrorMessageId(messageId);
         }
 
-        if (
-          loadingControllerRef.current === controller ||
-          activeMessageIdRef.current === messageId
-        ) {
+        if (isCurrentPlayback) {
           releaseActiveObjectUrl();
           clearPlaybackState();
         }
