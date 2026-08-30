@@ -48,6 +48,11 @@ class KnowledgeDocument:
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    queued_at: datetime | None
+    processing_started_at: datetime | None
+    attempt_count: int
+    failure_code: str | None
+    failure_message: str | None
 
     @classmethod
     def new(
@@ -78,6 +83,11 @@ class KnowledgeDocument:
             created_at=now,
             updated_at=now,
             completed_at=None,
+            queued_at=now,
+            processing_started_at=None,
+            attempt_count=0,
+            failure_code=None,
+            failure_message=None,
         )
 
 

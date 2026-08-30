@@ -1,4 +1,6 @@
+import asyncio
 from collections.abc import Iterator, Sequence
+from datetime import datetime
 from uuid import UUID
 
 import pytest
@@ -13,11 +15,11 @@ from app.main import app
 from app.modules.auth.dependencies import get_session_store, get_user_repository
 from app.modules.auth.domain import User
 from app.modules.knowledge.dependencies import (
+    get_document_task_queue,
     get_embedding,
     get_file_storage,
     get_knowledge_repository,
     get_pdf_parser,
-    get_task_queue,
     get_text_splitter,
     get_vector_store,
 )
@@ -34,10 +36,15 @@ from app.modules.knowledge.exceptions import (
     DuplicateKnowledgeDocumentError,
     EmbeddingDimensionError,
     KnowledgeNameAlreadyExistsError,
+    KnowledgeQueueUnavailableError,
 )
 from app.modules.knowledge.service import KnowledgeService
 from app.modules.knowledge.splitter import SimpleTextSplitter
-from app.workers.queue import InlineTaskQueue
+from app.workers.queue import (
+    DocumentImportHandler,
+    DocumentImportJob,
+    InlineDocumentTaskQueue,
+)
 
 
 class FakeUserRepository:
@@ -145,7 +152,29 @@ class FakeKnowledgeRepository:
     async def mark_processing(self, document_id: UUID) -> KnowledgeDocument:
         item = self.documents[document_id]
         item.status = DocumentStatus.PROCESSING
+        item.processing_started_at = utc_now()
+        item.attempt_count += 1
         item.updated_at = utc_now()
+        return item
+
+    async def claim_processing(
+        self, document_id: UUID, stale_before: datetime, attempt: int = 1
+    ) -> KnowledgeDocument | None:
+        item = self.documents[document_id]
+        if item.status == DocumentStatus.READY or item.status == DocumentStatus.FAILED:
+            return None
+        if item.status == DocumentStatus.PROCESSING:
+            retry_claim = item.attempt_count == max(attempt - 1, 0)
+            stale_claim = (
+                item.processing_started_at is None
+                or item.processing_started_at < stale_before
+            )
+            if not retry_claim and not stale_claim:
+                return None
+        item.status = DocumentStatus.PROCESSING
+        item.processing_started_at = utc_now()
+        item.attempt_count += 1
+        item.updated_at = item.processing_started_at
         return item
 
     async def mark_ready(
@@ -157,6 +186,8 @@ class FakeKnowledgeRepository:
         item.chunk_count = chunk_count
         item.completed_at = utc_now()
         item.updated_at = item.completed_at
+        item.failure_code = None
+        item.failure_message = None
         return item
 
     async def mark_failed(
@@ -166,6 +197,8 @@ class FakeKnowledgeRepository:
         item.status = DocumentStatus.FAILED
         item.error_code = error_code
         item.error_message = error_message
+        item.failure_code = error_code
+        item.failure_message = error_message
         item.updated_at = utc_now()
         return item
 
@@ -174,6 +207,20 @@ class FakeKnowledgeRepository:
             return False
         del self.documents[document_id]
         return True
+
+
+class DeferredDocumentQueue:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.jobs: list[DocumentImportJob] = []
+        self.error = error
+
+    def bind_inline_handler(self, handler: DocumentImportHandler) -> None:
+        del handler
+
+    async def enqueue_document(self, job: DocumentImportJob) -> None:
+        self.jobs.append(job)
+        if self.error is not None:
+            raise self.error
 
 
 class FakeVectorStore:
@@ -232,7 +279,7 @@ def knowledge_client() -> Iterator[
     app.dependency_overrides[get_pdf_parser] = lambda: parser
     app.dependency_overrides[get_embedding] = lambda: embedding
     app.dependency_overrides[get_vector_store] = lambda: vector_store
-    app.dependency_overrides[get_task_queue] = lambda: InlineTaskQueue()
+    app.dependency_overrides[get_document_task_queue] = lambda: InlineDocumentTaskQueue()
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_text_splitter] = lambda: SimpleTextSplitter(100, 2)
     with TestClient(app) as client:
@@ -306,11 +353,12 @@ def test_upload_pdf_ready_pages_batches_and_safe_filename(knowledge_client) -> N
     response = upload(client, token, base_id)
     body = response.json()
     assert response.status_code == 201
-    assert body["status"] == "READY"
-    assert body["page_count"] == 2
+    assert body["status"] == "PENDING"
+    assert body["page_count"] == 0
     assert body["safe_filename"].endswith(".pdf")
     assert "storage_path" not in body
     document = next(iter(repository.documents.values()))
+    assert document.status == DocumentStatus.READY
     assert document.original_filename == "resume.pdf"
     assert document.storage_path not in body.values()
     assert parser.calls == 1
@@ -318,6 +366,159 @@ def test_upload_pdf_ready_pages_batches_and_safe_filename(knowledge_client) -> N
     assert document.id in vector_store.chunks
     assert len(storage.files) == 1
     assert [chunk.page_number for chunk in vector_store.chunks[document.id]] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_upload_returns_pending_without_processing_in_api_process() -> None:
+    repository = FakeKnowledgeRepository()
+    storage = FakeFileStorage()
+    parser = FakePdfParser((PdfPage(1, "queued text"),))
+    vector_store = FakeVectorStore()
+    queue = DeferredDocumentQueue()
+    service = KnowledgeService(
+        repository,
+        storage,
+        parser,
+        SimpleTextSplitter(100, 1),
+        FakeEmbedding(),
+        vector_store,
+        queue,
+        Settings(_env_file=None),
+    )
+    user_id = UUID("00000000-0000-0000-0000-000000000005")
+    base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
+
+    document = await service.upload_document(
+        user_id, base.id, "queued.pdf", "application/pdf", b"%PDF-1.7 queued"
+    )
+
+    assert document.status == DocumentStatus.PENDING
+    assert parser.calls == 0
+    assert not vector_store.chunks
+    assert len(queue.jobs) == 1
+
+    await service.process_document_job(queue.jobs[0])
+    assert repository.documents[document.id].status == DocumentStatus.READY
+
+
+def test_upload_endpoint_returns_pending_without_processing(knowledge_client) -> None:
+    client, _, _, _, parser, _, _, _ = knowledge_client
+    token = register_and_login(client, "queued-api", "queued-api@example.com")
+    base_id = create_base(client, token)
+    queue = DeferredDocumentQueue()
+    app.dependency_overrides[get_document_task_queue] = lambda: queue
+
+    response = upload(client, token, base_id)
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "PENDING"
+    assert parser.calls == 0
+    assert len(queue.jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_queue_failure_marks_document_failed_and_removes_file() -> None:
+    repository = FakeKnowledgeRepository()
+    storage = FakeFileStorage()
+    queue = DeferredDocumentQueue(RuntimeError("redis unavailable"))
+    service = KnowledgeService(
+        repository,
+        storage,
+        FakePdfParser(),
+        SimpleTextSplitter(100, 1),
+        FakeEmbedding(),
+        FakeVectorStore(),
+        queue,
+        Settings(_env_file=None),
+    )
+    user_id = UUID("00000000-0000-0000-0000-000000000006")
+    base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
+
+    with pytest.raises(KnowledgeQueueUnavailableError):
+        await service.upload_document(
+            user_id, base.id, "queued.pdf", "application/pdf", b"%PDF-1.7 queued"
+        )
+
+    document = next(iter(repository.documents.values()))
+    assert document.status == DocumentStatus.FAILED
+    assert document.failure_code == "QUEUE_UNAVAILABLE"
+    assert storage.deleted
+    assert not storage.files
+
+
+@pytest.mark.asyncio
+async def test_duplicate_document_job_does_not_reprocess_chunks() -> None:
+    repository = FakeKnowledgeRepository()
+    storage = FakeFileStorage()
+    parser = FakePdfParser((PdfPage(1, "duplicate-safe"),))
+    vector_store = FakeVectorStore()
+    queue = DeferredDocumentQueue()
+    service = KnowledgeService(
+        repository,
+        storage,
+        parser,
+        SimpleTextSplitter(100, 1),
+        FakeEmbedding(),
+        vector_store,
+        queue,
+        Settings(_env_file=None),
+    )
+    user_id = UUID("00000000-0000-0000-0000-000000000007")
+    base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
+    document = await service.upload_document(
+        user_id, base.id, "duplicate.pdf", "application/pdf", b"%PDF-1.7 duplicate"
+    )
+
+    await service.process_document_job(queue.jobs[0])
+    first_chunks = list(vector_store.chunks[document.id])
+    await service.process_document_job(queue.jobs[0])
+
+    assert parser.calls == 1
+    assert vector_store.chunks[document.id] == first_chunks
+
+
+@pytest.mark.asyncio
+async def test_concurrent_document_jobs_only_one_claims_document() -> None:
+    class BlockingPdfParser(FakePdfParser):
+        def __init__(self) -> None:
+            super().__init__((PdfPage(1, "concurrent-safe"),))
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def parse(self, path: str) -> Sequence[PdfPage]:
+            self.calls += 1
+            self.started.set()
+            await self.release.wait()
+            return self.pages
+
+    repository = FakeKnowledgeRepository()
+    storage = FakeFileStorage()
+    parser = BlockingPdfParser()
+    queue = DeferredDocumentQueue()
+    service = KnowledgeService(
+        repository,
+        storage,
+        parser,
+        SimpleTextSplitter(100, 1),
+        FakeEmbedding(),
+        FakeVectorStore(),
+        queue,
+        Settings(_env_file=None),
+    )
+    user_id = UUID("00000000-0000-0000-0000-000000000008")
+    base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
+    await service.upload_document(
+        user_id, base.id, "concurrent.pdf", "application/pdf", b"%PDF-1.7 concurrent"
+    )
+
+    first = asyncio.create_task(service.process_document_job(queue.jobs[0]))
+    await parser.started.wait()
+    await service.process_document_job(queue.jobs[0])
+    parser.release.set()
+    await first
+
+    assert parser.calls == 1
+    assert next(iter(repository.documents.values())).status == DocumentStatus.READY
 
 
 def test_non_pdf_mime_header_and_size_are_rejected(knowledge_client) -> None:
@@ -409,12 +610,12 @@ def test_pdf_parse_failures_mark_document_failed_and_cleanup(knowledge_client, e
     response = upload(client, token, base_id)
     body = response.json()
     assert response.status_code == 201
-    assert body["status"] == "FAILED"
-    assert body["error_code"]
+    assert body["status"] == "PENDING"
     document = next(iter(repository.documents.values()))
     assert document.status == DocumentStatus.FAILED
+    assert document.error_code
     assert not vector_store.chunks
-    assert storage.deleted
+    assert not storage.deleted
 
 
 @pytest.mark.asyncio
@@ -431,18 +632,19 @@ async def test_chunk_limit_marks_failed_and_rolls_back() -> None:
         SimpleTextSplitter(4, 1),
         FakeEmbedding(),
         vector_store,
-        InlineTaskQueue(),
+        InlineDocumentTaskQueue(),
         settings,
     )
     user_id = UUID("00000000-0000-0000-0000-000000000001")
     base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
-    document = await service.upload_document(
+    await service.upload_document(
         user_id, base.id, "file.pdf", "application/pdf", b"%PDF-1.7 content"
     )
+    document = repository.documents[next(iter(repository.documents))]
     assert document.status == DocumentStatus.FAILED
     assert document.error_code == "CHUNK_LIMIT_EXCEEDED"
     assert not vector_store.chunks
-    assert storage.deleted
+    assert not storage.deleted
 
 
 def _embedding_test_chunks(count: int) -> tuple[TextChunk, ...]:
@@ -466,7 +668,7 @@ def _embedding_test_service(embedding: FakeEmbedding) -> KnowledgeService:
         SimpleTextSplitter(100, 1),
         embedding,
         FakeVectorStore(),
-        InlineTaskQueue(),
+        InlineDocumentTaskQueue(),
         Settings(_env_file=None, embedding_batch_size=10),
     )
 
@@ -505,7 +707,7 @@ async def test_embedding_service_honors_adapter_batch_capability() -> None:
 
 
 @pytest.mark.asyncio
-async def test_embedding_second_batch_failure_marks_document_failed_and_cleans_up() -> None:
+async def test_embedding_second_batch_failure_retries_then_marks_document_failed() -> None:
     class FailOnSecondBatch(FakeEmbedding):
         async def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
             self.batch_calls.append(tuple(texts))
@@ -525,22 +727,23 @@ async def test_embedding_second_batch_failure_marks_document_failed_and_cleans_u
         SimpleTextSplitter(100, 1),
         embedding,
         vector_store,
-        InlineTaskQueue(),
+        InlineDocumentTaskQueue(),
         Settings(_env_file=None, embedding_batch_size=10),
     )
     user_id = UUID("00000000-0000-0000-0000-000000000003")
     base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
 
-    document = await service.upload_document(
+    await service.upload_document(
         user_id, base.id, "file.pdf", "application/pdf", b"%PDF-1.7 content"
     )
+    document = repository.documents[next(iter(repository.documents))]
 
-    assert [len(batch) for batch in embedding.batch_calls] == [10, 10]
-    assert document.status == DocumentStatus.FAILED
-    assert document.error_code == "EMBEDDING_FAILED"
+    assert [len(batch) for batch in embedding.batch_calls] == [10, 10, 10, 10, 6]
+    assert document.status == DocumentStatus.READY
+    assert document.error_code is None
     assert vector_store.rollback_count == 1
-    assert not vector_store.chunks
-    assert storage.deleted
+    assert len(vector_store.chunks[document.id]) == 26
+    assert not storage.deleted
 
 
 @pytest.mark.asyncio
@@ -570,15 +773,16 @@ async def test_more_than_ten_pdf_chunks_reach_ready_with_ordered_batches() -> No
         SimpleTextSplitter(100, 1),
         embedding,
         vector_store,
-        InlineTaskQueue(),
+        InlineDocumentTaskQueue(),
         Settings(_env_file=None, embedding_batch_size=10),
     )
     user_id = UUID("00000000-0000-0000-0000-000000000004")
     base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
 
-    document = await service.upload_document(
+    await service.upload_document(
         user_id, base.id, "file.pdf", "application/pdf", b"%PDF-1.7 content"
     )
+    document = repository.documents[next(iter(repository.documents))]
 
     assert document.status == DocumentStatus.READY
     assert document.chunk_count == 26
@@ -607,18 +811,20 @@ async def test_embedding_failure_or_dimension_marks_failed(
         SimpleTextSplitter(100, 1),
         embedding,
         vector_store,
-        InlineTaskQueue(),
+        InlineDocumentTaskQueue(),
         Settings(),
     )
     user_id = UUID("00000000-0000-0000-0000-000000000002")
     base = await repository.create_base(KnowledgeBase.new(user_id, "base"))
-    document = await service.upload_document(
+    await service.upload_document(
         user_id, base.id, "file.pdf", "application/pdf", b"%PDF-1.7 content"
     )
+    document = repository.documents[next(iter(repository.documents))]
     assert document.status == DocumentStatus.FAILED
-    assert document.error_code in {"EMBEDDING_FAILED", "EMBEDDING_DIMENSIONS_INVALID"}
+    assert document.error_code in {"RETRY_EXHAUSTED", "EMBEDDING_DIMENSIONS_INVALID"}
+    assert len(embedding.batch_calls) == (3 if wrong_dimensions is None else 1)
     assert not vector_store.chunks
-    assert storage.deleted
+    assert not storage.deleted
 
 
 def test_splitter_is_page_aware_stable_and_clean() -> None:

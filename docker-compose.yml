@@ -61,6 +61,35 @@ services:
       retries: 3
       start_period: 10s
 
+  worker:
+    build:
+      context: ./backend-python
+    env_file:
+      - ./backend-python/.env
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/ai_interview
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_KNOWLEDGE_STORAGE_DIR: /app/storage
+      APP_EMBEDDING_DIMENSIONS: ${APP_EMBEDDING_DIMENSIONS:-1536}
+      APP_EMBEDDING_BATCH_SIZE: ${APP_EMBEDDING_BATCH_SIZE:-10}
+    volumes:
+      - knowledge-storage:/app/storage
+    command: ["python", "-m", "app.workers.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:

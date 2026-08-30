@@ -69,7 +69,13 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Compose 服务启动顺序为 `postgres`/`redis` 健康 → `migrate` 执行 `alembic upgrade head` → `api` readiness → `frontend`。上传 PDF 使用命名卷 `knowledge-storage` 持久化，API 容器以非 root 用户运行。浏览器访问 `http://localhost:8080`。
+Compose 服务启动顺序为 `postgres`/`redis` 健康 → `migrate` 执行 `alembic upgrade head` → `api` 和独立 `worker`。上传 PDF 使用命名卷 `knowledge-storage` 持久化，API 与 Worker 共享该卷，API 容器以非 root 用户运行。浏览器访问 `http://localhost:8080`。
+
+PDF 上传接口只负责保存原文件、创建 `PENDING` 文档并投递可序列化的
+`process_knowledge_document` 任务；Worker 负责解析、分块、Embedding 和 pgvector
+写入，前端继续轮询文档状态。PostgreSQL 是状态事实来源，Redis 只承担 ARQ 排队、
+重试和临时状态。Worker 会恢复待处理及超时的 `PROCESSING` 文档，失败时保留原始
+PDF 并记录安全错误码，避免静默丢失任务。
 
 健康检查：
 

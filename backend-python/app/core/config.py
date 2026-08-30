@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
     knowledge_max_file_size: int = Field(default=20 * 1024 * 1024, ge=1)
     knowledge_storage_dir: str = "./storage"
+    knowledge_task_max_attempts: int = Field(default=3, ge=1, le=10)
+    knowledge_task_retry_base_seconds: float = Field(default=2.0, gt=0, le=300)
+    knowledge_task_timeout_seconds: int = Field(default=300, ge=30, le=3600)
+    knowledge_processing_stale_seconds: int = Field(default=900, ge=60, le=86400)
     embedding_api_key: str | None = None
     embedding_base_url: str | None = None
     embedding_model: str | None = None

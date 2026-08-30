@@ -16,7 +16,7 @@ from app.modules.knowledge.repository import (
 )
 from app.modules.knowledge.service import KnowledgeService
 from app.modules.knowledge.splitter import SimpleTextSplitter, TextSplitterPort
-from app.workers.queue import TaskQueuePort
+from app.workers.queue import DocumentTaskQueuePort, TaskQueuePort
 
 
 async def get_knowledge_repository(
@@ -51,7 +51,13 @@ def get_vector_store(
 
 
 def get_task_queue(request: Request) -> TaskQueuePort:
+    """Return the legacy inline-compatible queue for interview/report workflows."""
+
     return cast(TaskQueuePort, request.app.state.task_queue)
+
+
+def get_document_task_queue(request: Request) -> DocumentTaskQueuePort:
+    return cast(DocumentTaskQueuePort, request.app.state.document_task_queue)
 
 
 def get_knowledge_service(
@@ -61,7 +67,7 @@ def get_knowledge_service(
     text_splitter: Annotated[TextSplitterPort, Depends(get_text_splitter)],
     embedding: Annotated[EmbeddingPort, Depends(get_embedding)],
     vector_store: Annotated[VectorStorePort, Depends(get_vector_store)],
-    task_queue: Annotated[TaskQueuePort, Depends(get_task_queue)],
+    task_queue: Annotated[DocumentTaskQueuePort, Depends(get_document_task_queue)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> KnowledgeService:
     return KnowledgeService(

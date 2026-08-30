@@ -59,6 +59,11 @@ export interface components {
       "created_at": string;
       "updated_at": string;
       "completed_at": string | null;
+      "queued_at": string | null;
+      "processing_started_at": string | null;
+      "attempt_count": number;
+      "failure_code": string | null;
+      "failure_message": string | null;
     };
     KnowledgeBasePage: {
       "records": Array<components["schemas"]["KnowledgeBaseResponse"]>;

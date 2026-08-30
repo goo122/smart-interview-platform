@@ -50,6 +50,39 @@ services:
         condition: service_healthy
     restart: "no"
 
+  worker:
+    build:
+      context: ./backend-python
+      args:
+        INSTALL_DEV: "true"
+    environment:
+      APP_ENV: test
+      APP_AI_PROVIDER: unavailable
+      APP_EMBEDDING_PROVIDER: fake
+      APP_DATABASE_URL: postgresql+asyncpg://postgres:integration-only@postgres:5432/ai_interview_integration
+      APP_REDIS_URL: redis://redis:6379/0
+      APP_KNOWLEDGE_STORAGE_DIR: /app/storage
+      APP_EMBEDDING_BATCH_SIZE: "10"
+      APP_EMBEDDING_DIMENSIONS: "1536"
+    volumes:
+      - knowledge-storage-integration:/app/storage
+    command: ["python", "-m", "app.workers.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: "no"
+
 volumes:
   postgres-data-integration:
   redis-data-integration:
+  knowledge-storage-integration:

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from tempfile import TemporaryDirectory
@@ -5,6 +6,8 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from arq import create_pool
+from arq.connections import RedisSettings
 from redis.asyncio import Redis
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -47,7 +50,13 @@ from app.modules.interview.models import (
 from app.modules.interview.repository import SqlAlchemyInterviewRepository
 from app.modules.interview.service import InterviewService
 from app.modules.knowledge.context import ContextAssembler, ContextCitation
-from app.modules.knowledge.domain import DocumentStatus, KnowledgeBase, PdfPage, StoredChunk
+from app.modules.knowledge.domain import (
+    DocumentStatus,
+    KnowledgeBase,
+    KnowledgeDocument,
+    PdfPage,
+    StoredChunk,
+)
 from app.modules.knowledge.models import (
     KnowledgeBaseModel,
     KnowledgeChunkModel,
@@ -59,7 +68,8 @@ from app.modules.knowledge.splitter import SimpleTextSplitter
 from app.modules.report.models import InterviewReportModel
 from app.modules.report.repository import SqlAlchemyInterviewReportRepository
 from app.modules.report.service import InterviewReportService
-from app.workers.queue import InlineTaskQueue
+from app.workers.queue import DocumentImportJob, InlineDocumentTaskQueue, InlineTaskQueue
+from app.workers.redis_queue import enqueue_document_job
 
 pytestmark = pytest.mark.integration
 
@@ -74,6 +84,33 @@ def _redis_url() -> str | None:
 
 def _integration_enabled() -> bool:
     return os.getenv("RUN_INTEGRATION_TESTS") == "1"
+
+
+def _synthetic_pdf() -> bytes:
+    content = "BT /F1 18 Tf 72 720 Td (Worker integration text) Tj ET"
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        f"<< /Length {len(content)} >>\nstream\n{content}\nendstream",
+    ]
+    pdf = "%PDF-1.4\n"
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf.encode("ascii")))
+        pdf += f"{index} 0 obj\n{obj}\nendobj\n"
+    xref_offset = len(pdf.encode("ascii"))
+    pdf += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n"
+    pdf += "".join(f"{offset:010d} 00000 n \n" for offset in offsets[1:])
+    pdf += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF"
+    )
+    return pdf.encode("ascii")
 
 
 @pytest_asyncio.fixture
@@ -421,7 +458,7 @@ async def test_real_postgres_import_pipeline_with_fake_parser_and_embedding(
             SimpleTextSplitter(100, 1),
             FakeEmbedding(),
             vector_store,
-            InlineTaskQueue(),
+            InlineDocumentTaskQueue(),
             Settings(knowledge_storage_dir=storage_dir.name),
         )
         document = await service.upload_document(
@@ -431,9 +468,12 @@ async def test_real_postgres_import_pipeline_with_fake_parser_and_embedding(
             "application/pdf",
             b"%PDF-1.7 integration",
         )
-        assert document.status.value == "READY"
-        assert document.page_count == 2
-        assert document.chunk_count == 2
+        assert document.status == DocumentStatus.PENDING
+        processed = await repository.get_document_for_user(document.id, user_id)
+        assert processed is not None
+        assert processed.status == DocumentStatus.READY
+        assert processed.page_count == 2
+        assert processed.chunk_count == 2
         count = await session.scalar(
             select(func.count()).select_from(KnowledgeChunkModel).where(
                 KnowledgeChunkModel.document_id == document.id
@@ -446,6 +486,81 @@ async def test_real_postgres_import_pipeline_with_fake_parser_and_embedding(
         await session.execute(delete(UserModel).where(UserModel.id == user_id))
         await session.commit()
         storage_dir.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_arq_worker_consumes_shared_storage_document(
+    database_session: AsyncSession,
+    redis_client: Redis,
+) -> None:
+    session = database_session
+    user_id = uuid4()
+    storage = LocalFileStorage(os.getenv("APP_KNOWLEDGE_STORAGE_DIR", "/app/storage"))
+    repository = SqlAlchemyKnowledgeRepository(session)
+    arq_redis = await create_pool(
+        RedisSettings.from_dsn(_redis_url() or "redis://redis:6379/0"),
+        default_queue_name="knowledge:documents",
+    )
+    document: KnowledgeDocument | None = None
+    try:
+        session.add(
+            UserModel(
+                id=user_id,
+                username=f"worker-{user_id.hex[:8]}",
+                email=f"worker-{user_id.hex[:8]}@example.com",
+                password_hash="test-only",
+                is_active=True,
+            )
+        )
+        await session.commit()
+        base = await repository.create_base(KnowledgeBase.new(user_id, "Worker"))
+        pdf = _synthetic_pdf()
+        stored = await storage.save_pdf(pdf)
+        document = await repository.create_document(
+            KnowledgeDocument.new(
+                base.id,
+                "worker.pdf",
+                stored.safe_filename,
+                "application/pdf",
+                len(pdf),
+                "worker-test-" + user_id.hex,
+                stored.path,
+            )
+        )
+        await enqueue_document_job(
+            arq_redis,
+            DocumentImportJob(document.id, user_id, base.id, f"worker-test:{user_id}"),
+        )
+
+        deadline = asyncio.get_running_loop().time() + 60
+        while asyncio.get_running_loop().time() < deadline:
+            await session.rollback()
+            current = await repository.get_document_for_user(document.id, user_id)
+            if current is not None and current.status == DocumentStatus.READY:
+                break
+            await asyncio.sleep(1)
+        else:
+            current = await repository.get_document_for_user(document.id, user_id)
+            pytest.fail(f"Worker did not finish document import: {current}")
+
+        assert current is not None
+        assert current.status == DocumentStatus.READY
+        assert current.page_count == 1
+        assert current.chunk_count == 1
+        count = await session.scalar(
+            select(func.count())
+            .select_from(KnowledgeChunkModel)
+            .where(KnowledgeChunkModel.document_id == document.id)
+        )
+        assert count == 1
+        assert await redis_client.ping()
+    finally:
+        await arq_redis.aclose()
+        if document is not None:
+            await storage.delete(document.storage_path)
+        await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
+        await session.commit()
 
 
 @pytest.mark.asyncio

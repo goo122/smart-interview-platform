@@ -94,8 +94,20 @@ Only PDF uploads are accepted. The service checks the extension, MIME type, PDF
 magic header and configurable maximum size (20 MiB by default), then generates a
 UUID-based storage filename. `pypdf` extracts page text; whitespace is normalized
 without discarding page numbers, and `APP_RAG_CHUNK_SIZE`/`APP_RAG_CHUNK_OVERLAP` control
-deterministic page-aware chunks. Empty, encrypted and image-only PDFs are marked
-`FAILED` with a safe error code and their temporary file is removed.
+deterministic page-aware chunks. Upload only persists the PDF and a `PENDING` row;
+the dedicated ARQ Worker performs parsing, chunking, embedding and pgvector writes.
+The document transitions through `PENDING` → `PROCESSING` → `READY`, or to `FAILED`
+with a safe error code. Empty, encrypted and image-only PDFs are permanent failures;
+the original PDF is retained for diagnosis and a later explicit deletion.
+
+The API and Worker share the `knowledge-storage` volume. Redis contains only the
+serializable ARQ job envelope and temporary queue state; PostgreSQL remains the
+source of truth for document status, attempts and failure details. The job name is
+`process_knowledge_document` and its payload contains `document_id`, `user_id`,
+`knowledge_base_id` and `request_id`. A deterministic ARQ job ID plus an atomic
+PostgreSQL claim prevents duplicate processing. Transient failures use bounded
+exponential backoff, while permanent PDF/chunk/embedding-dimension errors are not
+retried. Worker startup re-enqueues pending and stale processing documents.
 
 Migration `0003_knowledge_vector_tables` enables pgvector and creates
 `knowledge_bases`, `knowledge_documents` and `knowledge_chunks`. The vector column
@@ -103,10 +115,15 @@ is fixed at 1536 dimensions for this migration; changing `APP_EMBEDDING_DIMENSIO
 requires a new database migration. For local Docker verification:
 
 ```powershell
-docker compose up -d postgres redis
-uv run alembic upgrade head
-uv run pytest -m integration
+docker compose up -d --build
+docker compose ps
 ```
+
+The normal Compose startup is `postgres`/`redis` healthy → `migrate` completes →
+`api` and the independent `worker` start. The Worker health check is based on its
+ARQ heartbeat. Stopping the Worker does not affect `/health/live`; new uploads
+remain durably `PENDING` until the queue is available, and enqueue failures return a
+safe error after marking the document `FAILED`.
 
 The default application uses `UnavailableEmbedding` so it starts without a real
 provider. Production can inject `LangChainEmbeddingAdapter`; tests use the stable
@@ -151,7 +168,7 @@ python backend-python/scripts/run_integration_tests.py
 ```
 
 入口会校验 Compose、创建 `interviewplatform-integration` 专用 PostgreSQL 16/pgvector
-和 Redis 容器，从空卷执行全部 Alembic 迁移，验证 `0009_resume_report_snapshot`、
+和 Redis 容器，从空卷执行全部 Alembic 迁移，验证 `0010_knowledge_queue_state`、
 `vector` 扩展和 1536 维向量列，然后连续运行两次 `pytest -m integration`，最后在
 `finally` 中删除本轮容器、网络和数据卷。测试使用专用端口和密码，不读取
 `backend-python/.env`，也不会触碰普通开发项目的资源。

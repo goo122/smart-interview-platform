@@ -2,6 +2,8 @@ import hashlib
 import logging
 import time
 from collections.abc import Sequence
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -16,6 +18,7 @@ from app.modules.knowledge.domain import (
     KnowledgeBase,
     KnowledgeDocument,
     StoredChunk,
+    utc_now,
 )
 from app.modules.knowledge.exceptions import (
     ChunkLimitExceededError,
@@ -26,11 +29,13 @@ from app.modules.knowledge.exceptions import (
     KnowledgeBaseNotFoundError,
     KnowledgeDocumentNotFoundError,
     KnowledgeImportError,
+    KnowledgeQueueUnavailableError,
+    RetryableKnowledgeImportError,
     UnsupportedPdfError,
 )
 from app.modules.knowledge.repository import KnowledgeRepository
 from app.modules.knowledge.splitter import TextSplitterPort
-from app.workers.queue import TaskQueuePort
+from app.workers.queue import DocumentImportJob, DocumentTaskQueuePort
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +49,7 @@ class KnowledgeService:
         text_splitter: TextSplitterPort,
         embedding: EmbeddingPort,
         vector_store: VectorStorePort,
-        task_queue: TaskQueuePort,
+        task_queue: DocumentTaskQueuePort,
         settings: Settings,
     ) -> None:
         self._repository = repository
@@ -55,6 +60,7 @@ class KnowledgeService:
         self._vector_store = vector_store
         self._task_queue = task_queue
         self._settings = settings
+        task_queue.bind_inline_handler(self.process_document_job)
 
     async def create_base(
         self, user_id: UUID, name: str, description: str | None = None
@@ -126,6 +132,7 @@ class KnowledgeService:
         filename: str,
         content_type: str,
         content: bytes,
+        request_id: str = "",
     ) -> KnowledgeDocument:
         await self.get_base(user_id, base_id)
         # Normalize both POSIX and Windows separators before retaining the display name.
@@ -158,9 +165,30 @@ class KnowledgeService:
         except Exception:
             await self._file_storage.delete(stored.path)
             raise
+        pending_snapshot = replace(document)
 
-        await self._task_queue.enqueue(lambda: self._process_document(document))
-        return await self.get_document(user_id, document.id)
+        try:
+            await self._task_queue.enqueue_document(
+                DocumentImportJob(
+                    document_id=document.id,
+                    user_id=user_id,
+                    knowledge_base_id=base_id,
+                    request_id=request_id,
+                )
+            )
+        except Exception as exc:
+            await self._repository.mark_failed(
+                document.id,
+                "QUEUE_UNAVAILABLE",
+                "Document processing could not be scheduled",
+            )
+            await self._file_storage.delete(document.storage_path)
+            raise KnowledgeQueueUnavailableError(
+                "Document processing is temporarily unavailable"
+            ) from exc
+        # The queue contract is asynchronous: the API must return the durable
+        # PENDING snapshot instead of waiting for the worker to update it.
+        return pending_snapshot
 
     async def delete_document(self, user_id: UUID, document_id: UUID) -> None:
         document = await self.get_document(user_id, document_id)
@@ -169,9 +197,29 @@ class KnowledgeService:
         if not await self._repository.delete_document_for_user(document.id, user_id):
             raise KnowledgeDocumentNotFoundError("Knowledge document not found")
 
-    async def _process_document(self, document: KnowledgeDocument) -> None:
-        await self._repository.mark_processing(document.id)
+    async def process_document_job(self, job: DocumentImportJob, attempt: int = 1) -> None:
+        document = await self._repository.get_document_for_user(job.document_id, job.user_id)
+        if document is None or document.knowledge_base_id != job.knowledge_base_id:
+            return
+        stale_before = utc_now() - timedelta(
+            seconds=self._settings.knowledge_processing_stale_seconds
+        )
+        claimed = await self._repository.claim_processing(document.id, stale_before, attempt)
+        if claimed is None:
+            return
+        document = claimed
+        started_at = time.perf_counter()
+        common_log = {
+            "document_id": str(document.id),
+            "knowledge_base_id": str(document.knowledge_base_id),
+            "request_id": job.request_id,
+            "attempt": attempt,
+            "provider": self._settings.embedding_provider,
+        }
+        logger.info("Knowledge document processing started", extra=common_log)
         try:
+            # A stale recovery or redelivered job must not append duplicate chunks.
+            await self._vector_store.delete_document(document.id)
             pages = await self._pdf_parser.parse(document.storage_path)
             chunks = list(self._text_splitter.split(pages))
             if not chunks:
@@ -181,13 +229,41 @@ class KnowledgeService:
             stored_chunks = await self._embed_chunks(chunks)
             await self._vector_store.store_chunks(document.id, stored_chunks)
             await self._repository.mark_ready(document.id, len(pages), len(stored_chunks))
+            logger.info(
+                "Knowledge document processing completed",
+                extra={
+                    **common_log,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "chunk_count": len(stored_chunks),
+                },
+            )
         except (InvalidPdfError, UnsupportedPdfError, KnowledgeImportError) as exc:
             await self._fail_document(document, exc.code, exc.message)
-        except Exception:
+            logger.warning(
+                "Knowledge document processing failed permanently",
+                extra={
+                    **common_log,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "failure_code": exc.code,
+                },
+            )
+        except Exception as exc:
+            if attempt < self._settings.knowledge_task_max_attempts:
+                await self._vector_store.rollback()
+                await self._vector_store.delete_document(document.id)
+                logger.warning(
+                    "Knowledge document processing will retry",
+                    extra={
+                        **common_log,
+                        "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                        "failure_category": type(exc).__name__,
+                    },
+                )
+                raise RetryableKnowledgeImportError("Document processing will be retried") from exc
             await self._fail_document(
                 document,
-                "EMBEDDING_FAILED",
-                "Document import failed",
+                "RETRY_EXHAUSTED",
+                "Document processing failed after several attempts",
             )
 
     async def _embed_chunks(self, chunks: Sequence[Any]) -> list[StoredChunk]:
@@ -265,4 +341,3 @@ class KnowledgeService:
         await self._vector_store.rollback()
         await self._vector_store.delete_document(document.id)
         await self._repository.mark_failed(document.id, error_code, message)
-        await self._file_storage.delete(document.storage_path)

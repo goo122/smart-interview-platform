@@ -1,7 +1,9 @@
-from typing import Protocol
+from datetime import datetime
+from typing import Any, Protocol, cast
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +45,10 @@ class KnowledgeRepository(Protocol):
 
     async def mark_processing(self, document_id: UUID) -> KnowledgeDocument: ...
 
+    async def claim_processing(
+        self, document_id: UUID, stale_before: datetime, attempt: int = 1
+    ) -> KnowledgeDocument | None: ...
+
     async def mark_ready(
         self, document_id: UUID, page_count: int, chunk_count: int
     ) -> KnowledgeDocument: ...
@@ -52,6 +58,10 @@ class KnowledgeRepository(Protocol):
     ) -> KnowledgeDocument: ...
 
     async def delete_document_for_user(self, document_id: UUID, user_id: UUID) -> bool: ...
+
+    async def list_recoverable_documents(
+        self, stale_before: datetime, limit: int = 100
+    ) -> list[tuple[KnowledgeDocument, UUID]]: ...
 
 
 class SqlAlchemyKnowledgeRepository:
@@ -123,6 +133,11 @@ class SqlAlchemyKnowledgeRepository:
             chunk_count=document.chunk_count,
             error_code=document.error_code,
             error_message=document.error_message,
+            queued_at=document.queued_at,
+            processing_started_at=document.processing_started_at,
+            attempt_count=document.attempt_count,
+            failure_code=document.failure_code,
+            failure_message=document.failure_message,
             created_at=document.created_at,
             updated_at=document.updated_at,
             completed_at=document.completed_at,
@@ -180,12 +195,53 @@ class SqlAlchemyKnowledgeRepository:
         return [_document_to_domain(row) for row in result.scalars().all()], int(count or 0)
 
     async def mark_processing(self, document_id: UUID) -> KnowledgeDocument:
+        started = utc_now()
         await self._session.execute(
             update(KnowledgeDocumentModel)
             .where(KnowledgeDocumentModel.id == document_id)
-            .values(status=DocumentStatus.PROCESSING.value, updated_at=utc_now())
+            .values(
+                status=DocumentStatus.PROCESSING.value,
+                processing_started_at=started,
+                attempt_count=KnowledgeDocumentModel.attempt_count + 1,
+                updated_at=started,
+            )
         )
         await self._session.commit()
+        return await self._get_document(document_id)
+
+    async def claim_processing(
+        self, document_id: UUID, stale_before: datetime, attempt: int = 1
+    ) -> KnowledgeDocument | None:
+        started = utc_now()
+        result = await self._session.execute(
+            update(KnowledgeDocumentModel)
+            .where(
+                KnowledgeDocumentModel.id == document_id,
+                (
+                    (KnowledgeDocumentModel.status == DocumentStatus.PENDING.value)
+                    | (
+                        (KnowledgeDocumentModel.status == DocumentStatus.PROCESSING.value)
+                        & or_(
+                            KnowledgeDocumentModel.processing_started_at.is_(None),
+                            KnowledgeDocumentModel.processing_started_at < stale_before,
+                        )
+                    )
+                    | (
+                        (KnowledgeDocumentModel.status == DocumentStatus.PROCESSING.value)
+                        & (KnowledgeDocumentModel.attempt_count == max(attempt - 1, 0))
+                    )
+                ),
+            )
+            .values(
+                status=DocumentStatus.PROCESSING.value,
+                processing_started_at=started,
+                attempt_count=KnowledgeDocumentModel.attempt_count + 1,
+                updated_at=started,
+            )
+        )
+        await self._session.commit()
+        if cast(CursorResult[Any], result).rowcount != 1:
+            return None
         return await self._get_document(document_id)
 
     async def mark_ready(
@@ -201,6 +257,8 @@ class SqlAlchemyKnowledgeRepository:
                 chunk_count=chunk_count,
                 error_code=None,
                 error_message=None,
+                failure_code=None,
+                failure_message=None,
                 completed_at=completed,
                 updated_at=completed,
             )
@@ -219,6 +277,8 @@ class SqlAlchemyKnowledgeRepository:
                 status=DocumentStatus.FAILED.value,
                 error_code=error_code,
                 error_message=error_message,
+                failure_code=error_code,
+                failure_message=error_message,
                 completed_at=None,
                 updated_at=failed_at,
             )
@@ -235,6 +295,35 @@ class SqlAlchemyKnowledgeRepository:
         )
         await self._session.commit()
         return True
+
+    async def list_recoverable_documents(
+        self, stale_before: datetime, limit: int = 100
+    ) -> list[tuple[KnowledgeDocument, UUID]]:
+        result = await self._session.execute(
+            select(KnowledgeDocumentModel, KnowledgeBaseModel.user_id)
+            .join(
+                KnowledgeBaseModel,
+                KnowledgeBaseModel.id == KnowledgeDocumentModel.knowledge_base_id,
+            )
+            .where(
+                or_(
+                    KnowledgeDocumentModel.status == DocumentStatus.PENDING.value,
+                    (
+                        (KnowledgeDocumentModel.status == DocumentStatus.PROCESSING.value)
+                        & (
+                            KnowledgeDocumentModel.processing_started_at.is_(None)
+                            | (KnowledgeDocumentModel.processing_started_at < stale_before)
+                        )
+                    ),
+                )
+            )
+            .order_by(KnowledgeDocumentModel.updated_at.asc())
+            .limit(limit)
+        )
+        return [
+            (_document_to_domain(row), user_id)
+            for row, user_id in result.all()
+        ]
 
     async def _get_document(self, document_id: UUID) -> KnowledgeDocument:
         result = await self._session.execute(
@@ -269,6 +358,11 @@ def _document_to_domain(row: KnowledgeDocumentModel) -> KnowledgeDocument:
         chunk_count=row.chunk_count,
         error_code=row.error_code,
         error_message=row.error_message,
+        queued_at=row.queued_at,
+        processing_started_at=row.processing_started_at,
+        attempt_count=row.attempt_count,
+        failure_code=row.failure_code or row.error_code,
+        failure_message=row.failure_message or row.error_message,
         created_at=row.created_at,
         updated_at=row.updated_at,
         completed_at=row.completed_at,

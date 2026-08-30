@@ -62,11 +62,19 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   });
   await expect(knowledgeBaseButton).toBeVisible();
   await knowledgeBaseButton.click();
+  const uploadResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    response.url().includes("/knowledge-bases/") &&
+    response.url().endsWith("/documents"),
+  );
   await page.locator('label.upload-button input[type="file"]').setInputFiles({
     name: "synthetic-resume.pdf",
     mimeType: "application/pdf",
     buffer: createSyntheticPdf(),
   });
+  const uploadResponse = await uploadResponsePromise;
+  expect(uploadResponse.ok()).toBeTruthy();
+  expect((await uploadResponse.json()).status).toBe("PENDING");
   await expect(
     page.getByRole("button", { name: new RegExp(`${knowledgeBase} 已就绪$`) }),
   ).toBeVisible({ timeout: 60_000 });

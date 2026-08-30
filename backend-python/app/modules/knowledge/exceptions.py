@@ -1,4 +1,5 @@
 from app.core.exceptions import AppError
+from app.workers.queue import RetryableTaskError
 
 
 class KnowledgeBaseNotFoundError(AppError):
@@ -34,6 +35,15 @@ class UnsupportedPdfError(AppError):
 class KnowledgeImportError(AppError):
     status_code = 422
     code = "knowledge_import_failed"
+
+
+class KnowledgeQueueUnavailableError(AppError):
+    status_code = 503
+    code = "knowledge_queue_unavailable"
+
+
+class RetryableKnowledgeImportError(RetryableTaskError):
+    """A worker may retry the current document without exposing provider details."""
 
 
 class ChunkLimitExceededError(KnowledgeImportError):

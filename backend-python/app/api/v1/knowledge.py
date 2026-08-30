@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 
 from app.core.config import Settings, get_settings
 from app.modules.auth.dependencies import get_current_user
@@ -73,6 +73,7 @@ async def delete_knowledge_base(
 )
 async def upload_document(
     base_id: UUID,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[KnowledgeService, Depends(get_knowledge_service)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -85,6 +86,7 @@ async def upload_document(
         file.filename or "document.pdf",
         file.content_type or "",
         content,
+        request_id=getattr(request.state, "request_id", ""),
     )
     return KnowledgeDocumentResponse.from_domain(document)
 

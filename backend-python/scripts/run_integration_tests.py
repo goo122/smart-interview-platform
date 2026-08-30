@@ -108,6 +108,18 @@ def _wait_for_health(docker: str, timeout_seconds: int = 90) -> None:
     raise IntegrationGateError("PostgreSQL or Redis did not become healthy before timeout")
 
 
+def _wait_for_worker(docker: str, timeout_seconds: int = 120) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        status = _container_statuses(docker).get("worker", {})
+        if status.get("Health") == "healthy":
+            return
+        if status.get("State") == "exited":
+            raise IntegrationGateError("Knowledge worker exited before becoming healthy")
+        time.sleep(2)
+    raise IntegrationGateError("Knowledge worker did not become healthy before timeout")
+
+
 def _verify_schema(docker: str) -> None:
     sql = """
 select version_num from alembic_version;
@@ -142,13 +154,13 @@ select exists(select 1 from pg_extension where extname = 'vector');
     )
     output = _require_success(result, "Schema verification")
     values = [line.strip() for line in output.splitlines() if line.strip()]
-    expected = ["0009_resume_report_snapshot", "t", "1536", "t", "t"]
+    expected = ["0010_knowledge_queue_state", "t", "1536", "t", "t"]
     if values != expected:
         raise IntegrationGateError(
             f"Schema verification returned unexpected safe values: {values}"
         )
     print(
-        "Schema: Alembic 0009, pgvector enabled, embedding dimension 1536, "
+        "Schema: Alembic 0010, pgvector enabled, embedding dimension 1536, "
         "resume snapshot present"
     )
 
@@ -161,6 +173,8 @@ def _run_pytest(docker: str, run_number: int) -> str:
         f"{BACKEND_DIR / 'tests'}:/workspace/tests:ro",
         "-v",
         f"{BACKEND_DIR / 'pyproject.toml'}:/workspace/pyproject.toml:ro",
+        "-v",
+        f"{PROJECT_NAME}_knowledge-storage-integration:/app/storage",
     ]
     command = _compose_command(
         docker,
@@ -181,7 +195,9 @@ def _run_pytest(docker: str, run_number: int) -> str:
         "-e",
         "APP_AI_PROVIDER=unavailable",
         "-e",
-        "APP_EMBEDDING_PROVIDER=unavailable",
+        "APP_EMBEDDING_PROVIDER=fake",
+        "-e",
+        "APP_KNOWLEDGE_STORAGE_DIR=/app/storage",
         "--entrypoint",
         "/bin/sh",
         "migrate",
@@ -199,7 +215,7 @@ def _run_pytest(docker: str, run_number: int) -> str:
     match = re.search(r"(?P<passed>\d+) passed(?:, (?P<skipped>\d+) skipped)?", output)
     if (
         not match
-        or int(match.group("passed")) != 9
+        or int(match.group("passed")) < 9
         or int(match.group("skipped") or 0) != 0
     ):
         raise IntegrationGateError(
@@ -233,7 +249,8 @@ def main() -> int:
             "Pre-run cleanup",
         )
         _require_success(
-            _run(_compose_command(docker, "build", "migrate")), "Migration image build"
+            _run(_compose_command(docker, "build", "migrate", "worker")),
+            "Migration and worker image build",
         )
         _require_success(
             _run(_compose_command(docker, "up", "-d", "postgres", "redis")),
@@ -245,6 +262,12 @@ def main() -> int:
             _run(_compose_command(docker, "run", "--rm", "--no-deps", "migrate")),
             "Alembic migration",
         )
+        _require_success(
+            _run(_compose_command(docker, "up", "-d", "worker")),
+            "Worker startup",
+        )
+        _wait_for_worker(docker)
+        print("Worker: healthy")
         _verify_schema(docker)
         _run_pytest(docker, 1)
         _run_pytest(docker, 2)

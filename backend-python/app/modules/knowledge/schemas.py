@@ -47,6 +47,11 @@ class KnowledgeDocumentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+    queued_at: datetime | None
+    processing_started_at: datetime | None
+    attempt_count: int
+    failure_code: str | None
+    failure_message: str | None
 
     @classmethod
     def from_domain(cls, document: KnowledgeDocument) -> "KnowledgeDocumentResponse":
@@ -67,6 +72,11 @@ class KnowledgeDocumentResponse(BaseModel):
             created_at=document.created_at,
             updated_at=document.updated_at,
             completed_at=document.completed_at,
+            queued_at=document.queued_at,
+            processing_started_at=document.processing_started_at,
+            attempt_count=document.attempt_count,
+            failure_code=document.failure_code,
+            failure_message=document.failure_message,
         )
 
 
