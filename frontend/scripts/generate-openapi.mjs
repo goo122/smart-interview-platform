@@ -86,6 +86,14 @@ const selected = [
     schemaName: "CreateInterviewSessionRequest",
   },
   {
+    exportName: "ResolveInterviewRoleRequest",
+    schemaName: "ResolveInterviewRoleRequest",
+  },
+  {
+    exportName: "ResolveInterviewRoleResponse",
+    schemaName: "ResolveInterviewRoleResponse",
+  },
+  {
     exportName: "InterviewSessionResponse",
     schemaName: "InterviewSessionResponse",
   },

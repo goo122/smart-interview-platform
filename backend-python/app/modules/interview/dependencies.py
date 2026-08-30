@@ -10,7 +10,12 @@ from app.ai.interview import (
     InterviewQuestionGeneratorPort,
     UnavailableInterviewQuestionGenerator,
 )
-from app.ai.resume import ResumeEvaluatorPort, UnavailableResumeEvaluator
+from app.ai.resume import (
+    ResumeEvaluatorPort,
+    ResumeRoleInferencePort,
+    UnavailableResumeEvaluator,
+    UnavailableResumeRoleInference,
+)
 from app.core.config import Settings, get_settings
 from app.infrastructure.vectorstore.retriever import PgVectorRetriever
 from app.modules.auth.dependencies import get_db_session
@@ -83,6 +88,17 @@ def get_resume_evaluator(request: Request) -> ResumeEvaluatorPort:
     )
 
 
+def get_resume_role_inference(request: Request) -> ResumeRoleInferencePort:
+    return cast(
+        ResumeRoleInferencePort,
+        getattr(
+            request.app.state,
+            "resume_role_inference",
+            UnavailableResumeRoleInference(),
+        ),
+    )
+
+
 def get_interview_answer_evaluator(request: Request) -> InterviewAnswerEvaluatorPort:
     return cast(
         InterviewAnswerEvaluatorPort,
@@ -131,9 +147,18 @@ def get_interview_service(
     task_queue: Annotated[TaskQueuePort, Depends(get_task_queue)],
     settings: Annotated[Settings, Depends(get_settings)],
     resume_evaluator: Annotated[ResumeEvaluatorPort, Depends(get_resume_evaluator)],
+    role_inference: Annotated[
+        ResumeRoleInferencePort, Depends(get_resume_role_inference)
+    ],
 ) -> InterviewService:
     return InterviewService(
-        repository, context_provider, generator, task_queue, settings, resume_evaluator
+        repository,
+        context_provider,
+        generator,
+        task_queue,
+        settings,
+        resume_evaluator,
+        role_inference,
     )
 
 

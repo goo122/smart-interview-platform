@@ -29,6 +29,22 @@ class CreateInterviewSessionRequest(BaseModel):
     request_id: str | None = Field(default=None, alias="requestId", max_length=128)
 
 
+class ResolveInterviewRoleRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    knowledge_base_id: UUID = Field(alias="knowledgeBaseId")
+
+
+class ResolveInterviewRoleResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_title: str = Field(alias="jobTitle", min_length=1, max_length=200)
+    job_description: str = Field(alias="jobDescription", min_length=1, max_length=20000)
+    confidence: int | None = Field(default=None, ge=0, le=100)
+    inferred: bool
+    inference_version: str = Field(alias="inferenceVersion")
+
+
 class InterviewSessionResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

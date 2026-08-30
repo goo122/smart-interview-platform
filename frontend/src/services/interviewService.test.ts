@@ -100,6 +100,30 @@ describe("interviewService.createInterviewSession", () => {
   });
 });
 
+describe("interviewService.resolveInterviewRole", () => {
+  it("requests the resume role inferred by the backend", async () => {
+    const postSpy = vi.spyOn(service, "post").mockResolvedValue({
+      jobTitle: "Python 后端开发工程师",
+      jobDescription: "围绕 Python 后端开发工程师的岗位职责进行综合评估。",
+      confidence: 92,
+      inferred: true,
+      inferenceVersion: "resume-role-v1",
+    });
+
+    try {
+      const result = await interviewService.resolveInterviewRole("knowledge-1");
+      expect(result.jobTitle).toBe("Python 后端开发工程师");
+      expect(postSpy).toHaveBeenCalledWith(
+        "/xunzhi/v1/interview/resolve-role",
+        { knowledgeBaseId: "knowledge-1" },
+        { timeout: 180_000 },
+      );
+    } finally {
+      postSpy.mockRestore();
+    }
+  });
+});
+
 describe("interviewService reports", () => {
   it("uses the FastAPI report read and generation endpoints", async () => {
     const report = { sessionId: "session-1", status: "READY" };

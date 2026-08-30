@@ -195,6 +195,16 @@ export interface components {
       "questionCount"?: number;
       "requestId"?: string | null;
     };
+    ResolveInterviewRoleRequest: {
+      "knowledgeBaseId": string;
+    };
+    ResolveInterviewRoleResponse: {
+      "jobTitle": string;
+      "jobDescription": string;
+      "confidence"?: number | null;
+      "inferred": boolean;
+      "inferenceVersion": string;
+    };
     InterviewSessionResponse: {
       "id": string;
       "sessionId": string;
@@ -408,6 +418,8 @@ export type EmptyResponse = components["schemas"]["EmptyResponse"];
 export type InterviewType = components["schemas"]["InterviewType"];
 export type InterviewDifficulty = components["schemas"]["InterviewDifficulty"];
 export type CreateInterviewSessionRequest = components["schemas"]["CreateInterviewSessionRequest"];
+export type ResolveInterviewRoleRequest = components["schemas"]["ResolveInterviewRoleRequest"];
+export type ResolveInterviewRoleResponse = components["schemas"]["ResolveInterviewRoleResponse"];
 export type InterviewSessionResponse = components["schemas"]["InterviewSessionResponse"];
 export type ResumeEvaluationResponse = components["schemas"]["ResumeEvaluationResponse"];
 export type InterviewQuestionResponse = components["schemas"]["InterviewQuestionResponse"];

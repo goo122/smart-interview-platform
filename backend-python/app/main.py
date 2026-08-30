@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.follow_up_question_generator = providers.follow_up_question_generator
     app.state.interview_report_narrative = providers.interview_report_narrative
     app.state.resume_evaluator = providers.resume_evaluator
+    app.state.resume_role_inference = providers.resume_role_inference
     app.state.embedding = providers.embedding
     app.state.ai_model_metadata = providers.model_metadata
     app.state.file_storage = LocalFileStorage(settings.knowledge_storage_dir)

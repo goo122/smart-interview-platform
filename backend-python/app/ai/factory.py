@@ -50,9 +50,13 @@ from app.ai.report import (
 )
 from app.ai.resume import (
     FakeResumeEvaluator,
+    FakeResumeRoleInference,
     LangChainResumeEvaluatorAdapter,
+    LangChainResumeRoleInferenceAdapter,
     ResumeEvaluatorPort,
+    ResumeRoleInferencePort,
     UnavailableResumeEvaluator,
+    UnavailableResumeRoleInference,
 )
 from app.core.config import Settings
 
@@ -69,6 +73,7 @@ class AiProviderBundle:
     follow_up_question_generator: FollowUpQuestionGeneratorPort
     interview_report_narrative: InterviewReportNarrativePort
     resume_evaluator: ResumeEvaluatorPort
+    resume_role_inference: ResumeRoleInferencePort
     embedding: EmbeddingPort
     model_metadata: AiModelMetadataPort
 
@@ -157,6 +162,9 @@ class AiProviderFactory:
             resume_evaluator: ResumeEvaluatorPort = FakeResumeEvaluator(
                 error=evaluation_error
             )
+            resume_role_inference: ResumeRoleInferencePort = FakeResumeRoleInference(
+                error=evaluation_error
+            )
             chat_model: ChatModelPort = FakeChatModel(
                 chunks=("这是开发环境的模拟回答。",), error=evaluation_error
             )
@@ -171,6 +179,7 @@ class AiProviderFactory:
                 else UnavailableInterviewReportNarrativeGenerator()
             )
             resume_evaluator = UnavailableResumeEvaluator()
+            resume_role_inference = UnavailableResumeRoleInference()
         embedding: EmbeddingPort = (
             FakeEmbedding(settings.embedding_dimensions)
             if settings.embedding_provider == "fake"
@@ -183,6 +192,7 @@ class AiProviderFactory:
             follow_up_generator,
             report_narrative,
             resume_evaluator,
+            resume_role_inference,
             embedding,
             model_metadata,
         )
@@ -207,6 +217,7 @@ class AiProviderFactory:
         follow_up_generator: FollowUpQuestionGeneratorPort
         report_narrative: InterviewReportNarrativePort
         resume_evaluator: ResumeEvaluatorPort
+        resume_role_inference: ResumeRoleInferencePort
         if settings.ai_provider == "openai_compatible":
             assert settings.llm_api_key is not None
             assert settings.llm_base_url is not None
@@ -225,6 +236,7 @@ class AiProviderFactory:
             follow_up_generator = LangChainFollowUpQuestionGeneratorAdapter(model)
             report_narrative = LangChainInterviewReportNarrativeAdapter(model)
             resume_evaluator = LangChainResumeEvaluatorAdapter(model)
+            resume_role_inference = LangChainResumeRoleInferenceAdapter(model)
         else:
             chat_model = UnavailableChatModel()
             question_generator = UnavailableInterviewQuestionGenerator()
@@ -232,6 +244,7 @@ class AiProviderFactory:
             follow_up_generator = UnavailableFollowUpQuestionGenerator()
             report_narrative = RuleBasedInterviewReportNarrativeGenerator()
             resume_evaluator = UnavailableResumeEvaluator()
+            resume_role_inference = UnavailableResumeRoleInference()
 
         if settings.embedding_provider == "openai_compatible":
             assert settings.embedding_api_key is not None
@@ -272,6 +285,7 @@ class AiProviderFactory:
             follow_up_generator,
             report_narrative,
             resume_evaluator,
+            resume_role_inference,
             embedding,
             model_metadata,
         )

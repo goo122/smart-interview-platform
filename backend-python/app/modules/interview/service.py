@@ -3,7 +3,12 @@ from typing import cast
 from uuid import UUID
 
 from app.ai.interview import InterviewQuestionGeneratorPort
-from app.ai.resume import ResumeEvaluatorPort
+from app.ai.resume import (
+    ResumeEvaluatorPort,
+    ResumeRoleInferencePort,
+    ResumeRoleInferenceRequest,
+    StructuredResumeRoleInference,
+)
 from app.core.config import Settings
 from app.modules.interview.context import InterviewContextProviderPort
 from app.modules.interview.domain import (
@@ -46,6 +51,7 @@ class InterviewService:
         task_queue: TaskQueuePort,
         settings: Settings,
         resume_evaluator: ResumeEvaluatorPort | None = None,
+        role_inference: ResumeRoleInferencePort | None = None,
     ) -> None:
         self._repository = repository
         self._context_provider = context_provider
@@ -54,6 +60,30 @@ class InterviewService:
         self._settings = settings
         self._workflow = InterviewPreparationWorkflow(
             repository, context_provider, generator, resume_evaluator
+        )
+        self._role_inference = role_inference
+
+    async def infer_resume_role(
+        self, user_id: UUID, knowledge_base_id: UUID
+    ) -> StructuredResumeRoleInference:
+        """Infer a role from the user's ready resume context only."""
+
+        await self._context_provider.validate_knowledge_base(user_id, knowledge_base_id)
+        context = await self._context_provider.build(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            job_title="简历岗位方向分析",
+            job_description="根据简历中的教育、工作经历、项目、技能和成果识别最匹配的岗位方向。",
+            difficulty="MEDIUM",
+            question_count=5,
+        )
+        if self._role_inference is None:
+            raise RuntimeError("No resume role inference is configured")
+        return await self._role_inference.infer(
+            ResumeRoleInferenceRequest(
+                resume_context=context.prompt,
+                source_ids=tuple(citation.source_id for citation in context.citations),
+            )
         )
 
     async def create_session(

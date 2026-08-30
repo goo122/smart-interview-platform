@@ -18,6 +18,8 @@ from app.modules.interview.schemas import (
     InterviewQuestionResponse,
     InterviewSessionResponse,
     InterviewTurnResponse,
+    ResolveInterviewRoleRequest,
+    ResolveInterviewRoleResponse,
     SubmitInterviewAnswerRequest,
     SubmitInterviewAnswerResponse,
 )
@@ -32,6 +34,39 @@ from app.modules.report.schemas import (
 from app.modules.report.service import InterviewReportService
 
 router = APIRouter(prefix="/xunzhi/v1/interview", tags=["interview"])
+
+
+@router.post(
+    "/resolve-role",
+    response_model=ResolveInterviewRoleResponse,
+)
+async def resolve_role(
+    payload: ResolveInterviewRoleRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewService, Depends(get_interview_service)],
+) -> ResolveInterviewRoleResponse:
+    """Infer the interview direction from the user's ready resume."""
+
+    fallback_title = "综合岗位"
+    fallback_description = "结合候选人简历中的经历、技能和项目成果进行综合面试评估。"
+    try:
+        inference = await service.infer_resume_role(current_user.id, payload.knowledge_base_id)
+    except RuntimeError:
+        return ResolveInterviewRoleResponse(
+            jobTitle=fallback_title,
+            jobDescription=fallback_description,
+            confidence=None,
+            inferred=False,
+            inferenceVersion="resume-role-v1",
+        )
+    title = inference.recommended_job_title.strip() or fallback_title
+    return ResolveInterviewRoleResponse(
+        jobTitle=title,
+        jobDescription=f"围绕{title}的岗位职责、核心技能、项目经验和问题解决能力进行综合评估。",
+        confidence=inference.confidence,
+        inferred=True,
+        inferenceVersion="resume-role-v1",
+    )
 
 
 @router.post(

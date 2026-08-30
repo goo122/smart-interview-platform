@@ -41,6 +41,14 @@ export interface CreateInterviewSessionResult {
   status?: string | null;
 }
 
+export interface ResolveInterviewRoleResult {
+  jobTitle: string;
+  jobDescription: string;
+  confidence: number | null;
+  inferred: boolean;
+  inferenceVersion: string;
+}
+
 export interface CreateInterviewSessionParams {
   knowledgeBaseId: string;
   jobTitle: string;
@@ -838,6 +846,12 @@ export const interviewService = {
       },
     );
   },
+  resolveInterviewRole: async (knowledgeBaseId: string) =>
+    service.post<ResolveInterviewRoleResult, { knowledgeBaseId: string }>(
+      "/xunzhi/v1/interview/resolve-role",
+      { knowledgeBaseId },
+      { timeout: INTERVIEW_LONG_TIMEOUT_MS },
+    ),
   prepareInterviewSessionFromResume: async (
     file: File,
     options: PrepareInterviewSessionOptions = {},
@@ -869,12 +883,19 @@ export const interviewService = {
       throw new Error("简历解析失败，请稍后重试");
     }
 
+    const resolvedRole = options.jobTitle?.trim()
+      ? {
+          jobTitle: options.jobTitle.trim(),
+          jobDescription:
+            options.jobDescription?.trim() ||
+            `围绕${options.jobTitle.trim()}的岗位职责、核心技能、项目经验和问题解决能力进行综合评估。`,
+        }
+      : await interviewService.resolveInterviewRole(knowledgeBase.id);
     const created = await interviewService.createInterviewSession({
       knowledgeBaseId: knowledgeBase.id,
-      jobTitle: options.jobTitle || "Java 高级开发工程师",
+      jobTitle: resolvedRole.jobTitle,
       jobDescription:
-        options.jobDescription ||
-        "负责 Java 后端开发、系统设计与性能优化，能够结合项目经验进行技术方案分析。",
+        options.jobDescription?.trim() || resolvedRole.jobDescription,
       interviewType: options.interviewType || "TECHNICAL",
       difficulty: options.difficulty || "MEDIUM",
       questionCount: options.questionCount || 5,
