@@ -12,6 +12,7 @@ import {
 export class AudioToTextWebSocket {
   private ws: WebSocket | null = null;
   private url: string;
+  private authProtocols: string[] | undefined;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private pendingBinaryQueue: Array<ArrayBuffer | Blob> = [];
   private readonly maxPendingBinaryChunks = 24;
@@ -35,7 +36,9 @@ export class AudioToTextWebSocket {
   public onDisconnected?: () => void;
 
   constructor(userId: string) {
+    const token = getAuthToken();
     this.url = this.buildWebSocketUrl(userId);
+    this.authProtocols = token ? ["xunzhi-auth", token] : undefined;
   }
 
   private resolveConfiguredWebSocketBaseUrl() {
@@ -46,15 +49,7 @@ export class AudioToTextWebSocket {
     const wsBase = this.resolveWebSocketBaseUrl();
     const apiBase = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
     const path = `${apiBase}/xunzhi/v1/xunfei/audio-to-text/${encodeURIComponent(userId)}`;
-    const token = getAuthToken();
-
-    if (!token) {
-      return `${wsBase}${path}`;
-    }
-
-    const query = new URLSearchParams();
-    query.set("token", token);
-    return `${wsBase}${path}?${query.toString()}`;
+    return `${wsBase}${path}`;
   }
 
   private resolveWebSocketBaseUrl() {
@@ -71,7 +66,9 @@ export class AudioToTextWebSocket {
       return;
     }
 
-    this.ws = new WebSocket(this.url);
+    this.ws = this.authProtocols
+      ? new WebSocket(this.url, this.authProtocols)
+      : new WebSocket(this.url);
     this.resetMessageCursor();
     this.gracefulCloseRequested = false;
     this.serverClosed = false;

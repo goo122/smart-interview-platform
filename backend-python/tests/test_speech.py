@@ -148,6 +148,15 @@ def _connect(client: TestClient, token: str, username: str = "speech-user"):
     )
 
 
+def _connect_with_subprotocol(
+    client: TestClient, token: str, username: str = "speech-user"
+):
+    return client.websocket_connect(
+        f"/api/xunzhi/v1/xunfei/audio-to-text/{quote(username)}",
+        subprotocols=["xunzhi-auth", token],
+    )
+
+
 def _start(websocket) -> None:
     assert websocket.receive_json()["type"] == "connected"
     websocket.send_json(
@@ -189,6 +198,17 @@ def test_user_cannot_impersonate_another_user(speech_client) -> None:
     ):
         pass
     assert error.value.code == 1008
+
+
+def test_websocket_authenticates_with_the_token_subprotocol(speech_client) -> None:
+    client, _ = speech_client
+    token = _login(client, username="speech-subprotocol-user")
+    with _connect_with_subprotocol(client, token, "speech-subprotocol-user") as websocket:
+        _start(websocket)
+        websocket.send_json({"type": "stop_transcription"})
+        assert websocket.receive_json()["type"] == "transcription_stopping"
+        assert websocket.receive_json()["type"] == "final"
+        assert websocket.receive_json()["type"] == "closed"
 
 
 def test_fake_provider_emits_incremental_and_final_snapshots(speech_client) -> None:

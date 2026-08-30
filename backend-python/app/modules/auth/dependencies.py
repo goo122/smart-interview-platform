@@ -89,6 +89,18 @@ def _websocket_token(websocket: WebSocket) -> str | None:
             normalized = normalized[7:].strip()
         if normalized:
             return normalized
+    protocols = websocket.headers.get("sec-websocket-protocol", "")
+    for value in protocols.split(","):
+        normalized = value.strip()
+        if normalized and normalized != "xunzhi-auth":
+            return normalized
+    return None
+
+
+def _websocket_auth_subprotocol(websocket: WebSocket) -> str | None:
+    protocols = websocket.headers.get("sec-websocket-protocol", "")
+    if "xunzhi-auth" in {value.strip() for value in protocols.split(",")}:
+        return "xunzhi-auth"
     return None
 
 
@@ -127,4 +139,7 @@ async def get_current_websocket_user(
         target_user = await repository.get_by_username(user_id)
     if target_user is None or target_user.id != current_user.id:
         _reject_websocket_auth()
+    auth_subprotocol = _websocket_auth_subprotocol(websocket)
+    if auth_subprotocol:
+        websocket.state.speech_auth_subprotocol = auth_subprotocol
     return current_user

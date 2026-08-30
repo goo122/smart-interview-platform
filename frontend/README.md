@@ -44,6 +44,7 @@ Axios 客户端会自动附加 Bearer Token，并使用 single-flight 机制刷�
 `{"type":"start_transcription","audio_format":{"encoding":"pcm_s16le","sample_rate":16000,"channels":1}}`，
 再发送裸 PCM16 二进制帧，停止时发送 `{"type":"stop_transcription"}`。服务端返回完整增量快照
 （`transcription`）和最终快照（`final`），前端只填充聊天输入框或面试构思板，不会自动提交。
+认证 Token 通过 WebSocket 子协议 `xunzhi-auth` 携带，不拼接到 URL 查询串。
 
 后端 `APP_SPEECH_TO_TEXT_PROVIDER=unavailable` 时安全禁用麦克风；开发/测试可使用
 `fake`，生产环境会拒绝 Fake Provider。真实讯飞模式使用 `xunfei`，并且只从后端环境变量读取凭据。

@@ -66,7 +66,9 @@ class SpeechToTextService:
     async def handle_websocket(self, websocket: WebSocket) -> None:
         """Run one bounded websocket session until disconnect or normal finish."""
 
-        await websocket.accept()
+        await websocket.accept(
+            subprotocol=getattr(websocket.state, "speech_auth_subprotocol", None)
+        )
         await self._send(
             websocket,
             {

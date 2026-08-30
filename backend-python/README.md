@@ -285,9 +285,10 @@ The browser sends a `start_transcription` JSON command, binary PCM16 little-endi
 mono frames at 16kHz, and a `stop_transcription` command. The server returns
 `connected`, `transcription` replacement snapshots, `final` archive snapshots,
 safe `error` messages, and `closed`. The browser token is carried in the existing
-`token` query parameter because the WebSocket browser API cannot set an
-Authorization header; the Nginx WebSocket location disables access logging so the
-token is not written to ordinary proxy logs.
+WebSocket subprotocol list as `xunzhi-auth, <access-token>`; the backend also
+accepts the legacy `token` query parameter for older clients. The Nginx WebSocket
+location and container Uvicorn access logging are disabled for this endpoint so
+tokens are not written to ordinary access logs.
 
 Runtime selection uses `APP_SPEECH_TO_TEXT_PROVIDER`:
 
