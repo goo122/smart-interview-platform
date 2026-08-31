@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response
 
 from app.modules.auth.dependencies import get_current_user
@@ -279,8 +279,16 @@ async def generate_report(
     session_id: UUID,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[InterviewReportService, Depends(get_interview_report_service)],
+    response: Response,
+    request: Request,
 ) -> InterviewReportResponse:
-    report = await service.generate(current_user.id, session_id)
+    report = await service.generate(
+        current_user.id,
+        session_id,
+        getattr(request.state, "request_id", None),
+    )
+    if report.report.status.value in {"PENDING", "GENERATING"}:
+        response.status_code = status.HTTP_202_ACCEPTED
     return InterviewReportResponse.from_detail(report)
 
 

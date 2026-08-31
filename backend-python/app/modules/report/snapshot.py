@@ -31,7 +31,7 @@ class InterviewReportSnapshotBuilder:
             answer = answers.get(turn.id)
             evaluation = evaluations.get(turn.id)
             if answer is None or evaluation is None:
-                raise ValueError("Every completed turn must have an answer and evaluation")
+                continue
             snapshots.append(
                 ReportTurnSnapshot(
                     turn=turn,
@@ -42,6 +42,8 @@ class InterviewReportSnapshotBuilder:
                     else None,
                 )
             )
+        if not snapshots:
+            raise ValueError("Interview has no completed turns with answer and evaluation")
         if session.status.value != "COMPLETED":
             raise ValueError("Only completed interviews can produce reports")
         return tuple(snapshots)

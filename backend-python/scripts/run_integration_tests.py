@@ -136,6 +136,15 @@ select exists(select 1 from pg_extension where extname = 'vector');
      where table_name = 'interview_reports'
        and column_name = 'resume_evaluation_snapshot'
  );
+ select exists(
+     select 1 from information_schema.columns
+     where table_name = 'interview_reports'
+       and column_name = 'generation_lease_expires_at'
+ );
+ select exists(
+     select 1 from pg_constraint
+     where conname = 'uq_interview_report_items_report_turn'
+ );
 """
     result = _run(
         _compose_command(
@@ -154,14 +163,14 @@ select exists(select 1 from pg_extension where extname = 'vector');
     )
     output = _require_success(result, "Schema verification")
     values = [line.strip() for line in output.splitlines() if line.strip()]
-    expected = ["0012_interview_answer_eval_queue", "t", "1536", "t", "t"]
+    expected = ["0013_interview_report_queue", "t", "1536", "t", "t", "t", "t"]
     if values != expected:
         raise IntegrationGateError(
             f"Schema verification returned unexpected safe values: {values}"
         )
     print(
-        "Schema: Alembic 0012, pgvector enabled, embedding dimension 1536, "
-        "resume snapshot present"
+        "Schema: Alembic 0013, pgvector enabled, embedding dimension 1536, "
+        "resume snapshot and report generation fencing present"
     )
 
 

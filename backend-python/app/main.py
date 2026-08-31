@@ -74,6 +74,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.interview_answer_task_queue = ArqInterviewTaskQueue.create(
         str(settings.redis_url)
     )
+    app.state.interview_report_task_queue = ArqDocumentTaskQueue.create(
+        str(settings.redis_url)
+    )
     app.state.speech_to_text_service = SpeechToTextService(speech_provider, settings)
     app.state.text_to_speech_service = TextToSpeechService(tts_provider, settings)
     try:
@@ -82,6 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.document_task_queue.close()
         await app.state.interview_preparation_task_queue.close()
         await app.state.interview_answer_task_queue.close()
+        await app.state.interview_report_task_queue.close()
         await app.state.redis.aclose()
         await engine.dispose()
 

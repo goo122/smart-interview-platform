@@ -18,3 +18,12 @@ class ReportWithoutCompletedAnswersError(ReportSessionNotCompletedError):
 class ReportGenerationError(AppError):
     status_code = 422
     code = "interview_report_generation_failed"
+
+
+class ReportQueueUnavailableError(AppError):
+    status_code = 503
+    code = "interview_report_queue_unavailable"
+
+
+class ReportLeaseLostError(RuntimeError):
+    """Raised when a worker no longer owns the report generation lease."""

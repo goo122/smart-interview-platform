@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -7,11 +7,13 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.interview.models import InterviewSessionModel
 from app.modules.report.aggregation import AggregatedReportScores
 from app.modules.report.domain import (
     InterviewReport,
     InterviewReportItem,
     ReportGeneratedBy,
+    ReportGenerationClaim,
     ReportStatus,
 )
 from app.modules.report.models import InterviewReportItemModel, InterviewReportModel
@@ -20,9 +22,33 @@ from app.modules.report.models import InterviewReportItemModel, InterviewReportM
 class InterviewReportRepository(Protocol):
     async def create_pending(self, session_id: UUID, user_id: UUID) -> InterviewReport: ...
 
+    async def mark_queued(self, report_id: UUID, user_id: UUID) -> InterviewReport: ...
+
+    async def clear_queued(self, report_id: UUID, user_id: UUID) -> InterviewReport: ...
+
+    async def reset_for_retry(self, report_id: UUID, user_id: UUID) -> InterviewReport: ...
+
     async def claim_generation(
-        self, report_id: UUID, user_id: UUID
-    ) -> tuple[InterviewReport, bool]: ...
+        self,
+        report_id: UUID,
+        user_id: UUID,
+        stale_before: datetime,
+        lease_seconds: int,
+        attempt: int,
+        max_attempts: int,
+    ) -> ReportGenerationClaim | None: ...
+
+    async def renew_generation_lease(
+        self, report_id: UUID, user_id: UUID, fencing_token: str, lease_seconds: int
+    ) -> bool: ...
+
+    async def release_generation_for_retry(
+        self, report_id: UUID, user_id: UUID, fencing_token: str
+    ) -> bool: ...
+
+    async def list_recoverable_generations(
+        self, stale_before: datetime, max_attempts: int, limit: int
+    ) -> list[InterviewReport]: ...
 
     async def get_for_user(self, report_id: UUID, user_id: UUID) -> InterviewReport | None: ...
 
@@ -52,11 +78,17 @@ class InterviewReportRepository(Protocol):
         prompt_version: str | None,
         generated_by: ReportGeneratedBy,
         items: Sequence[InterviewReportItem],
+        fencing_token: str,
         resume_evaluation_snapshot: dict[str, Any] | None = None,
     ) -> InterviewReport: ...
 
     async def mark_failed(
-        self, report_id: UUID, user_id: UUID, failure_code: str, failure_message: str
+        self,
+        report_id: UUID,
+        user_id: UUID,
+        failure_code: str,
+        failure_message: str,
+        fencing_token: str,
     ) -> InterviewReport: ...
 
 
@@ -99,6 +131,12 @@ class SqlAlchemyInterviewReportRepository:
             created_at=now,
             updated_at=now,
             completed_at=None,
+            generation_queued_at=None,
+            generation_started_at=None,
+            generation_completed_at=None,
+            generation_attempt_count=0,
+            generation_lease_expires_at=None,
+            generation_fencing_token=None,
         )
         self._session.add(row)
         try:
@@ -117,22 +155,155 @@ class SqlAlchemyInterviewReportRepository:
         await self._session.refresh(row)
         return _report_to_domain(row)
 
-    async def claim_generation(
-        self, report_id: UUID, user_id: UUID
-    ) -> tuple[InterviewReport, bool]:
+    async def mark_queued(self, report_id: UUID, user_id: UUID) -> InterviewReport:
         row = await self._locked_row(report_id, user_id)
         if row is None:
             raise ValueError("Interview report not found")
-        status = ReportStatus(row.status)
-        if status in {ReportStatus.READY, ReportStatus.GENERATING}:
-            return _report_to_domain(row), False
-        row.status = ReportStatus.GENERATING.value
+        if ReportStatus(row.status) == ReportStatus.READY:
+            return _report_to_domain(row)
+        if ReportStatus(row.status) == ReportStatus.FAILED:
+            raise ValueError("Interview report is not pending")
+        row.generation_queued_at = _utc_now()
+        row.updated_at = _utc_now()
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _report_to_domain(row)
+
+    async def clear_queued(self, report_id: UUID, user_id: UUID) -> InterviewReport:
+        row = await self._locked_row(report_id, user_id)
+        if row is None:
+            raise ValueError("Interview report not found")
+        if ReportStatus(row.status) == ReportStatus.PENDING:
+            row.generation_queued_at = None
+            row.updated_at = _utc_now()
+            await self._session.commit()
+            await self._session.refresh(row)
+        return _report_to_domain(row)
+
+    async def reset_for_retry(self, report_id: UUID, user_id: UUID) -> InterviewReport:
+        row = await self._locked_row(report_id, user_id)
+        if row is None:
+            raise ValueError("Interview report not found")
+        if ReportStatus(row.status) == ReportStatus.READY:
+            return _report_to_domain(row)
+        if ReportStatus(row.status) != ReportStatus.FAILED:
+            return _report_to_domain(row)
+        row.status = ReportStatus.PENDING.value
+        row.generation_queued_at = None
+        row.generation_started_at = None
+        row.generation_completed_at = None
+        row.generation_attempt_count = 0
+        row.generation_lease_expires_at = None
+        row.generation_fencing_token = None
         row.failure_code = None
         row.failure_message = None
         row.updated_at = _utc_now()
         await self._session.commit()
         await self._session.refresh(row)
-        return _report_to_domain(row), True
+        return _report_to_domain(row)
+
+    async def claim_generation(
+        self,
+        report_id: UUID,
+        user_id: UUID,
+        stale_before: datetime,
+        lease_seconds: int,
+        attempt: int,
+        max_attempts: int,
+    ) -> ReportGenerationClaim | None:
+        row = await self._locked_row(report_id, user_id)
+        if row is None:
+            raise ValueError("Interview report not found")
+        status = ReportStatus(row.status)
+        now = _utc_now()
+        if status == ReportStatus.READY:
+            return None
+        if status == ReportStatus.GENERATING:
+            lease_expired = row.generation_lease_expires_at is None or (
+                row.generation_lease_expires_at <= now
+            )
+            if not lease_expired:
+                return None
+        elif status != ReportStatus.PENDING:
+            return None
+        next_attempt = max(attempt, row.generation_attempt_count + 1)
+        if next_attempt > max_attempts:
+            return None
+        token = uuid4().hex
+        row.status = ReportStatus.GENERATING.value
+        row.failure_code = None
+        row.failure_message = None
+        row.generation_attempt_count = next_attempt
+        row.generation_started_at = now
+        row.generation_lease_expires_at = now + timedelta(seconds=lease_seconds)
+        row.generation_fencing_token = token
+        row.updated_at = now
+        await self._session.commit()
+        await self._session.refresh(row)
+        return ReportGenerationClaim(_report_to_domain(row), token)
+
+    async def renew_generation_lease(
+        self, report_id: UUID, user_id: UUID, fencing_token: str, lease_seconds: int
+    ) -> bool:
+        row = await self._locked_row(report_id, user_id)
+        if row is None or row.status != ReportStatus.GENERATING.value:
+            return False
+        if row.generation_fencing_token != fencing_token:
+            return False
+        now = _utc_now()
+        row.generation_lease_expires_at = now + timedelta(seconds=lease_seconds)
+        row.updated_at = now
+        await self._session.commit()
+        return True
+
+    async def release_generation_for_retry(
+        self, report_id: UUID, user_id: UUID, fencing_token: str
+    ) -> bool:
+        row = await self._locked_row(report_id, user_id)
+        if row is None or row.status != ReportStatus.GENERATING.value:
+            return False
+        if row.generation_fencing_token != fencing_token:
+            return False
+        row.status = ReportStatus.PENDING.value
+        row.generation_queued_at = None
+        row.generation_lease_expires_at = None
+        row.generation_fencing_token = None
+        row.updated_at = _utc_now()
+        await self._session.commit()
+        return True
+
+    async def list_recoverable_generations(
+        self, stale_before: datetime, max_attempts: int, limit: int
+    ) -> list[InterviewReport]:
+        now = _utc_now()
+        result = await self._session.execute(
+            select(InterviewReportModel)
+            .join(
+                InterviewSessionModel,
+                InterviewSessionModel.id == InterviewReportModel.session_id,
+            )
+            .where(
+                InterviewSessionModel.status == "COMPLETED",
+                InterviewReportModel.generation_attempt_count < max_attempts,
+                (
+                    (InterviewReportModel.status == ReportStatus.PENDING.value)
+                    & (
+                        (InterviewReportModel.generation_queued_at.is_(None))
+                        | (InterviewReportModel.generation_queued_at <= stale_before)
+                    )
+                )
+                | (
+                    (InterviewReportModel.status == ReportStatus.GENERATING.value)
+                    & (
+                        InterviewReportModel.generation_lease_expires_at.is_(None)
+                        | (InterviewReportModel.generation_lease_expires_at <= now)
+                    )
+                ),
+            )
+            .order_by(InterviewReportModel.updated_at.asc())
+            .limit(limit)
+        )
+        return [_report_to_domain(row) for row in result.scalars().all()]
 
     async def get_for_user(self, report_id: UUID, user_id: UUID) -> InterviewReport | None:
         row = await self._session.scalar(
@@ -197,6 +368,7 @@ class SqlAlchemyInterviewReportRepository:
         prompt_version: str | None,
         generated_by: ReportGeneratedBy,
         items: Sequence[InterviewReportItem],
+        fencing_token: str,
         resume_evaluation_snapshot: dict[str, Any] | None = None,
     ) -> InterviewReport:
         row = await self._locked_row(report_id, user_id)
@@ -206,6 +378,8 @@ class SqlAlchemyInterviewReportRepository:
             return _report_to_domain(row)
         if ReportStatus(row.status) != ReportStatus.GENERATING:
             raise ValueError("Interview report is not generating")
+        if row.generation_fencing_token != fencing_token:
+            raise RuntimeError("Interview report generation lease lost")
         await self._session.execute(
             delete(InterviewReportItemModel).where(
                 InterviewReportItemModel.report_id == report_id
@@ -257,12 +431,20 @@ class SqlAlchemyInterviewReportRepository:
         row.failure_message = None
         row.updated_at = now
         row.completed_at = now
+        row.generation_completed_at = now
+        row.generation_lease_expires_at = None
+        row.generation_fencing_token = None
         await self._session.commit()
         await self._session.refresh(row)
         return _report_to_domain(row)
 
     async def mark_failed(
-        self, report_id: UUID, user_id: UUID, failure_code: str, failure_message: str
+        self,
+        report_id: UUID,
+        user_id: UUID,
+        failure_code: str,
+        failure_message: str,
+        fencing_token: str,
     ) -> InterviewReport:
         await self._session.rollback()
         row = await self._locked_row(report_id, user_id)
@@ -270,6 +452,8 @@ class SqlAlchemyInterviewReportRepository:
             raise ValueError("Interview report not found")
         if ReportStatus(row.status) == ReportStatus.READY:
             return _report_to_domain(row)
+        if row.generation_fencing_token != fencing_token:
+            raise RuntimeError("Interview report generation lease lost")
         await self._session.execute(
             delete(InterviewReportItemModel).where(
                 InterviewReportItemModel.report_id == report_id
@@ -280,6 +464,8 @@ class SqlAlchemyInterviewReportRepository:
         row.failure_message = failure_message[:2000]
         row.updated_at = _utc_now()
         row.completed_at = None
+        row.generation_lease_expires_at = None
+        row.generation_fencing_token = None
         await self._session.commit()
         await self._session.refresh(row)
         return _report_to_domain(row)
@@ -331,6 +517,12 @@ def _report_to_domain(row: InterviewReportModel) -> InterviewReport:
             if row.resume_evaluation_snapshot is not None
             else None
         ),
+        generation_queued_at=row.generation_queued_at,
+        generation_started_at=row.generation_started_at,
+        generation_completed_at=row.generation_completed_at,
+        generation_attempt_count=row.generation_attempt_count,
+        generation_lease_expires_at=row.generation_lease_expires_at,
+        generation_fencing_token=row.generation_fencing_token,
     )
 
 

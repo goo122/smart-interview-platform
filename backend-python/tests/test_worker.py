@@ -2,12 +2,18 @@ from uuid import uuid4
 
 import pytest
 
-from app.workers.queue import InterviewAnswerEvaluationJob, InterviewPreparationJob
+from app.workers.queue import (
+    InterviewAnswerEvaluationJob,
+    InterviewPreparationJob,
+    InterviewReportGenerationJob,
+)
 from app.workers.redis_queue import (
     INTERVIEW_ANSWER_EVALUATION_FUNCTION,
     INTERVIEW_PREPARATION_FUNCTION,
+    INTERVIEW_REPORT_GENERATION_FUNCTION,
     enqueue_interview_answer_evaluation_job,
     enqueue_interview_preparation_job,
+    enqueue_interview_report_job,
 )
 from app.workers.worker import worker_shutdown
 
@@ -86,6 +92,28 @@ async def test_answer_evaluation_job_has_only_serializable_identifiers() -> None
                 "answer_id": str(job.answer_id),
                 "request_id": job.request_id,
                 "_job_id": f"interview-answer-evaluation:{job.turn_id}",
+                "_queue_name": "knowledge:documents",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_report_generation_job_has_only_serializable_identifiers() -> None:
+    redis = RecordingRedis()
+    job = InterviewReportGenerationJob(uuid4(), uuid4(), uuid4(), "report-1")
+
+    await enqueue_interview_report_job(redis, job)  # type: ignore[arg-type]
+
+    assert redis.calls == [
+        (
+            INTERVIEW_REPORT_GENERATION_FUNCTION,
+            {
+                "report_id": str(job.report_id),
+                "session_id": str(job.session_id),
+                "user_id": str(job.user_id),
+                "request_id": job.request_id,
+                "_job_id": f"interview-report-generation:{job.report_id}",
                 "_queue_name": "knowledge:documents",
             },
         )

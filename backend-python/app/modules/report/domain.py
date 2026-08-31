@@ -52,6 +52,18 @@ class InterviewReport:
     updated_at: datetime
     completed_at: datetime | None
     resume_evaluation_snapshot: dict[str, Any] | None = None
+    generation_queued_at: datetime | None = None
+    generation_started_at: datetime | None = None
+    generation_completed_at: datetime | None = None
+    generation_attempt_count: int = 0
+    generation_lease_expires_at: datetime | None = None
+    generation_fencing_token: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReportGenerationClaim:
+    report: InterviewReport
+    fencing_token: str
 
 
 @dataclass(frozen=True, slots=True)

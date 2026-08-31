@@ -128,6 +128,8 @@ export interface InterviewRecordResult {
   startTime?: string | null;
   endTime?: string | null;
   durationSeconds?: number | null;
+  failureCode?: string | null;
+  failureMessage?: string | null;
   createTime?: string;
   updateTime?: string;
 }

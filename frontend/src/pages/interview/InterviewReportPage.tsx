@@ -1,5 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import InterviewReportHeader from "@/components/interview/report/InterviewReportHeader";
 import InterviewScoreAndRadarCard from "@/components/interview/report/InterviewScoreAndRadarCard";
@@ -25,6 +26,10 @@ export default function InterviewReportPage() {
     interviewDirection,
     qaReviews,
     reviewFeedback,
+    isReportGenerating,
+    isReportReady,
+    retryReport,
+    isRetryingReport,
   } = useInterviewReportData(reportSessionId);
 
   return (
@@ -44,71 +49,100 @@ export default function InterviewReportPage() {
           </Card>
         )}
 
-        <div className="grid items-start gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="space-y-6">
+        {isReportGenerating && !recordError ? (
+          <Card className="border-blue-100 bg-blue-50 p-5 text-blue-700">
+            报告正在生成中，请稍候。页面会自动更新，完成后展示正式报告。
+          </Card>
+        ) : null}
+
+        {recordError ? (
+          <Card className="flex flex-wrap items-center justify-between gap-4 border-rose-100 bg-rose-50 p-5 text-rose-700">
+            <span>{recordError}</span>
+            {reportSessionId ? (
+              <Button
+                variant="outline"
+                disabled={isRetryingReport}
+                onClick={() => void retryReport()}
+              >
+                {isRetryingReport ? "重试中..." : "重试生成报告"}
+              </Button>
+            ) : null}
+          </Card>
+        ) : null}
+
+        {isReportReady ? (
+          <div className="grid items-start gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 18, filter: "blur(5px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                transition={{
+                  duration: 0.38,
+                  delay: 0.05,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+              >
+                <InterviewScoreAndRadarCard
+                  resumeScore={resumeScore}
+                  interviewScore={interviewScore}
+                  compositeScore={compositeScore}
+                  isCompositeEstimated={isCompositeEstimated}
+                  radarPoints={radarPoints}
+                />
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 18, filter: "blur(5px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                transition={{
+                  duration: 0.38,
+                  delay: 0.12,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+              >
+                <InterviewNextActionsCard
+                  reviewFeedback={reviewFeedback}
+                  sortedSuggestions={sortedSuggestions}
+                  isRecordLoading={isRecordLoading}
+                  recordError={recordError}
+                />
+              </motion.div>
+            </div>
             <motion.div
               initial={{ opacity: 0, y: 18, filter: "blur(5px)" }}
               animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
               transition={{
                 duration: 0.38,
-                delay: 0.05,
+                delay: 0.18,
                 ease: [0.22, 1, 0.36, 1],
               }}
             >
-              <InterviewScoreAndRadarCard
-                resumeScore={resumeScore}
-                interviewScore={interviewScore}
-                compositeScore={compositeScore}
-                isCompositeEstimated={isCompositeEstimated}
-                radarPoints={radarPoints}
-              />
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0, y: 18, filter: "blur(5px)" }}
-              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-              transition={{
-                duration: 0.38,
-                delay: 0.12,
-                ease: [0.22, 1, 0.36, 1],
-              }}
-            >
-              <InterviewNextActionsCard
+              <InterviewConclusionCard
+                interviewDirection={interviewDirection}
                 reviewFeedback={reviewFeedback}
-                sortedSuggestions={sortedSuggestions}
                 isRecordLoading={isRecordLoading}
                 recordError={recordError}
               />
             </motion.div>
           </div>
+        ) : null}
+
+        {isReportReady ? (
           <motion.div
-            initial={{ opacity: 0, y: 18, filter: "blur(5px)" }}
+            initial={{ opacity: 0, y: 20, filter: "blur(5px)" }}
             animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
             transition={{
-              duration: 0.38,
-              delay: 0.18,
+              duration: 0.4,
+              delay: 0.24,
               ease: [0.22, 1, 0.36, 1],
             }}
           >
-            <InterviewConclusionCard
-              interviewDirection={interviewDirection}
-              reviewFeedback={reviewFeedback}
+            <InterviewQaReplayCard
+              qaReviews={qaReviews}
               isRecordLoading={isRecordLoading}
               recordError={recordError}
             />
           </motion.div>
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20, filter: "blur(5px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          transition={{ duration: 0.4, delay: 0.24, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <InterviewQaReplayCard
-            qaReviews={qaReviews}
-            isRecordLoading={isRecordLoading}
-            recordError={recordError}
-          />
-        </motion.div>
+        ) : null}
       </div>
     </div>
   );

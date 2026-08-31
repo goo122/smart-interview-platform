@@ -41,10 +41,13 @@ from app.modules.knowledge.repository import (
 )
 from app.modules.knowledge.service import KnowledgeService
 from app.modules.knowledge.splitter import SimpleTextSplitter
+from app.modules.report.repository import SqlAlchemyInterviewReportRepository
+from app.modules.report.service import InterviewReportService, ReportGenerationRetryableError
 from app.workers.queue import (
     DocumentImportJob,
     InterviewAnswerEvaluationJob,
     InterviewPreparationJob,
+    InterviewReportGenerationJob,
 )
 from app.workers.redis_queue import (
     DOCUMENT_IMPORT_QUEUE,
@@ -52,6 +55,7 @@ from app.workers.redis_queue import (
     enqueue_document_job,
     enqueue_interview_answer_evaluation_job,
     enqueue_interview_preparation_job,
+    enqueue_interview_report_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -376,6 +380,72 @@ async def process_interview_answer_evaluation(
         )
 
 
+async def process_interview_report_generation(
+    ctx: dict[str, Any],
+    *,
+    report_id: str,
+    session_id: str,
+    user_id: str,
+    request_id: str,
+) -> None:
+    """Generate one immutable report with an independent lease renewal session."""
+
+    settings = cast(Settings, ctx["settings"])
+    job_try = int(ctx.get("job_try", 1))
+    job = InterviewReportGenerationJob(
+        report_id=UUID(report_id),
+        session_id=UUID(session_id),
+        user_id=UUID(user_id),
+        request_id=request_id,
+    )
+    session_factory = cast(async_sessionmaker[AsyncSession], ctx["session_factory"])
+    started_at = time.perf_counter()
+    async with session_factory() as session, session_factory() as lease_session:
+        repository = SqlAlchemyInterviewRepository(session)
+        report_repository = SqlAlchemyInterviewReportRepository(session)
+        lease_repository = SqlAlchemyInterviewReportRepository(lease_session)
+        service = InterviewReportService(
+            repository,
+            report_repository,
+            ctx["interview_report_narrative"],
+            cast(ArqDocumentTaskQueue, ctx["document_task_queue"]),
+            settings,
+        )
+        common_log = {
+            "report_id": report_id,
+            "session_id": session_id,
+            "user_id": user_id,
+            "request_id": request_id,
+            "attempt": job_try,
+            "provider": settings.ai_provider,
+        }
+        logger.info("Interview report generation started", extra=common_log)
+        try:
+            await service.process_generation_job(
+                job,
+                job_try,
+                lease_repository=lease_repository,
+            )
+        except ReportGenerationRetryableError as exc:
+            delay = max(exc.delay_seconds, settings.report_retry_base_seconds)
+            logger.warning(
+                "Interview report generation will retry",
+                extra={
+                    **common_log,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "retry_delay_seconds": delay,
+                },
+            )
+            raise Retry(defer=delay) from exc
+        logger.info(
+            "Interview report generation finished",
+            extra={
+                **common_log,
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            },
+        )
+
+
 def _safe_evaluation_failure_message(exc: InterviewEvaluationError) -> str:
     if exc.code == "interview_evaluation_invalid":
         return "Interview evaluation output was invalid"
@@ -399,6 +469,7 @@ async def worker_startup(ctx: dict[str, Any]) -> None:
     ctx["resume_evaluator"] = providers.resume_evaluator
     ctx["interview_answer_evaluator"] = providers.interview_answer_evaluator
     ctx["follow_up_question_generator"] = providers.follow_up_question_generator
+    ctx["interview_report_narrative"] = providers.interview_report_narrative
     ctx["file_storage"] = LocalFileStorage(settings.knowledge_storage_dir)
     ctx["pdf_parser"] = PypdfPdfParser()
     ctx["text_splitter"] = SimpleTextSplitter(
@@ -409,6 +480,7 @@ async def worker_startup(ctx: dict[str, Any]) -> None:
     await _recover_stale_documents(ctx)
     await _recover_interview_preparations(ctx)
     await _recover_interview_evaluations(ctx)
+    await _recover_interview_reports(ctx)
     ctx["interview_recovery_task"] = asyncio.create_task(
         _interview_recovery_loop(ctx),
         name="interview-recovery",
@@ -515,6 +587,43 @@ async def _recover_interview_evaluations(ctx: dict[str, Any]) -> None:
         )
 
 
+async def _recover_interview_reports(ctx: dict[str, Any]) -> None:
+    settings = cast(Settings, ctx["settings"])
+    session_factory = cast(async_sessionmaker[AsyncSession], ctx["session_factory"])
+    redis = cast(ArqRedis, ctx["redis"])
+    stale_before = utc_now() - timedelta(seconds=settings.report_generation_stale_seconds)
+    async with session_factory() as session:
+        repository = SqlAlchemyInterviewReportRepository(session)
+        recoverable = await repository.list_recoverable_generations(
+            stale_before,
+            settings.report_task_max_attempts,
+            settings.report_recovery_batch_size,
+        )
+        for report in recoverable:
+            await repository.mark_queued(report.id, report.user_id)
+    for report in recoverable:
+        attempt = report.generation_attempt_count + 1
+        job = InterviewReportGenerationJob(
+            report_id=report.id,
+            session_id=report.session_id,
+            user_id=report.user_id,
+            request_id=f"recovery:{report.id}",
+            job_id=f"interview-report-generation:{report.id}:{attempt}",
+        )
+        await enqueue_interview_report_job(redis, job)
+        logger.info(
+            "Recovered interview report generation job",
+            extra={
+                "report_id": str(report.id),
+                "session_id": str(report.session_id),
+                "user_id": str(report.user_id),
+                "request_id": job.request_id,
+                "attempt": attempt,
+                "provider": settings.ai_provider,
+            },
+        )
+
+
 async def _interview_recovery_loop(ctx: dict[str, Any]) -> None:
     settings = cast(Settings, ctx["settings"])
     while True:
@@ -522,11 +631,13 @@ async def _interview_recovery_loop(ctx: dict[str, Any]) -> None:
             min(
                 settings.interview_preparation_recovery_interval_seconds,
                 settings.interview_answer_recovery_interval_seconds,
+                settings.report_recovery_interval_seconds,
             )
         )
         try:
             await _recover_interview_preparations(ctx)
             await _recover_interview_evaluations(ctx)
+            await _recover_interview_reports(ctx)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -570,6 +681,7 @@ def create_worker() -> Worker:
             process_knowledge_document,
             process_interview_preparation,
             process_interview_answer_evaluation,
+            process_interview_report_generation,
         ],
         queue_name=DOCUMENT_IMPORT_QUEUE,
         redis_settings=RedisSettings.from_dsn(str(settings.redis_url)),
@@ -580,11 +692,13 @@ def create_worker() -> Worker:
             settings.knowledge_task_timeout_seconds,
             settings.interview_preparation_task_timeout_seconds,
             settings.interview_answer_task_timeout_seconds,
+            settings.report_task_timeout_seconds,
         ),
         max_tries=max(
             settings.knowledge_task_max_attempts,
             settings.interview_preparation_task_max_attempts,
             settings.interview_answer_task_max_attempts,
+            settings.report_task_max_attempts,
         ),
         retry_jobs=True,
         health_check_interval=15,

@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from test_interview import FakeTaskQueue, InMemoryInterviewRepository
+from test_interview import InMemoryInterviewRepository
 
 from app.ai.report import FakeInterviewReportNarrativeGenerator
 from app.core.config import Settings
@@ -32,6 +32,7 @@ from app.modules.report.domain import (
     InterviewReport,
     InterviewReportItem,
     ReportGeneratedBy,
+    ReportGenerationClaim,
     ReportStatus,
 )
 from app.modules.report.exceptions import (
@@ -39,6 +40,7 @@ from app.modules.report.exceptions import (
     ReportWithoutCompletedAnswersError,
 )
 from app.modules.report.service import InterviewReportService
+from app.workers.queue import InterviewReportGenerationJob
 
 
 def _evaluation(turn_id: UUID, score: int, text: str = "strength") -> InterviewEvaluation:
@@ -198,16 +200,70 @@ class FakeReportRepository:
         return report
 
     async def claim_generation(
-        self, report_id: UUID, user_id: UUID
-    ) -> tuple[InterviewReport, bool]:
+        self,
+        report_id: UUID,
+        user_id: UUID,
+        stale_before: object,
+        lease_seconds: int,
+        attempt: int,
+        max_attempts: int,
+    ) -> ReportGenerationClaim | None:
+        del stale_before, lease_seconds
         report = self.reports[report_id]
         if report.user_id != user_id or report.status in {
             ReportStatus.READY,
             ReportStatus.GENERATING,
         }:
-            return report, False
+            return None
+        if attempt > max_attempts:
+            return None
+        token = "fake-fencing-token"
         report.status = ReportStatus.GENERATING
-        return report, True
+        report.generation_attempt_count = attempt
+        report.generation_fencing_token = token
+        return ReportGenerationClaim(report, token)
+
+    async def mark_queued(self, report_id: UUID, user_id: UUID) -> InterviewReport:
+        report = self.reports[report_id]
+        assert report.user_id == user_id
+        report.generation_queued_at = datetime.now(UTC)
+        return report
+
+    async def clear_queued(self, report_id: UUID, user_id: UUID) -> InterviewReport:
+        report = self.reports[report_id]
+        assert report.user_id == user_id
+        report.generation_queued_at = None
+        return report
+
+    async def reset_for_retry(self, report_id: UUID, user_id: UUID) -> InterviewReport:
+        report = self.reports[report_id]
+        assert report.user_id == user_id
+        report.status = ReportStatus.PENDING
+        report.generation_queued_at = None
+        report.generation_attempt_count = 0
+        report.generation_fencing_token = None
+        report.failure_code = None
+        report.failure_message = None
+        return report
+
+    async def renew_generation_lease(
+        self, report_id: UUID, user_id: UUID, fencing_token: str, lease_seconds: int
+    ) -> bool:
+        del report_id, user_id, fencing_token, lease_seconds
+        return True
+
+    async def release_generation_for_retry(
+        self, report_id: UUID, user_id: UUID, fencing_token: str
+    ) -> bool:
+        del user_id, fencing_token
+        self.reports[report_id].status = ReportStatus.PENDING
+        return True
+
+    async def list_recoverable_generations(
+        self, stale_before: object, max_attempts: int, limit: int
+    ) -> list[InterviewReport]:
+        del stale_before, max_attempts, limit
+        return []
 
     async def get_for_user(self, report_id: UUID, user_id: UUID) -> InterviewReport | None:
         report = self.reports.get(report_id)
@@ -235,9 +291,16 @@ class FakeReportRepository:
         return list(self.items.get(report_id, [])) if report else []
 
     async def persist_ready(
-        self, report_id: UUID, user_id: UUID, *, scores, radar_data=None, **kwargs
+        self,
+        report_id: UUID,
+        user_id: UUID,
+        *,
+        scores,
+        radar_data=None,
+        fencing_token: str,
+        **kwargs,
     ):
-        del radar_data
+        del radar_data, fencing_token
         report = self.reports[report_id]
         report.status = ReportStatus.READY
         report.overall_score = scores.overall_score
@@ -260,13 +323,21 @@ class FakeReportRepository:
             value = kwargs[field]
             setattr(report, field, value if field != "generated_by" else value)
         report.completed_at = datetime.now(UTC)
+        report.generation_completed_at = report.completed_at
+        report.generation_fencing_token = None
         report.resume_evaluation_snapshot = kwargs.get("resume_evaluation_snapshot")
         self.items[report_id] = list(kwargs["items"])
         return report
 
     async def mark_failed(
-        self, report_id: UUID, user_id: UUID, failure_code: str, failure_message: str
+        self,
+        report_id: UUID,
+        user_id: UUID,
+        failure_code: str,
+        failure_message: str,
+        fencing_token: str,
     ) -> InterviewReport:
+        del user_id, fencing_token
         report = self.reports[report_id]
         report.status = ReportStatus.FAILED
         report.failure_code = failure_code
@@ -275,18 +346,34 @@ class FakeReportRepository:
         return report
 
 
+class FakeReportTaskQueue:
+    def __init__(self, *, inline: bool = True) -> None:
+        self.service: InterviewReportService | None = None
+        self.jobs: list[InterviewReportGenerationJob] = []
+        self.inline = inline
+
+    async def enqueue_interview_report(self, job: InterviewReportGenerationJob) -> None:
+        self.jobs.append(job)
+        if self.inline and self.service is not None:
+            await self.service.process_generation_job(job, 1)
+
+
 def _service(
-    *, narrative: FakeInterviewReportNarrativeGenerator | None = None
+    *,
+    narrative: FakeInterviewReportNarrativeGenerator | None = None,
+    inline_queue: bool = True,
 ) -> tuple[InterviewReportService, FakeReportRepository, InMemoryInterviewRepository, UUID, UUID]:
     interview_repository, user_id, session_id = _completed_interview()
     report_repository = FakeReportRepository()
+    queue = FakeReportTaskQueue(inline=inline_queue)
     service = InterviewReportService(
         interview_repository,
         report_repository,
         narrative or FakeInterviewReportNarrativeGenerator(),
-        FakeTaskQueue(),
+        queue,
         Settings(),
     )
+    queue.service = service
     return service, report_repository, interview_repository, user_id, session_id
 
 
@@ -354,6 +441,42 @@ async def test_completed_interview_generates_immutable_snapshot_and_is_idempoten
     interview_repository.questions[session_id][0].citations.clear()
     reloaded = await service.get_by_session(user_id, session_id)
     assert reloaded.items[0].sources[0]["sourceId"] == "[S1]"
+
+
+@pytest.mark.asyncio
+async def test_report_generation_is_queued_without_calling_narrative_provider() -> None:
+    narrative = FakeInterviewReportNarrativeGenerator()
+    service, reports, _, user_id, session_id = _service(
+        narrative=narrative, inline_queue=False
+    )
+    queue = service._task_queue
+
+    first = await service.generate(user_id, session_id, request_id="report-queued")
+    second = await service.generate(user_id, session_id, request_id="report-duplicate")
+
+    assert first.report.status == ReportStatus.PENDING
+    assert second.report.id == first.report.id
+    assert narrative.calls == 0
+    assert len(queue.jobs) == 1  # type: ignore[attr-defined]
+    assert reports.reports[first.report.id].generation_queued_at is not None
+
+    await service.process_generation_job(queue.jobs[0], 1)  # type: ignore[attr-defined]
+
+    ready = await service.get_by_session(user_id, session_id)
+    assert ready.report.status == ReportStatus.READY
+    assert narrative.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_report_snapshot_excludes_completed_turn_without_evaluation() -> None:
+    service, _, interview_repository, user_id, session_id = _service()
+    follow_up = interview_repository.turns[session_id][1]
+    del interview_repository.evaluations[follow_up.id]
+
+    detail = await service.generate(user_id, session_id)
+
+    assert detail.report.status == ReportStatus.READY
+    assert [item.sequence for item in detail.items] == [1]
 
 
 @pytest.mark.asyncio
@@ -487,5 +610,33 @@ def test_report_api_requires_authentication_and_returns_paged_contract() -> None
             )
             assert page.status_code == 200
             assert page.json()["total"] == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_report_api_returns_accepted_while_worker_is_pending() -> None:
+    service, _, _, user_id, session_id = _service(inline_queue=False)
+    user = User(
+        id=user_id,
+        username="pending-report-user",
+        email="pending-report@example.com",
+        password_hash="hidden",
+        is_active=True,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    try:
+        with TestClient(app) as client:
+            app.dependency_overrides[get_current_user] = lambda: user
+            app.dependency_overrides[get_interview_report_service] = lambda: service
+
+            response = client.post(
+                f"/api/xunzhi/v1/interview/sessions/{session_id}/report",
+                headers={"Authorization": "Bearer test"},
+            )
+
+            assert response.status_code == 202
+            assert response.json()["status"] == "PENDING"
+            assert len(service._task_queue.jobs) == 1  # type: ignore[attr-defined]
     finally:
         app.dependency_overrides.clear()

@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     report_clarity_weight: float = Field(default=0.20, ge=0.0)
     report_depth_weight: float = Field(default=0.25, ge=0.0)
     report_aggregation_version: str = Field(default="v1", min_length=1, max_length=32)
+    report_task_max_attempts: int = Field(default=3, ge=1, le=10)
+    report_retry_base_seconds: float = Field(default=2.0, gt=0, le=300)
+    report_task_timeout_seconds: int = Field(default=300, ge=30, le=3600)
+    report_generation_stale_seconds: int = Field(default=900, ge=60, le=86400)
+    report_generation_lease_seconds: int = Field(default=120, ge=30, le=3600)
+    report_recovery_interval_seconds: int = Field(default=60, ge=5, le=3600)
+    report_recovery_batch_size: int = Field(default=100, ge=1, le=1000)
     database_url: PostgresDsn = PostgresDsn(
         "postgresql+asyncpg://postgres:local-development-only@localhost:5432/ai_interview"
     )

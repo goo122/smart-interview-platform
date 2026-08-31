@@ -8,11 +8,13 @@ from app.workers.queue import (
     DocumentImportJob,
     InterviewAnswerEvaluationJob,
     InterviewPreparationJob,
+    InterviewReportGenerationJob,
 )
 
 DOCUMENT_IMPORT_FUNCTION = "process_knowledge_document"
 INTERVIEW_PREPARATION_FUNCTION = "process_interview_preparation"
 INTERVIEW_ANSWER_EVALUATION_FUNCTION = "process_interview_answer_evaluation"
+INTERVIEW_REPORT_GENERATION_FUNCTION = "process_interview_report_generation"
 DOCUMENT_IMPORT_QUEUE = "knowledge:documents"
 
 
@@ -51,6 +53,12 @@ class ArqDocumentTaskQueue:
     ) -> None:
         redis = await self._get_redis()
         await enqueue_interview_answer_evaluation_job(redis, job)
+
+    async def enqueue_interview_report(
+        self, job: InterviewReportGenerationJob
+    ) -> None:
+        redis = await self._get_redis()
+        await enqueue_interview_report_job(redis, job)
 
     def bind_inline_handler(self, handler: DocumentImportHandler) -> None:
         del handler
@@ -107,5 +115,21 @@ async def enqueue_interview_answer_evaluation_job(
         answer_id=str(job.answer_id),
         request_id=job.request_id,
         _job_id=job.job_id or f"interview-answer-evaluation:{job.turn_id}",
+        _queue_name=DOCUMENT_IMPORT_QUEUE,
+    )
+
+
+async def enqueue_interview_report_job(
+    redis: ArqRedis, job: InterviewReportGenerationJob
+) -> None:
+    """Enqueue a report task with a stable ID for normal requests and recovery IDs."""
+
+    await redis.enqueue_job(
+        INTERVIEW_REPORT_GENERATION_FUNCTION,
+        report_id=str(job.report_id),
+        session_id=str(job.session_id),
+        user_id=str(job.user_id),
+        request_id=job.request_id,
+        _job_id=job.job_id or f"interview-report-generation:{job.report_id}",
         _queue_name=DOCUMENT_IMPORT_QUEUE,
     )

@@ -11,13 +11,12 @@ from app.core.config import Settings, get_settings
 from app.modules.auth.dependencies import get_db_session
 from app.modules.interview.dependencies import get_interview_repository
 from app.modules.interview.repository import InterviewRepository
-from app.modules.knowledge.dependencies import get_task_queue
 from app.modules.report.repository import (
     InterviewReportRepository,
     SqlAlchemyInterviewReportRepository,
 )
 from app.modules.report.service import InterviewReportService
-from app.workers.queue import TaskQueuePort
+from app.workers.queue import InterviewReportTaskQueuePort
 
 
 async def get_interview_report_repository(
@@ -37,6 +36,15 @@ def get_interview_report_narrative(request: Request) -> InterviewReportNarrative
     )
 
 
+def get_interview_report_task_queue(request: Request) -> InterviewReportTaskQueuePort:
+    """Return the ARQ queue dedicated to report generation."""
+
+    return cast(
+        InterviewReportTaskQueuePort,
+        request.app.state.interview_report_task_queue,
+    )
+
+
 def get_interview_report_service(
     interview_repository: Annotated[
         InterviewRepository, Depends(get_interview_repository)
@@ -47,7 +55,9 @@ def get_interview_report_service(
     narrative: Annotated[
         InterviewReportNarrativePort, Depends(get_interview_report_narrative)
     ],
-    task_queue: Annotated[TaskQueuePort, Depends(get_task_queue)],
+    task_queue: Annotated[
+        InterviewReportTaskQueuePort, Depends(get_interview_report_task_queue)
+    ],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> InterviewReportService:
     return InterviewReportService(

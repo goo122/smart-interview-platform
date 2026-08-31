@@ -121,7 +121,8 @@ const buildReportQuestionNumbers = (report: InterviewReportResponse) => {
     }
 
     const parentId = item.parentTurnId ?? "";
-    const parentSequence = primarySequenceByTurnId.get(parentId) ?? item.sequence;
+    const parentSequence =
+      primarySequenceByTurnId.get(parentId) ?? item.sequence;
     const followUpCount = (followUpCounts.get(parentId) ?? 0) + 1;
     followUpCounts.set(parentId, followUpCount);
     return `${parentSequence}-F${followUpCount}`;
@@ -134,7 +135,11 @@ const adaptInterviewReport = (
   const questionNumbers = buildReportQuestionNumbers(report);
   const radarDimensions = report.radarData
     .map((entry) => {
-      const dimension = pickFirstString(entry.dimension, entry.label, entry.name);
+      const dimension = pickFirstString(
+        entry.dimension,
+        entry.label,
+        entry.name,
+      );
       const score = pickFirstNumber(entry.score, entry.value);
       if (!dimension || score === null) return null;
       return {
@@ -203,14 +208,15 @@ const adaptInterviewReport = (
         report.suggestedImprovements.length > 0
           ? report.suggestedImprovements
           : report.weaknesses,
-      nextActions:
-        report.resumeEvaluation?.suggestions?.length
-          ? [...report.actionPlan, ...report.resumeEvaluation.suggestions]
-          : report.actionPlan,
+      nextActions: report.resumeEvaluation?.suggestions?.length
+        ? [...report.actionPlan, ...report.resumeEvaluation.suggestions]
+        : report.actionPlan,
     },
     createTime: report.createdAt,
     updateTime: report.updatedAt,
     endTime: report.completedAt,
+    failureCode: report.failureCode,
+    failureMessage: report.failureMessage,
   };
 };
 

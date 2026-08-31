@@ -78,6 +78,7 @@ from app.workers.queue import (
 )
 from app.workers.redis_queue import (
     INTERVIEW_ANSWER_EVALUATION_FUNCTION,
+    ArqDocumentTaskQueue,
     enqueue_document_job,
     enqueue_interview_answer_evaluation_job,
     enqueue_interview_preparation_job,
@@ -1380,21 +1381,35 @@ async def test_report_generation_persists_deterministic_snapshot(
             )
         await session.commit()
         report_repository = SqlAlchemyInterviewReportRepository(session)
-        narrative = FakeInterviewReportNarrativeGenerator()
+        report_queue = ArqDocumentTaskQueue.create(_redis_url() or "redis://redis:6379/0")
         service = InterviewReportService(
             SqlAlchemyInterviewRepository(session),
             report_repository,
-            narrative,
-            InlineTaskQueue(),
+            FakeInterviewReportNarrativeGenerator(),
+            report_queue,
             Settings(),
         )
         detail = await service.generate(user_id, session_id)
         repeated = await service.generate(user_id, session_id)
+        assert detail.report.status.value == "PENDING"
+        assert repeated.report.id == detail.report.id
+        for _attempt in range(60):
+            await asyncio.sleep(0.5)
+            await session.rollback()
+            detail = await InterviewReportService(
+                SqlAlchemyInterviewRepository(session),
+                SqlAlchemyInterviewReportRepository(session),
+                FakeInterviewReportNarrativeGenerator(),
+                report_queue,
+                Settings(),
+            ).get_by_session(user_id, session_id)
+            if detail.report.status.value == "READY":
+                break
         assert detail.report.status.value == "READY"
         assert detail.report.overall_score == 70
         assert [item.sequence for item in detail.items] == [1, 2]
         assert repeated.report.id == detail.report.id
-        assert narrative.calls == 1
+        await report_queue.close()
         completed = await SqlAlchemyInterviewRepository(session).get_for_user(session_id, user_id)
         assert completed is not None
         assert completed.status == InterviewStatus.COMPLETED

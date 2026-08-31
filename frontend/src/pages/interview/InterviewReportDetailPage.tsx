@@ -26,6 +26,10 @@ export default function InterviewReportDetailPage() {
     compositeScore,
     qaReviews,
     reviewFeedback,
+    isReportGenerating,
+    isReportReady,
+    retryReport,
+    isRetryingReport,
   } = useInterviewReportData(reportSessionId);
 
   const reportBackLink = `${ROUTES.interviewReport}${buildReportSearch(reportSessionId)}`;
@@ -87,7 +91,27 @@ export default function InterviewReportDetailPage() {
           </Card>
         ) : null}
 
-        {reviewFeedback.overallComment ? (
+        {isReportGenerating && !recordError ? (
+          <Card className="border-blue-100 bg-blue-50 p-5 text-blue-700">
+            报告正在生成中，请返回报告总览查看最新状态。
+          </Card>
+        ) : null}
+        {recordError ? (
+          <Card className="flex flex-wrap items-center justify-between gap-4 border-rose-100 bg-rose-50 p-5 text-rose-700">
+            <span>{recordError}</span>
+            {reportSessionId ? (
+              <Button
+                variant="outline"
+                disabled={isRetryingReport}
+                onClick={() => void retryReport()}
+              >
+                {isRetryingReport ? "重试中..." : "重试生成报告"}
+              </Button>
+            ) : null}
+          </Card>
+        ) : null}
+
+        {isReportReady && reviewFeedback.overallComment ? (
           <Card className="border-slate-200 p-6">
             <div className="flex items-center gap-2 text-base font-medium text-slate-900">
               <FileSearch className="h-4 w-4 text-slate-500" />
@@ -99,7 +123,7 @@ export default function InterviewReportDetailPage() {
           </Card>
         ) : null}
 
-        {resumeEvaluation ? (
+        {isReportReady && resumeEvaluation ? (
           <Card className="border-slate-200 p-6">
             <div className="text-base font-medium text-slate-900">
               简历与岗位匹配分析
@@ -111,7 +135,9 @@ export default function InterviewReportDetailPage() {
             ) : null}
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div>
-                <div className="text-sm font-medium text-slate-700">匹配优势</div>
+                <div className="text-sm font-medium text-slate-700">
+                  匹配优势
+                </div>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
                   {(resumeEvaluation.strengths ?? []).map((item) => (
                     <li key={item}>{item}</li>
@@ -119,7 +145,9 @@ export default function InterviewReportDetailPage() {
                 </ul>
               </div>
               <div>
-                <div className="text-sm font-medium text-slate-700">待补充证据</div>
+                <div className="text-sm font-medium text-slate-700">
+                  待补充证据
+                </div>
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
                   {(resumeEvaluation.gaps ?? []).map((item) => (
                     <li key={item}>{item}</li>
@@ -130,12 +158,14 @@ export default function InterviewReportDetailPage() {
           </Card>
         ) : null}
 
-        <InterviewQaReplayCard
-          qaReviews={qaReviews}
-          isRecordLoading={isRecordLoading}
-          recordError={recordError}
-          variant="detail"
-        />
+        {isReportReady ? (
+          <InterviewQaReplayCard
+            qaReviews={qaReviews}
+            isRecordLoading={isRecordLoading}
+            recordError={recordError}
+            variant="detail"
+          />
+        ) : null}
       </div>
     </div>
   );

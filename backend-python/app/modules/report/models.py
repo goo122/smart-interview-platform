@@ -87,12 +87,29 @@ class InterviewReportModel(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    generation_queued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    generation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    generation_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    generation_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    generation_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    generation_fencing_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class InterviewReportItemModel(Base):
     __tablename__ = "interview_report_items"
     __table_args__ = (
         UniqueConstraint("report_id", "sequence", name="uq_interview_report_items_report_sequence"),
+        UniqueConstraint("report_id", "turn_id", name="uq_interview_report_items_report_turn"),
         Index("ix_interview_report_items_report_sequence", "report_id", "sequence"),
         CheckConstraint(
             "overall_score BETWEEN 0 AND 100", name="ck_interview_report_items_overall_score"
