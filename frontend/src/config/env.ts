@@ -9,7 +9,7 @@ export type ResolvedAppEnv = {
 };
 
 const DEFAULT_API_BASE_URL = "/api";
-const DEFAULT_API_TARGET = "http://localhost:8000";
+const DEFAULT_API_TARGET = "http://127.0.0.1:8000";
 
 const trimValue = (value?: string | null) => value?.trim() ?? "";
 

@@ -15,7 +15,7 @@ describe("env utilities", () => {
   it("resolveAppEnv should fallback to defaults", () => {
     const env = resolveAppEnv({});
     expect(env.apiBaseUrl).toBe("/api");
-    expect(env.apiTarget).toBe("http://localhost:8000");
+    expect(env.apiTarget).toBe("http://127.0.0.1:8000");
     expect(env.wsBaseUrl).toBeNull();
   });
 
