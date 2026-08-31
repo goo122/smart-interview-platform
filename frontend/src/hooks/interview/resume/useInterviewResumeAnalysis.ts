@@ -66,6 +66,7 @@ export function useInterviewResumeAnalysis({
     isResumeUploading,
     resumeUploadStage,
     startUploadStage,
+    setUploadStage,
     finishUploadStage,
   } = useInterviewUploadStage();
 
@@ -228,6 +229,7 @@ export function useInterviewResumeAnalysis({
       if (typeof prepareInterviewSession === "function") {
         const prepared = await prepareInterviewSession(file, {
           requestId: generateRequestId(),
+          onPreparationStage: setUploadStage,
         });
         applyResumeMetadata(
           buildResumeMetadata({

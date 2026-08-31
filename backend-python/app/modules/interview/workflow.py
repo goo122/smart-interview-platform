@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Any, TypedDict
 from uuid import UUID, uuid4
 
@@ -25,6 +26,7 @@ from app.modules.interview.domain import (
     InterviewQuestion,
     InterviewQuestionCitation,
     InterviewSession,
+    ResumeEvaluation,
     ResumeEvaluationStatus,
     utc_now,
 )
@@ -34,6 +36,10 @@ from app.modules.interview.exceptions import (
     RetryableInterviewPreparationError,
 )
 from app.modules.interview.repository import InterviewRepository
+from app.workers.queue import (
+    InterviewResumeEvaluationJob,
+    InterviewResumeEvaluationTaskQueuePort,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +54,9 @@ class InterviewGraphState(TypedDict, total=False):
     questions: list[InterviewQuestion]
     skip: bool
     preparation_claimed: bool
+    context_retrieval_ms: float
+    question_generation_ms: float
+    database_storage_ms: float
 
 
 class InterviewPreparationWorkflow:
@@ -59,11 +68,14 @@ class InterviewPreparationWorkflow:
         context_provider: InterviewContextProviderPort,
         generator: InterviewQuestionGeneratorPort,
         resume_evaluator: ResumeEvaluatorPort | None = None,
+        resume_evaluation_queue: InterviewResumeEvaluationTaskQueuePort | None = None,
     ) -> None:
         self._repository = repository
         self._context_provider = context_provider
         self._generator = generator
         self._resume_evaluator = resume_evaluator
+        self._resume_evaluation_queue = resume_evaluation_queue
+        self.timings: dict[str, float] = {}
         self._graph = self._build_graph()
 
     async def prepare(
@@ -74,6 +86,7 @@ class InterviewPreparationWorkflow:
         preparation_claimed: bool = False,
         worker_mode: bool = False,
     ) -> InterviewSession:
+        self.timings = {}
         state: InterviewGraphState = {
             "user_id": user_id,
             "session_id": session_id,
@@ -112,7 +125,7 @@ class InterviewPreparationWorkflow:
         builder.add_node("validate_knowledge_base", self._validate_knowledge_base)
         builder.add_node("mark_preparing", self._mark_preparing)
         builder.add_node("retrieve_resume_context", self._retrieve_resume_context)
-        builder.add_node("evaluate_resume", self._evaluate_resume)
+        builder.add_node("schedule_resume_evaluation", self._schedule_resume_evaluation)
         builder.add_node("build_question_generation_context", self._build_generation_context)
         builder.add_node("generate_questions", self._generate_questions)
         builder.add_node("validate_questions", self._validate_questions)
@@ -126,8 +139,8 @@ class InterviewPreparationWorkflow:
             self._continue_after_mark_preparing,
             {"continue": "retrieve_resume_context", "end": END},
         )
-        builder.add_edge("retrieve_resume_context", "evaluate_resume")
-        builder.add_edge("evaluate_resume", "build_question_generation_context")
+        builder.add_edge("retrieve_resume_context", "schedule_resume_evaluation")
+        builder.add_edge("schedule_resume_evaluation", "build_question_generation_context")
         builder.add_edge("build_question_generation_context", "generate_questions")
         builder.add_edge("generate_questions", "validate_questions")
         builder.add_edge("validate_questions", "persist_questions_and_citations")
@@ -169,6 +182,7 @@ class InterviewPreparationWorkflow:
 
     async def _retrieve_resume_context(self, state: InterviewGraphState) -> InterviewGraphState:
         session = state["session"]
+        started_at = time.perf_counter()
         state["context"] = await self._context_provider.build(
             user_id=state["user_id"],
             knowledge_base_id=session.knowledge_base_id,
@@ -177,6 +191,71 @@ class InterviewPreparationWorkflow:
             difficulty=session.difficulty.value,
             question_count=session.question_count,
         )
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        state["context_retrieval_ms"] = elapsed_ms
+        self.timings["context_retrieval_ms"] = elapsed_ms
+        return state
+
+    async def _schedule_resume_evaluation(
+        self, state: InterviewGraphState
+    ) -> InterviewGraphState:
+        """Create and enqueue optional evaluation without running model work here."""
+
+        evaluator = self._resume_evaluator
+        queue = self._resume_evaluation_queue
+        if evaluator is None:
+            return state
+
+        session = state["session"]
+        try:
+            existing = await self._repository.create_resume_evaluation_pending(
+                session.id,
+                state["user_id"],
+                session.knowledge_base_id,
+                RESUME_EVALUATION_VERSION,
+            )
+            if existing.status.value in {"COMPLETED", "UNAVAILABLE", "EVALUATING"}:
+                return state
+            if queue is None:
+                await self._repository.mark_resume_evaluation_failed(
+                    session.id,
+                    state["user_id"],
+                    ResumeEvaluationStatus.FAILED,
+                    "RESUME_EVALUATION_QUEUE_UNAVAILABLE",
+                    "Resume match evaluation could not be scheduled",
+                    version=RESUME_EVALUATION_VERSION,
+                )
+                logger.warning(
+                    "Resume evaluation queue is not configured; interview preparation continues",
+                    extra={"session_id": str(session.id), "user_id": str(state["user_id"])},
+                )
+                return state
+            await queue.enqueue_interview_resume_evaluation(
+                InterviewResumeEvaluationJob(
+                    session_id=session.id,
+                    user_id=state["user_id"],
+                    request_id=session.request_id or f"interview:{session.id}",
+                )
+            )
+        except Exception:
+            try:
+                await self._repository.mark_resume_evaluation_failed(
+                    session.id,
+                    state["user_id"],
+                    ResumeEvaluationStatus.FAILED,
+                    "RESUME_EVALUATION_QUEUE_FAILED",
+                    "Resume match evaluation could not be scheduled",
+                    version=RESUME_EVALUATION_VERSION,
+                )
+            except Exception:
+                logger.warning(
+                    "Resume evaluation failure state could not be persisted",
+                    extra={"session_id": str(session.id), "user_id": str(state["user_id"])},
+                )
+            logger.warning(
+                "Resume evaluation could not be enqueued; interview preparation continues",
+                extra={"session_id": str(session.id), "user_id": str(state["user_id"])},
+            )
         return state
 
     async def _build_generation_context(self, state: InterviewGraphState) -> InterviewGraphState:
@@ -193,80 +272,8 @@ class InterviewPreparationWorkflow:
         )
         return state
 
-    async def _evaluate_resume(self, state: InterviewGraphState) -> InterviewGraphState:
-        """Persist a traceable match assessment without blocking question generation."""
-
-        evaluator = self._resume_evaluator
-        if evaluator is None:
-            return state
-        session = state["session"]
-        context = state["context"]
-        try:
-            existing = await self._repository.create_resume_evaluation_pending(
-                session.id,
-                state["user_id"],
-                session.knowledge_base_id,
-                RESUME_EVALUATION_VERSION,
-            )
-            _, claimed = await self._repository.claim_resume_evaluation(
-                session.id, state["user_id"]
-            )
-            if not claimed or existing.status.value in {"COMPLETED", "UNAVAILABLE"}:
-                return state
-            request = ResumeEvaluationRequest(
-                job_title=session.job_title,
-                job_description=session.job_description,
-                resume_context=context.prompt,
-                source_ids=tuple(citation.source_id for citation in context.citations),
-            )
-            last_error: Exception | None = None
-            for _attempt in range(2):
-                try:
-                    evaluation = StructuredResumeEvaluation.model_validate(
-                        await evaluator.evaluate(request)
-                    )
-                    await self._repository.persist_resume_evaluation(
-                        session.id,
-                        state["user_id"],
-                        evaluation,
-                        source_document_ids=tuple(
-                            dict.fromkeys(citation.document_id for citation in context.citations)
-                        ),
-                        version=RESUME_EVALUATION_VERSION,
-                        provider_name=type(evaluator).__name__,
-                    )
-                    return state
-                except Exception as exc:
-                    last_error = exc
-            if last_error is not None:
-                raise last_error
-        except Exception:
-            status = (
-                "UNAVAILABLE"
-                if isinstance(evaluator, UnavailableResumeEvaluator)
-                else "FAILED"
-            )
-            try:
-                await self._repository.mark_resume_evaluation_failed(
-                    session.id,
-                    state["user_id"],
-                    ResumeEvaluationStatus(status),
-                    "RESUME_EVALUATION_UNAVAILABLE"
-                    if status == "UNAVAILABLE"
-                    else "RESUME_EVALUATION_FAILED",
-                    "Resume match evaluation is unavailable"
-                    if status == "UNAVAILABLE"
-                    else "Resume match evaluation failed",
-                    version=RESUME_EVALUATION_VERSION,
-                )
-            except Exception:
-                # The interview preparation must remain usable when an optional
-                # analysis record cannot be written.  The warning contains no
-                # resume text, credentials or provider response.
-                logger.warning("Resume evaluation failure state could not be persisted")
-        return state
-
     async def _generate_questions(self, state: InterviewGraphState) -> InterviewGraphState:
+        started_at = time.perf_counter()
         last_error: InterviewQuestionValidationError | None = None
         for _attempt in range(2):
             try:
@@ -279,6 +286,9 @@ class InterviewPreparationWorkflow:
                 ) from exc
             try:
                 await self._validate_questions(state)
+                elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+                state["question_generation_ms"] = elapsed_ms
+                self.timings["question_generation_ms"] = elapsed_ms
                 return state
             except InterviewQuestionValidationError as exc:
                 last_error = exc
@@ -372,9 +382,13 @@ class InterviewPreparationWorkflow:
         return state
 
     async def _persist_questions(self, state: InterviewGraphState) -> InterviewGraphState:
+        started_at = time.perf_counter()
         state["session"] = await self._repository.persist_questions_and_ready(
             state["session_id"], state["user_id"], state["questions"]
         )
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        state["database_storage_ms"] = elapsed_ms
+        self.timings["database_storage_ms"] = elapsed_ms
         return state
 
     async def _mark_ready(self, state: InterviewGraphState) -> InterviewGraphState:
@@ -386,3 +400,130 @@ class InterviewPreparationWorkflow:
         return await self._repository.mark_failed(
             state["session_id"], state["user_id"], failure_code, failure_message
         )
+
+
+class InterviewResumeEvaluationWorkflow:
+    """Run the optional resume evaluation in its own worker/database session."""
+
+    def __init__(
+        self,
+        repository: InterviewRepository,
+        context_provider: InterviewContextProviderPort,
+        evaluator: ResumeEvaluatorPort,
+    ) -> None:
+        self._repository = repository
+        self._context_provider = context_provider
+        self._evaluator = evaluator
+        self.timings: dict[str, float] = {}
+
+    async def evaluate(self, user_id: UUID, session_id: UUID) -> ResumeEvaluation | None:
+        """Persist evaluation status; never changes interview readiness."""
+
+        self.timings = {}
+        session = await self._repository.get_for_user(session_id, user_id)
+        if session is None:
+            return None
+        existing = await self._repository.create_resume_evaluation_pending(
+            session.id,
+            user_id,
+            session.knowledge_base_id,
+            RESUME_EVALUATION_VERSION,
+        )
+        _, claimed = await self._repository.claim_resume_evaluation(session.id, user_id)
+        if not claimed:
+            return existing
+
+        if isinstance(self._evaluator, UnavailableResumeEvaluator):
+            storage_started_at = time.perf_counter()
+            result = await self._repository.mark_resume_evaluation_failed(
+                session.id,
+                user_id,
+                ResumeEvaluationStatus.UNAVAILABLE,
+                "RESUME_EVALUATION_UNAVAILABLE",
+                "Resume match evaluation is unavailable",
+                version=RESUME_EVALUATION_VERSION,
+            )
+            self.timings["database_storage_ms"] = round(
+                (time.perf_counter() - storage_started_at) * 1000, 2
+            )
+            return result
+
+        context_started_at = time.perf_counter()
+        try:
+            context = await self._context_provider.build(
+                user_id=user_id,
+                knowledge_base_id=session.knowledge_base_id,
+                job_title=session.job_title,
+                job_description=session.job_description,
+                difficulty=session.difficulty.value,
+                question_count=session.question_count,
+            )
+            self.timings["context_retrieval_ms"] = round(
+                (time.perf_counter() - context_started_at) * 1000, 2
+            )
+            request = ResumeEvaluationRequest(
+                job_title=session.job_title,
+                job_description=session.job_description,
+                resume_context=context.prompt,
+                source_ids=tuple(citation.source_id for citation in context.citations),
+            )
+            evaluation_started_at = time.perf_counter()
+            last_error: Exception | None = None
+            for _attempt in range(2):
+                try:
+                    evaluation = StructuredResumeEvaluation.model_validate(
+                        await self._evaluator.evaluate(request)
+                    )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    last_error = exc
+            else:
+                assert last_error is not None
+                raise last_error
+            self.timings["resume_evaluation_ms"] = round(
+                (time.perf_counter() - evaluation_started_at) * 1000, 2
+            )
+            storage_started_at = time.perf_counter()
+            result = await self._repository.persist_resume_evaluation(
+                session.id,
+                user_id,
+                evaluation,
+                source_document_ids=tuple(
+                    dict.fromkeys(citation.document_id for citation in context.citations)
+                ),
+                version=RESUME_EVALUATION_VERSION,
+                provider_name=type(self._evaluator).__name__,
+            )
+            self.timings["database_storage_ms"] = round(
+                (time.perf_counter() - storage_started_at) * 1000, 2
+            )
+            return result
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.timings["context_retrieval_ms"] = self.timings.get(
+                "context_retrieval_ms",
+                round((time.perf_counter() - context_started_at) * 1000, 2),
+            )
+            storage_started_at = time.perf_counter()
+            try:
+                result = await self._repository.mark_resume_evaluation_failed(
+                    session.id,
+                    user_id,
+                    ResumeEvaluationStatus.FAILED,
+                    "RESUME_EVALUATION_FAILED",
+                    "Resume match evaluation failed",
+                    version=RESUME_EVALUATION_VERSION,
+                )
+                self.timings["database_storage_ms"] = round(
+                    (time.perf_counter() - storage_started_at) * 1000, 2
+                )
+                return result
+            except Exception:
+                logger.warning(
+                    "Resume evaluation failure state could not be persisted",
+                    extra={"session_id": str(session.id), "user_id": str(user_id)},
+                )
+                return None

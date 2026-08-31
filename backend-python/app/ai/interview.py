@@ -140,16 +140,16 @@ class LangChainInterviewQuestionGeneratorAdapter:
     async def generate(self, request: QuestionGenerationRequest) -> GeneratedQuestionSet:
         structured_model = self._model.with_structured_output(GeneratedQuestionSet)
         prompt = (
-            "你是严谨的技术面试题生成器。只根据给定岗位和参考资料生成问题，"
-            "不得编造来源。\n"
+            "你是严谨的技术面试题生成器。仅依据岗位和参考资料生成结构化题目，不得编造来源。\n"
             f"岗位：{request.job_title}\n"
             f"岗位描述：{request.job_description}\n"
             f"面试类型：{request.interview_type}\n"
             f"难度：{request.difficulty}\n"
-            f"题目数量：{request.question_count}\n"
-            f"允许的来源编号：{', '.join(request.source_ids)}\n"
-            "source_ids 必须是 JSON 字符串数组，每个值只能逐字复制自允许的来源编号，"
-            "包括方括号；不得省略、改写或自行创造编号。\n"
+            f"请生成 {request.question_count} 道互不重复的题目；"
+            f"每题难度必须为 {request.difficulty}，"
+            "expected_points 至少包含一个可核验考察点。\n"
+            f"允许的来源编号：{', '.join(request.source_ids)}。"
+            "source_ids 只能逐字复制这些编号（包括方括号）。\n"
             f"参考资料：\n{request.context_prompt}"
         )
         result = await structured_model.ainvoke(prompt)

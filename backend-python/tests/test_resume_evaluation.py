@@ -21,7 +21,10 @@ from app.modules.interview.domain import (
     ResumeEvaluationStatus,
 )
 from app.modules.interview.schemas import InterviewSessionResponse
-from app.modules.interview.workflow import InterviewPreparationWorkflow
+from app.modules.interview.workflow import (
+    InterviewPreparationWorkflow,
+    InterviewResumeEvaluationWorkflow,
+)
 from app.modules.report.domain import (
     InterviewReport,
     InterviewReportDetail,
@@ -29,6 +32,7 @@ from app.modules.report.domain import (
     ReportStatus,
 )
 from app.modules.report.schemas import InterviewReportResponse
+from app.workers.queue import InterviewResumeEvaluationJob
 
 
 def _session() -> InterviewSession:
@@ -241,13 +245,25 @@ class _ResumeRepository(InMemoryInterviewRepository):
         return value
 
 
+class _DeferredResumeEvaluationQueue:
+    def __init__(self) -> None:
+        self.jobs: list[InterviewResumeEvaluationJob] = []
+
+    async def enqueue_interview_resume_evaluation(
+        self, job: InterviewResumeEvaluationJob
+    ) -> None:
+        self.jobs.append(job)
+
+
 @pytest.mark.asyncio
-async def test_resume_evaluation_is_persisted_without_blocking_preparation() -> None:
+async def test_slow_resume_evaluation_does_not_block_ready_preparation() -> None:
     repository = _ResumeRepository()
     session = _session()
     await repository.create(session)
     from app.modules.knowledge.context import ContextCitation
 
+    evaluator = FakeResumeEvaluator(delay_seconds=0.05)
+    queue = _DeferredResumeEvaluationQueue()
     workflow = InterviewPreparationWorkflow(
         repository,
         FakeInterviewContextProvider(
@@ -263,12 +279,35 @@ async def test_resume_evaluation_is_persisted_without_blocking_preparation() -> 
             ),
         ),
         FakeInterviewQuestionGenerator(),
-        FakeResumeEvaluator(),
+        evaluator,
+        queue,
     )
     result = await workflow.prepare(session.user_id, session.id)
     assert result.status == InterviewStatus.READY
+    assert evaluator.calls == 0
+    assert len(queue.jobs) == 1
+
+    evaluation_workflow = InterviewResumeEvaluationWorkflow(
+        repository,
+        FakeInterviewContextProvider(
+            context=InterviewContext(
+                prompt="resume evidence",
+                citations=(
+                    ContextCitation(
+                        source_id="[S1]", chunk_id=uuid4(), document_id=uuid4(),
+                        document_name="resume.pdf", page_number=1, score=1.0,
+                        excerpt="experience", ordinal=0,
+                    ),
+                ),
+            ),
+        ),
+        evaluator,
+    )
+    evaluation = await evaluation_workflow.evaluate(session.user_id, session.id)
+    assert evaluation is not None
     assert repository.resume_evaluations[session.id].status == ResumeEvaluationStatus.COMPLETED
     assert repository.resume_evaluations[session.id].overall_score == 86
+    assert evaluator.calls == 1
 
 
 @pytest.mark.asyncio
@@ -278,6 +317,8 @@ async def test_resume_evaluation_failure_does_not_fail_interview_preparation() -
     await repository.create(session)
     from app.modules.knowledge.context import ContextCitation
 
+    evaluator = FakeResumeEvaluator(error=RuntimeError("provider unavailable"))
+    queue = _DeferredResumeEvaluationQueue()
     workflow = InterviewPreparationWorkflow(
         repository,
         FakeInterviewContextProvider(
@@ -293,9 +334,30 @@ async def test_resume_evaluation_failure_does_not_fail_interview_preparation() -
             )
         ),
         FakeInterviewQuestionGenerator(),
-        FakeResumeEvaluator(error=RuntimeError("provider unavailable")),
+        evaluator,
+        queue,
     )
     result = await workflow.prepare(session.user_id, session.id)
     assert result.status == InterviewStatus.READY
+    assert repository.resume_evaluations[session.id].status == ResumeEvaluationStatus.PENDING
+
+    evaluation_workflow = InterviewResumeEvaluationWorkflow(
+        repository,
+        FakeInterviewContextProvider(
+            context=InterviewContext(
+                prompt="resume evidence",
+                citations=(
+                    ContextCitation(
+                        source_id="[S1]", chunk_id=uuid4(), document_id=uuid4(),
+                        document_name="resume.pdf", page_number=1, score=1.0,
+                        excerpt="experience", ordinal=0,
+                    ),
+                ),
+            ),
+        ),
+        evaluator,
+    )
+    evaluation = await evaluation_workflow.evaluate(session.user_id, session.id)
+    assert evaluation is not None
     assert repository.resume_evaluations[session.id].status == ResumeEvaluationStatus.FAILED
     assert repository.resume_evaluations[session.id].overall_score is None

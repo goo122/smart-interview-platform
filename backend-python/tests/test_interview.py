@@ -40,6 +40,7 @@ from app.modules.interview.exceptions import (
     InvalidInterviewRequestError,
     InvalidInterviewTransitionError,
 )
+from app.modules.interview.schemas import CreateInterviewSessionRequest
 from app.modules.interview.service import InterviewService
 from app.modules.interview.state_machine import InterviewStateMachine
 from app.modules.knowledge.context import ContextCitation
@@ -657,6 +658,16 @@ def _create_args(user_id: UUID, base_id: UUID, request_id: str | None = None) ->
         "question_count": 3,
         "request_id": request_id,
     }
+
+
+def test_interview_request_defaults_to_five_questions() -> None:
+    request = CreateInterviewSessionRequest(
+        knowledgeBaseId=uuid4(),
+        jobTitle="Python 后端工程师",
+        jobDescription="负责后端服务开发",
+    )
+
+    assert request.question_count == 5
 
 
 def _seed_conversation(

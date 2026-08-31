@@ -47,7 +47,9 @@ export default function InterviewResumeUploadCard({
   );
   const activeUploadLabel = RESUME_UPLOAD_STAGES[normalizedUploadStage];
   const progressPercent =
-    ((normalizedUploadStage + 1) / RESUME_UPLOAD_STAGES.length) * 100;
+    normalizedUploadStage === RESUME_UPLOAD_STAGES.length - 1
+      ? 90
+      : ((normalizedUploadStage + 1) / RESUME_UPLOAD_STAGES.length) * 100;
   const hasResumeEntry = Boolean(
     resumeLocalFile || resumeFileUrl || resumeName || resumePreviewError,
   );
@@ -197,7 +199,14 @@ export default function InterviewResumeUploadCard({
               <span>处理进度</span>
               <span>{Math.round(progressPercent)}%</span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-1.5 overflow-hidden rounded-full bg-slate-200"
+              role="progressbar"
+              aria-label="面试准备进度"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progressPercent}
+            >
               <motion.div
                 className="h-full rounded-full bg-slate-700"
                 animate={{ width: `${progressPercent}%` }}

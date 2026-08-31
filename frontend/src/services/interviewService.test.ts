@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import service from "@/lib/request";
 import { AppError, ErrorCode } from "@/lib/errors";
+import { knowledgeApi } from "@/features/knowledge/api";
 import {
   buildResumeKnowledgeBaseName,
   type AnswerInterviewQuestionResult,
@@ -120,6 +121,78 @@ describe("interviewService.resolveInterviewRole", () => {
       );
     } finally {
       postSpy.mockRestore();
+    }
+  });
+});
+
+describe("interviewService.prepareInterviewSessionFromResume", () => {
+  it("skips role inference when the caller supplies both job fields", async () => {
+    const file = new File(["resume"], "candidate.pdf", {
+      type: "application/pdf",
+    });
+    const stages: number[] = [];
+    const createBaseSpy = vi.spyOn(knowledgeApi, "createBase").mockResolvedValue({
+      id: "knowledge-1",
+    } as never);
+    const uploadDocumentSpy = vi
+      .spyOn(knowledgeApi, "uploadDocument")
+      .mockResolvedValue({ id: "document-1" } as never);
+    const listDocumentsSpy = vi
+      .spyOn(knowledgeApi, "listDocuments")
+      .mockResolvedValue({
+        records: [{ id: "document-1", status: "READY" }],
+      } as never);
+    const resolveRoleSpy = vi
+      .spyOn(interviewService, "resolveInterviewRole")
+      .mockResolvedValue({
+        jobTitle: "不应使用的岗位",
+        jobDescription: "不应使用的岗位描述",
+        confidence: 0,
+        inferred: true,
+        inferenceVersion: "resume-role-v1",
+      });
+    const createSessionSpy = vi
+      .spyOn(interviewService, "createInterviewSession")
+      .mockResolvedValue({ sessionId: "session-1", status: "PREPARING" });
+    const getSessionSpy = vi
+      .spyOn(interviewService, "getInterviewSession")
+      .mockResolvedValue({
+        sessionId: "session-1",
+        status: "READY",
+        canStart: true,
+      } as never);
+    const startSessionSpy = vi
+      .spyOn(interviewService, "startInterviewSession")
+      .mockResolvedValue({ sessionId: "session-1", status: "IN_PROGRESS" } as never);
+
+    try {
+      const result = await interviewService.prepareInterviewSessionFromResume(file, {
+        requestId: "request-1",
+        jobTitle: "Java 后端工程师",
+        jobDescription: "负责 Java 服务和系统设计",
+        onPreparationStage: (stage) => stages.push(stage),
+      });
+
+      expect(result.sessionId).toBe("session-1");
+      expect(resolveRoleSpy).not.toHaveBeenCalled();
+      expect(createSessionSpy).toHaveBeenCalledWith({
+        knowledgeBaseId: "knowledge-1",
+        jobTitle: "Java 后端工程师",
+        jobDescription: "负责 Java 服务和系统设计",
+        interviewType: "TECHNICAL",
+        difficulty: "MEDIUM",
+        questionCount: 5,
+        requestId: "request-1",
+      });
+      expect(stages).toEqual([0, 1, 2, 2]);
+    } finally {
+      createBaseSpy.mockRestore();
+      uploadDocumentSpy.mockRestore();
+      listDocumentsSpy.mockRestore();
+      resolveRoleSpy.mockRestore();
+      createSessionSpy.mockRestore();
+      getSessionSpy.mockRestore();
+      startSessionSpy.mockRestore();
     }
   });
 });

@@ -61,6 +61,24 @@ class InterviewPreparationTaskQueuePort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class InterviewResumeEvaluationJob:
+    """Serializable arguments for the optional resume-evaluation task."""
+
+    session_id: UUID
+    user_id: UUID
+    request_id: str
+    job_id: str | None = None
+
+
+class InterviewResumeEvaluationTaskQueuePort(Protocol):
+    """Queue port for evaluating a resume independently from preparation."""
+
+    async def enqueue_interview_resume_evaluation(
+        self, job: InterviewResumeEvaluationJob
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
 class InterviewAnswerEvaluationJob:
     """Serializable arguments for an interview-answer evaluation task."""
 

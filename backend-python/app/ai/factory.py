@@ -230,8 +230,21 @@ class AiProviderFactory:
                 timeout=settings.ai_request_timeout_seconds,
                 max_retries=settings.ai_max_retries,
             )
+            question_model = model
+            if (
+                settings.interview_question_model
+                and settings.interview_question_model != settings.llm_model
+            ):
+                question_model = ChatOpenAI(
+                    api_key=SecretStr(settings.llm_api_key),
+                    base_url=settings.llm_base_url,
+                    model=settings.interview_question_model,
+                    temperature=0,
+                    timeout=settings.ai_request_timeout_seconds,
+                    max_retries=settings.ai_max_retries,
+                )
             chat_model = LangChainChatModelAdapter(model)
-            question_generator = LangChainInterviewQuestionGeneratorAdapter(model)
+            question_generator = LangChainInterviewQuestionGeneratorAdapter(question_model)
             answer_evaluator = LangChainInterviewAnswerEvaluatorAdapter(model)
             follow_up_generator = LangChainFollowUpQuestionGeneratorAdapter(model)
             report_narrative = LangChainInterviewReportNarrativeAdapter(model)

@@ -9,10 +9,12 @@ from app.workers.queue import (
     InterviewAnswerEvaluationJob,
     InterviewPreparationJob,
     InterviewReportGenerationJob,
+    InterviewResumeEvaluationJob,
 )
 
 DOCUMENT_IMPORT_FUNCTION = "process_knowledge_document"
 INTERVIEW_PREPARATION_FUNCTION = "process_interview_preparation"
+INTERVIEW_RESUME_EVALUATION_FUNCTION = "process_interview_resume_evaluation"
 INTERVIEW_ANSWER_EVALUATION_FUNCTION = "process_interview_answer_evaluation"
 INTERVIEW_REPORT_GENERATION_FUNCTION = "process_interview_report_generation"
 DOCUMENT_IMPORT_QUEUE = "knowledge:documents"
@@ -47,6 +49,12 @@ class ArqDocumentTaskQueue:
     async def enqueue_interview_preparation(self, job: InterviewPreparationJob) -> None:
         redis = await self._get_redis()
         await enqueue_interview_preparation_job(redis, job)
+
+    async def enqueue_interview_resume_evaluation(
+        self, job: InterviewResumeEvaluationJob
+    ) -> None:
+        redis = await self._get_redis()
+        await enqueue_interview_resume_evaluation_job(redis, job)
 
     async def enqueue_interview_answer_evaluation(
         self, job: InterviewAnswerEvaluationJob
@@ -98,6 +106,21 @@ async def enqueue_interview_preparation_job(
         user_id=str(job.user_id),
         request_id=job.request_id,
         _job_id=job.job_id or f"interview-preparation:{job.session_id}",
+        _queue_name=DOCUMENT_IMPORT_QUEUE,
+    )
+
+
+async def enqueue_interview_resume_evaluation_job(
+    redis: ArqRedis, job: InterviewResumeEvaluationJob
+) -> None:
+    """Enqueue optional resume evaluation with a stable job ID."""
+
+    await redis.enqueue_job(
+        INTERVIEW_RESUME_EVALUATION_FUNCTION,
+        session_id=str(job.session_id),
+        user_id=str(job.user_id),
+        request_id=job.request_id,
+        _job_id=job.job_id or f"interview-resume-evaluation:{job.session_id}",
         _queue_name=DOCUMENT_IMPORT_QUEUE,
     )
 

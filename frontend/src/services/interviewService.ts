@@ -62,6 +62,7 @@ export interface CreateInterviewSessionParams {
 export interface PrepareInterviewSessionOptions {
   requestId?: string;
   signal?: AbortSignal;
+  onPreparationStage?: (stage: 0 | 1 | 2) => void;
   jobTitle?: string;
   jobDescription?: string;
   interviewType?: InterviewType;
@@ -858,6 +859,7 @@ export const interviewService = {
     file: File,
     options: PrepareInterviewSessionOptions = {},
   ): Promise<InterviewSessionResponse> => {
+    options.onPreparationStage?.(0);
     const knowledgeBase = await knowledgeApi.createBase({
       name: buildResumeKnowledgeBaseName(file.name, options.requestId),
       description: "由面试页上传的简历知识库",
@@ -867,6 +869,7 @@ export const interviewService = {
       knowledgeBase.id,
       file,
     );
+    options.onPreparationStage?.(1);
     const readyDocument = await pollUntil(
       () => knowledgeApi.listDocuments(knowledgeBase.id, 1, 100),
       (page) => {
@@ -885,19 +888,19 @@ export const interviewService = {
       throw new Error("简历解析失败，请稍后重试");
     }
 
-    const resolvedRole = options.jobTitle?.trim()
+    options.onPreparationStage?.(2);
+    const providedJobTitle = options.jobTitle?.trim();
+    const providedJobDescription = options.jobDescription?.trim();
+    const resolvedRole = providedJobTitle && providedJobDescription
       ? {
-          jobTitle: options.jobTitle.trim(),
-          jobDescription:
-            options.jobDescription?.trim() ||
-            `围绕${options.jobTitle.trim()}的岗位职责、核心技能、项目经验和问题解决能力进行综合评估。`,
+          jobTitle: providedJobTitle,
+          jobDescription: providedJobDescription,
         }
       : await interviewService.resolveInterviewRole(knowledgeBase.id);
     const created = await interviewService.createInterviewSession({
       knowledgeBaseId: knowledgeBase.id,
       jobTitle: resolvedRole.jobTitle,
-      jobDescription:
-        options.jobDescription?.trim() || resolvedRole.jobDescription,
+      jobDescription: resolvedRole.jobDescription,
       interviewType: options.interviewType || "TECHNICAL",
       difficulty: options.difficulty || "MEDIUM",
       questionCount: options.questionCount || 5,
@@ -918,6 +921,7 @@ export const interviewService = {
       INTERVIEW_READY_TIMEOUT_MS,
       options.signal,
     );
+    options.onPreparationStage?.(2);
     if (!readySession.canStart) {
       throw new Error("面试题暂未准备完成，请稍后刷新页面");
     }

@@ -25,7 +25,7 @@ class CreateInterviewSessionRequest(BaseModel):
     job_description: str = Field(alias="jobDescription", min_length=1, max_length=20000)
     interview_type: InterviewType = Field(default=InterviewType.TECHNICAL, alias="interviewType")
     difficulty: InterviewDifficulty = InterviewDifficulty.MEDIUM
-    question_count: int = Field(default=8, alias="questionCount", ge=3, le=20)
+    question_count: int = Field(default=5, alias="questionCount", ge=3, le=20)
     request_id: str | None = Field(default=None, alias="requestId", max_length=128)
 
 

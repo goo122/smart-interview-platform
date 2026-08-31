@@ -32,7 +32,10 @@ from app.modules.interview.exceptions import (
 )
 from app.modules.interview.follow_up import FollowUpPolicy
 from app.modules.interview.repository import SqlAlchemyInterviewRepository
-from app.modules.interview.workflow import InterviewPreparationWorkflow
+from app.modules.interview.workflow import (
+    InterviewPreparationWorkflow,
+    InterviewResumeEvaluationWorkflow,
+)
 from app.modules.knowledge.context import ContextAssembler
 from app.modules.knowledge.domain import utc_now
 from app.modules.knowledge.exceptions import RetryableKnowledgeImportError
@@ -48,6 +51,8 @@ from app.workers.queue import (
     InterviewAnswerEvaluationJob,
     InterviewPreparationJob,
     InterviewReportGenerationJob,
+    InterviewResumeEvaluationJob,
+    InterviewResumeEvaluationTaskQueuePort,
 )
 from app.workers.redis_queue import (
     DOCUMENT_IMPORT_QUEUE,
@@ -163,6 +168,7 @@ async def process_interview_preparation(
             ),
             ctx["interview_question_generator"],
             ctx["resume_evaluator"],
+            cast(InterviewResumeEvaluationTaskQueuePort, ctx["document_task_queue"]),
         )
         common_log = {
             "session_id": session_id,
@@ -213,7 +219,79 @@ async def process_interview_preparation(
             extra={
                 **common_log,
                 "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "preparation_duration_ms": round(
+                    (time.perf_counter() - started_at) * 1000, 2
+                ),
+                "context_retrieval_ms": workflow.timings.get("context_retrieval_ms"),
+                "resume_evaluation_ms": None,
+                "question_generation_ms": workflow.timings.get("question_generation_ms"),
+                "database_storage_ms": workflow.timings.get("database_storage_ms"),
                 "status": result.status.value,
+            },
+        )
+
+
+async def process_interview_resume_evaluation(
+    ctx: dict[str, Any],
+    *,
+    session_id: str,
+    user_id: str,
+    request_id: str,
+) -> None:
+    """Evaluate a resume after preparation using a separate DB session."""
+
+    settings = cast(Settings, ctx["settings"])
+    job_try = int(ctx.get("job_try", 1))
+    job = InterviewResumeEvaluationJob(
+        session_id=UUID(session_id),
+        user_id=UUID(user_id),
+        request_id=request_id,
+    )
+    session_factory = cast(async_sessionmaker[AsyncSession], ctx["session_factory"])
+    started_at = time.perf_counter()
+    async with session_factory() as session:
+        repository = SqlAlchemyInterviewRepository(session)
+        workflow = InterviewResumeEvaluationWorkflow(
+            repository,
+            InterviewContextProvider(
+                SqlAlchemyKnowledgeRepository(session),
+                ctx["embedding"],
+                PgVectorRetriever(session, settings.embedding_dimensions),
+                ContextAssembler(settings.rag_max_context_tokens, settings.rag_max_chunk_tokens),
+                settings,
+            ),
+            ctx["resume_evaluator"],
+        )
+        common_log = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "request_id": request_id,
+            "attempt": job_try,
+            "provider": settings.ai_provider,
+        }
+        logger.info("Interview resume evaluation started", extra=common_log)
+        try:
+            result = await workflow.evaluate(job.user_id, job.session_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Interview resume evaluation task failed",
+                extra={
+                    **common_log,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                },
+            )
+            return
+        logger.info(
+            "Interview resume evaluation completed",
+            extra={
+                **common_log,
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "context_retrieval_ms": workflow.timings.get("context_retrieval_ms"),
+                "resume_evaluation_ms": workflow.timings.get("resume_evaluation_ms"),
+                "database_storage_ms": workflow.timings.get("database_storage_ms"),
+                "status": result.status.value if result is not None else None,
             },
         )
 
@@ -680,6 +758,7 @@ def create_worker() -> Worker:
         functions=[
             process_knowledge_document,
             process_interview_preparation,
+            process_interview_resume_evaluation,
             process_interview_answer_evaluation,
             process_interview_report_generation,
         ],

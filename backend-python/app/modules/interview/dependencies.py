@@ -41,6 +41,7 @@ from app.modules.knowledge.retrieval import RetrieverPort
 from app.workers.queue import (
     InterviewAnswerEvaluationTaskQueuePort,
     InterviewPreparationTaskQueuePort,
+    InterviewResumeEvaluationTaskQueuePort,
 )
 
 
@@ -147,6 +148,17 @@ def get_interview_preparation_task_queue(request: Request) -> InterviewPreparati
     )
 
 
+def get_interview_resume_evaluation_task_queue(
+    request: Request,
+) -> InterviewResumeEvaluationTaskQueuePort:
+    """Use the serializable ARQ queue for optional resume evaluation too."""
+
+    return cast(
+        InterviewResumeEvaluationTaskQueuePort,
+        request.app.state.interview_preparation_task_queue,
+    )
+
+
 def get_interview_answer_task_queue(
     request: Request,
 ) -> InterviewAnswerEvaluationTaskQueuePort:
@@ -169,6 +181,10 @@ def get_interview_service(
     task_queue: Annotated[
         InterviewPreparationTaskQueuePort, Depends(get_interview_preparation_task_queue)
     ],
+    resume_evaluation_queue: Annotated[
+        InterviewResumeEvaluationTaskQueuePort,
+        Depends(get_interview_resume_evaluation_task_queue),
+    ],
     settings: Annotated[Settings, Depends(get_settings)],
     resume_evaluator: Annotated[ResumeEvaluatorPort, Depends(get_resume_evaluator)],
     role_inference: Annotated[
@@ -183,6 +199,7 @@ def get_interview_service(
         settings,
         resume_evaluator,
         role_inference,
+        resume_evaluation_queue,
     )
 
 

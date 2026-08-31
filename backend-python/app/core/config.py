@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
+    interview_question_model: str | None = None
     rag_chunk_size: int = Field(default=800, ge=100, le=10000)
     rag_chunk_overlap: int = Field(default=120, ge=0, le=2000)
     rag_max_chunks_per_document: int = Field(default=1000, ge=1, le=10000)

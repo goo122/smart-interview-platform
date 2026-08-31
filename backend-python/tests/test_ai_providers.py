@@ -260,6 +260,41 @@ def test_openai_compatible_uses_one_shared_chat_model(monkeypatch: pytest.Monkey
     assert bundle.embedding.max_batch_size is None
 
 
+def test_question_generation_can_use_an_explicit_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class FakeOpenAIEmbeddings:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        types.SimpleNamespace(ChatOpenAI=FakeChatOpenAI, OpenAIEmbeddings=FakeOpenAIEmbeddings),
+    )
+    settings = Settings(
+        _env_file=None,
+        ai_provider="openai_compatible",
+        embedding_provider="unavailable",
+        llm_api_key="test-key",
+        llm_base_url="https://llm.invalid/v1",
+        llm_model="quality-model",
+        interview_question_model="fast-question-model",
+    )
+
+    bundle = AiProviderFactory.build(settings)
+
+    assert bundle.chat_model._model is not bundle.interview_question_generator._model
+    assert bundle.chat_model._model.kwargs["model"] == "quality-model"
+    assert bundle.interview_question_generator._model.kwargs["model"] == (
+        "fast-question-model"
+    )
+
+
 def test_text_embedding_v4_sets_provider_batch_capability(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeChatOpenAI:
         def __init__(self, **kwargs: object) -> None:

@@ -32,6 +32,7 @@ from app.modules.interview.workflow import InterviewPreparationWorkflow
 from app.workers.queue import (
     InterviewPreparationJob,
     InterviewPreparationTaskQueuePort,
+    InterviewResumeEvaluationTaskQueuePort,
     TaskQueuePort,
 )
 
@@ -59,6 +60,7 @@ class InterviewService:
         settings: Settings,
         resume_evaluator: ResumeEvaluatorPort | None = None,
         role_inference: ResumeRoleInferencePort | None = None,
+        resume_evaluation_queue: InterviewResumeEvaluationTaskQueuePort | None = None,
     ) -> None:
         self._repository = repository
         self._context_provider = context_provider
@@ -66,7 +68,11 @@ class InterviewService:
         self._task_queue = task_queue
         self._settings = settings
         self._workflow = InterviewPreparationWorkflow(
-            repository, context_provider, generator, resume_evaluator
+            repository,
+            context_provider,
+            generator,
+            resume_evaluator,
+            resume_evaluation_queue,
         )
         self._role_inference = role_inference
 
