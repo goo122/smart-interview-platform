@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -294,6 +295,48 @@ def test_xunfei_signing_keeps_query_and_headers_consistent() -> None:
 def test_xunfei_audio_url_is_decoded_server_side() -> None:
     encoded = base64.b64encode(b"https://cdn.xf-yun.com/audio.mp3").decode("ascii")
     assert _decode_provider_url(encoded) == "https://cdn.xf-yun.com/audio.mp3"
+    encoded_http = base64.b64encode(b"http://sgw-dx.xf-yun.com/audio.mp3").decode("ascii")
+    assert _decode_provider_url(encoded_http) == "http://sgw-dx.xf-yun.com/audio.mp3"
+
+
+@pytest.mark.asyncio
+async def test_xunfei_query_omits_sid_field() -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.body: dict[str, object] | None = None
+
+        async def post(self, _url: str, **kwargs: object) -> httpx.Response:
+            body = kwargs.get("json")
+            assert isinstance(body, dict)
+            self.body = body
+            return httpx.Response(
+                200,
+                json={
+                    "header": {"code": 0, "task_status": 5},
+                    "payload": {
+                        "audio": {
+                            "audio": base64.b64encode(
+                                b"https://cdn.xf-yun.com/audio.mp3"
+                            ).decode("ascii")
+                        }
+                    },
+                },
+            )
+
+    client = RecordingClient()
+    adapter = XunfeiTextToSpeechAdapter(
+        app_id="test-app",
+        api_key="test-key",
+        api_secret="test-secret",
+    )
+
+    status, audio_url = await adapter._query(  # noqa: SLF001
+        client, "https://api-dx.xf-yun.com/v1/private/dts_query", "task-id"
+    )
+
+    assert status == 5
+    assert audio_url == "https://cdn.xf-yun.com/audio.mp3"
+    assert client.body == {"header": {"app_id": "test-app", "task_id": "task-id"}}
 
 
 class BlockingTextToSpeechAdapter:

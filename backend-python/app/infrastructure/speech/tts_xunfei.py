@@ -21,6 +21,7 @@ from app.modules.speech.tts_exceptions import (
 from app.modules.speech.tts_ports import TextToSpeechRequest, TextToSpeechResult
 
 DEFAULT_XUNFEI_TTS_URL = "https://api-dx.xf-yun.com/v1/private/dts_create"
+XUNFEI_AUDIO_HOST_SUFFIX = ".xf-yun.com"
 
 
 class XunfeiTextToSpeechAdapter:
@@ -55,12 +56,12 @@ class XunfeiTextToSpeechAdapter:
         timeout = httpx.Timeout(request.timeout_seconds)
         try:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-                sid, task_id = await self._create(client, request)
+                _sid, task_id = await self._create(client, request)
                 audio_url: str | None = None
                 status = 1
                 while status in {1, 3}:
                     await asyncio.sleep(request.poll_interval_seconds)
-                    status, audio_url = await self._query(client, query_endpoint, task_id, sid)
+                    status, audio_url = await self._query(client, query_endpoint, task_id)
                 if status != 5 or not audio_url:
                     raise TextToSpeechProviderError("Xunfei TTS did not complete")
                 audio_bytes = await self._download_audio(client, audio_url)
@@ -128,9 +129,8 @@ class XunfeiTextToSpeechAdapter:
         client: httpx.AsyncClient,
         endpoint: str,
         task_id: str,
-        sid: str,
     ) -> tuple[int, str | None]:
-        body = {"header": {"app_id": self._app_id, "task_id": task_id, "sid": sid}}
+        body = {"header": {"app_id": self._app_id, "task_id": task_id}}
         signed_endpoint, headers = self._signed_request("POST", endpoint)
         response = await client.post(signed_endpoint, headers=headers, json=body)
         payload = _json_object(response)
@@ -145,7 +145,12 @@ class XunfeiTextToSpeechAdapter:
 
     async def _download_audio(self, client: httpx.AsyncClient, audio_url: str) -> bytes:
         parsed = urlparse(audio_url)
-        if parsed.scheme != "https" or not parsed.netloc:
+        hostname = (parsed.hostname or "").lower()
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or not hostname.endswith(XUNFEI_AUDIO_HOST_SUFFIX)
+        ):
             raise TextToSpeechProviderError("Invalid Xunfei audio URL")
         chunks: list[bytes] = []
         async with client.stream("GET", audio_url) as response:
