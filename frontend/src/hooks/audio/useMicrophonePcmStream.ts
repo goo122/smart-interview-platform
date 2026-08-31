@@ -72,6 +72,13 @@ export function useMicrophonePcmStream({
       const audioContext = new AudioContextCtor({ sampleRate });
       audioContextRef.current = audioContext;
 
+      // Some browsers create the context in a suspended state even after
+      // microphone permission has been granted. In that state the
+      // ScriptProcessor callback never receives microphone samples.
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+
       const source = audioContext.createMediaStreamSource(stream);
       sourceRef.current = source;
 
