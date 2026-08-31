@@ -49,6 +49,7 @@ class InterviewPreparationJob:
     session_id: UUID
     user_id: UUID
     request_id: str
+    job_id: str | None = None
 
 
 class InterviewPreparationTaskQueuePort(Protocol):

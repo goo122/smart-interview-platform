@@ -265,6 +265,10 @@ async def _recover_interview_preparations(ctx: dict[str, Any]) -> None:
             session_id=interview.id,
             user_id=interview.user_id,
             request_id=f"recovery:{interview.id}",
+            job_id=(
+                f"interview-preparation:{interview.id}:recovery:"
+                f"{interview.preparation_attempt_count}"
+            ),
         )
         await enqueue_interview_preparation_job(redis, job)
         logger.info(

@@ -77,6 +77,6 @@ async def enqueue_interview_preparation_job(
         session_id=str(job.session_id),
         user_id=str(job.user_id),
         request_id=job.request_id,
-        _job_id=f"interview-preparation:{job.session_id}",
+        _job_id=job.job_id or f"interview-preparation:{job.session_id}",
         _queue_name=DOCUMENT_IMPORT_QUEUE,
     )

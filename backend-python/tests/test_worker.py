@@ -56,6 +56,18 @@ async def test_interview_preparation_job_has_serializable_deterministic_payload(
 
 
 @pytest.mark.asyncio
+async def test_recovery_job_can_use_a_deterministic_attempt_specific_id() -> None:
+    redis = RecordingRedis()
+    job = InterviewPreparationJob(
+        uuid4(), uuid4(), "recovery-request", "interview-preparation:session:recovery:2"
+    )
+
+    await enqueue_interview_preparation_job(redis, job)  # type: ignore[arg-type]
+
+    assert redis.calls[0][1]["_job_id"] == job.job_id
+
+
+@pytest.mark.asyncio
 async def test_worker_shutdown_releases_queue_and_database_resources() -> None:
     queue = RecordingQueue()
     engine = RecordingEngine()
