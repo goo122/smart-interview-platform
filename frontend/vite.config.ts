@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: normalizeTarget(env.VITE_API_TARGET),
           changeOrigin: true,
+          ws: true,
         },
       },
     },
