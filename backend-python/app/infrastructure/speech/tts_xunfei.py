@@ -25,7 +25,8 @@ DEFAULT_XUNFEI_TTS_URL = "https://api-dx.xf-yun.com/v1/private/dts_create"
 
 class XunfeiTextToSpeechAdapter:
     provider_name = "xunfei"
-    supported_audio_formats = ("lame", "mp3", "wav")
+    # Long-text DTS accepts lame encoding and returns an MP3-compatible stream.
+    supported_audio_formats = ("lame",)
     supported_voices = ("x4_mingge",)
     max_text_length = 100000
     supports_streaming = False

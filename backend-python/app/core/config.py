@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     xunfei_tts_api_key: str | None = None
     xunfei_tts_api_secret: str | None = None
     xunfei_tts_url: str = "https://api-dx.xf-yun.com/v1/private/dts_create"
-    tts_audio_format: Literal["wav", "mp3", "lame"] = "wav"
+    tts_audio_format: Literal["wav", "mp3", "lame"] = "lame"
     tts_sample_rate: int = Field(default=16000, ge=8000, le=48000)
     tts_voice: str = Field(default="x4_mingge", min_length=1, max_length=64)
     tts_max_text_length: int = Field(default=10000, ge=1, le=100000)
@@ -148,15 +148,15 @@ class Settings(BaseSettings):
                 "xunfei speech provider requires app ID, API key and API secret"
             )
         if self.text_to_speech_provider == "xunfei" and not all(
-            self._has_value(value)
-            for value in (
-                self.xunfei_tts_app_id,
-                self.xunfei_tts_api_key,
-                self.xunfei_tts_api_secret,
+            self._has_value(tts_value) or self._has_value(asr_value)
+            for tts_value, asr_value in (
+                (self.xunfei_tts_app_id, self.xunfei_asr_app_id),
+                (self.xunfei_tts_api_key, self.xunfei_asr_api_key),
+                (self.xunfei_tts_api_secret, self.xunfei_asr_api_secret),
             )
         ):
             raise ValueError(
-                "xunfei text-to-speech provider requires app ID, API key and API secret"
+                "xunfei text-to-speech provider requires TTS credentials or reusable ASR credentials"
             )
         if self.asr_max_frame_bytes > self.asr_max_audio_bytes:
             raise ValueError("asr_max_frame_bytes must not exceed asr_max_audio_bytes")

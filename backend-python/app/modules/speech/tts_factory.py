@@ -17,9 +17,12 @@ class TextToSpeechProviderFactory:
             return FakeTextToSpeechAdapter()
         if provider == "xunfei":
             return XunfeiTextToSpeechAdapter(
-                app_id=settings.xunfei_tts_app_id,
-                api_key=settings.xunfei_tts_api_key,
-                api_secret=settings.xunfei_tts_api_secret,
+                # Xunfei uses the same application credentials for multiple
+                # enabled capabilities. Explicit TTS credentials take priority;
+                # otherwise reuse the already configured ASR credentials.
+                app_id=settings.xunfei_tts_app_id or settings.xunfei_asr_app_id,
+                api_key=settings.xunfei_tts_api_key or settings.xunfei_asr_api_key,
+                api_secret=settings.xunfei_tts_api_secret or settings.xunfei_asr_api_secret,
                 endpoint=settings.xunfei_tts_url,
                 max_audio_bytes=settings.tts_max_audio_bytes,
             )
