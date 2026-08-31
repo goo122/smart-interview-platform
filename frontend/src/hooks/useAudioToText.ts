@@ -20,18 +20,32 @@ export function useAudioToTextComposerBridge({
 }: AudioToTextComposerBridgeOptions) {
   const baseInputRef = useRef("");
   const prevRecordingRef = useRef(false);
+  const pendingFinalFlushRef = useRef(false);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      prevRecordingRef.current = false;
+      pendingFinalFlushRef.current = false;
+      return;
+    }
 
     if (isRecording && !prevRecordingRef.current) {
       baseInputRef.current = value;
+      pendingFinalFlushRef.current = true;
     }
+
+    if (!isRecording && prevRecordingRef.current) {
+      // The provider may send its final snapshot just after the recording
+      // state changes to false. Keep the bridge alive until that snapshot is
+      // applied to the composer.
+      pendingFinalFlushRef.current = true;
+    }
+
     prevRecordingRef.current = isRecording;
   }, [enabled, isRecording, value]);
 
   useEffect(() => {
-    if (!enabled || !isRecording) return;
+    if (!enabled || (!isRecording && !pendingFinalFlushRef.current)) return;
 
     const normalized = transcription.trim();
     if (!normalized) return;
@@ -42,6 +56,10 @@ export function useAudioToTextComposerBridge({
 
     if (merged !== value) {
       onChange(merged);
+    }
+
+    if (!isRecording) {
+      pendingFinalFlushRef.current = false;
     }
   }, [enabled, isRecording, transcription, value, onChange]);
 }
