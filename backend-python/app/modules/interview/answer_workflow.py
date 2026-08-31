@@ -42,6 +42,9 @@ class InterviewAnswerGraphState(TypedDict, total=False):
     user_id: UUID
     session_id: UUID
     turn_id: UUID
+    answer_id: UUID
+    request_id: str
+    worker_mode: bool
     session: InterviewSession
     turn: InterviewTurn
     answer_content: str
@@ -81,16 +84,27 @@ class InterviewAnswerWorkflow:
         session_id: UUID,
         turn_id: UUID,
         answer_content: str,
+        *,
+        answer_id: UUID | None = None,
+        request_id: str | None = None,
+        worker_mode: bool = False,
     ) -> InterviewSession:
         state: InterviewAnswerGraphState = {
             "user_id": user_id,
             "session_id": session_id,
             "turn_id": turn_id,
             "answer_content": answer_content,
+            "worker_mode": worker_mode,
         }
+        if answer_id is not None:
+            state["answer_id"] = answer_id
+        if request_id is not None:
+            state["request_id"] = request_id
         try:
             await self._graph.ainvoke(state)
         except asyncio.CancelledError:
+            if worker_mode:
+                raise
             try:
                 await self._repository.fail_evaluation(
                     session_id,
@@ -102,8 +116,12 @@ class InterviewAnswerWorkflow:
             finally:
                 raise
         except AppError as exc:
+            if worker_mode:
+                raise
             await self._fail(state, exc.code, exc.message)
         except Exception:
+            if worker_mode:
+                raise
             await self._fail(
                 state,
                 "INTERVIEW_EVALUATION_FAILED",
@@ -158,6 +176,19 @@ class InterviewAnswerWorkflow:
         turn = await self._repository.get_turn_for_user(state["turn_id"], state["user_id"])
         if session is None or turn is None or turn.session_id != session.id:
             raise InterviewEvaluationError("Interview turn not found")
+        answer_id = state.get("answer_id")
+        if answer_id is not None:
+            answer = await self._repository.get_answer_for_turn(turn.id, state["user_id"])
+            if (
+                answer is None
+                or answer.id != answer_id
+                or (
+                    state.get("request_id") is not None
+                    and answer.request_id != state["request_id"]
+                )
+            ):
+                raise InterviewEvaluationError("Interview answer not found")
+            state["answer_content"] = answer.content
         state["session"] = session
         state["turn"] = turn
         state["skip"] = turn.status in {
@@ -226,6 +257,20 @@ class InterviewAnswerWorkflow:
         return state
 
     async def _evaluate_answer(self, state: InterviewAnswerGraphState) -> InterviewAnswerGraphState:
+        if state.get("worker_mode"):
+            session = await self._repository.get_for_user(
+                state["session_id"], state["user_id"]
+            )
+            turn = await self._repository.get_turn_for_user(
+                state["turn_id"], state["user_id"]
+            )
+            if (
+                session is None
+                or turn is None
+                or session.status != InterviewStatus.IN_PROGRESS
+                or turn.status != TurnStatus.EVALUATING
+            ):
+                raise InterviewEvaluationError("Interview evaluation is no longer active")
         last_error: ValidationError | None = None
         for _attempt in range(2):
             try:

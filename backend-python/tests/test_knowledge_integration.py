@@ -73,9 +73,15 @@ from app.workers.queue import (
     DocumentImportJob,
     InlineDocumentTaskQueue,
     InlineTaskQueue,
+    InterviewAnswerEvaluationJob,
     InterviewPreparationJob,
 )
-from app.workers.redis_queue import enqueue_document_job, enqueue_interview_preparation_job
+from app.workers.redis_queue import (
+    INTERVIEW_ANSWER_EVALUATION_FUNCTION,
+    enqueue_document_job,
+    enqueue_interview_answer_evaluation_job,
+    enqueue_interview_preparation_job,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -665,6 +671,186 @@ async def test_arq_worker_prepares_interview_and_persists_ready_state(
             InterviewStatus.PREPARING,
             InterviewStatus.READY,
         ]
+    finally:
+        await arq_redis.aclose()
+        await session.rollback()
+        await session.execute(delete(UserModel).where(UserModel.id == user_id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_arq_worker_evaluates_answer_and_persists_follow_up_idempotently(
+    database_session: AsyncSession,
+) -> None:
+    session = database_session
+    user_id, base_id, document_id = uuid4(), uuid4(), uuid4()
+    embedding = FakeEmbedding()
+    arq_redis = await create_pool(
+        RedisSettings.from_dsn(_redis_url() or "redis://redis:6379/0"),
+        default_queue_name="knowledge:documents",
+    )
+    try:
+        session.add_all(
+            [
+                UserModel(
+                    id=user_id,
+                    username=f"answer-worker-{user_id.hex[:8]}",
+                    email=f"answer-worker-{user_id.hex[:8]}@example.com",
+                    password_hash="test-only",
+                    is_active=True,
+                ),
+                KnowledgeBaseModel(id=base_id, user_id=user_id, name="Answer Worker"),
+                KnowledgeDocumentModel(
+                    id=document_id,
+                    knowledge_base_id=base_id,
+                    original_filename="resume.pdf",
+                    safe_filename="resume.pdf",
+                    content_type="application/pdf",
+                    size_bytes=1,
+                    sha256=uuid4().hex * 2,
+                    storage_path="/tmp/answer-worker-resume.pdf",
+                    status=DocumentStatus.READY.value,
+                    page_count=1,
+                    chunk_count=1,
+                ),
+            ]
+        )
+        await session.flush()
+        preparation_query = (
+            "岗位：Python 后端工程师\n岗位描述：负责 FastAPI 和 PostgreSQL\n"
+            "难度：MEDIUM\n题目数：3"
+        )
+        session.add(
+            KnowledgeChunkModel(
+                document_id=document_id,
+                chunk_index=0,
+                page_number=1,
+                content="FastAPI PostgreSQL 项目经验",
+                token_count=4,
+                content_hash=uuid4().hex * 2,
+                embedding=embedding._embed(preparation_query, embedding.dimensions),
+            )
+        )
+        await session.commit()
+
+        repository = SqlAlchemyInterviewRepository(session)
+        interview = await repository.create(
+            InterviewSession.new(
+                user_id=user_id,
+                knowledge_base_id=base_id,
+                job_title="Python 后端工程师",
+                job_description="负责 FastAPI 和 PostgreSQL",
+                interview_type=InterviewType.TECHNICAL,
+                difficulty=InterviewDifficulty.MEDIUM,
+                question_count=3,
+                request_id="answer-worker-1",
+            )
+        )
+        queued, started = await repository.begin_preparing(interview.id, user_id)
+        assert started
+        assert queued.status == InterviewStatus.PREPARING
+        await enqueue_interview_preparation_job(
+            arq_redis,
+            InterviewPreparationJob(interview.id, user_id, "answer-worker-1"),
+        )
+
+        deadline = asyncio.get_running_loop().time() + 60
+        while asyncio.get_running_loop().time() < deadline:
+            await session.rollback()
+            current = await repository.get_for_user(interview.id, user_id)
+            if current is not None and current.status == InterviewStatus.READY:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            current = await repository.get_for_user(interview.id, user_id)
+            pytest.fail(f"Worker did not prepare interview: {current}")
+
+        await repository.start(interview.id, user_id)
+        turn = await repository.get_current_turn(interview.id, user_id)
+        assert turn is not None
+        answer_content = "我负责异步架构设计，并通过性能指标验证了方案效果。"
+        evaluation_query = (
+            f"岗位：Python 后端工程师\n问题：{turn.question_content}\n"
+            f"答案：{answer_content}\n追问深度：{turn.follow_up_depth}"
+        )
+        session.add(
+            KnowledgeChunkModel(
+                document_id=document_id,
+                chunk_index=1,
+                page_number=1,
+                content="异步架构设计、性能指标和技术取舍项目经验",
+                token_count=5,
+                content_hash=uuid4().hex * 2,
+                embedding=embedding._embed(evaluation_query, embedding.dimensions),
+            )
+        )
+        await session.commit()
+
+        progress = await repository.submit_answer(
+            interview.id,
+            turn.id,
+            user_id,
+            answer_content,
+            "answer-worker-1",
+        )
+        assert progress.answer is not None
+        assert progress.turn.status == TurnStatus.EVALUATING
+        job = InterviewAnswerEvaluationJob(
+            user_id=user_id,
+            session_id=interview.id,
+            turn_id=turn.id,
+            answer_id=progress.answer.id,
+            request_id="answer-worker-1",
+        )
+        await enqueue_interview_answer_evaluation_job(arq_redis, job)
+
+        deadline = asyncio.get_running_loop().time() + 60
+        while asyncio.get_running_loop().time() < deadline:
+            await session.rollback()
+            evaluation = await repository.get_evaluation_for_turn(turn.id, user_id)
+            current_turn = await repository.get_turn_for_user(turn.id, user_id)
+            if (
+                evaluation is not None
+                and current_turn is not None
+                and current_turn.status == TurnStatus.COMPLETED
+            ):
+                break
+            await asyncio.sleep(0.5)
+        else:
+            current_turn = await repository.get_turn_for_user(turn.id, user_id)
+            pytest.fail(f"Worker did not evaluate answer: {current_turn}")
+
+        assert evaluation is not None
+        assert evaluation.overall_score == 80
+        assert current_turn is not None
+        assert current_turn.status == TurnStatus.COMPLETED
+        assert current_turn.evaluation_attempt_count == 1
+        turns = await repository.list_turns(interview.id, user_id)
+        assert len(turns) == 2
+        assert turns[1].status == TurnStatus.WAITING_ANSWER
+        assert turns[1].parent_turn_id == turn.id
+
+        duplicate = await arq_redis.enqueue_job(
+            INTERVIEW_ANSWER_EVALUATION_FUNCTION,
+            user_id=str(user_id),
+            session_id=str(interview.id),
+            turn_id=str(turn.id),
+            answer_id=str(progress.answer.id),
+            request_id="answer-worker-1",
+            _job_id=f"interview-answer-evaluation:{turn.id}",
+            _queue_name="knowledge:documents",
+        )
+        assert duplicate is None
+        await session.rollback()
+        evaluations = await session.scalar(
+            select(func.count())
+            .select_from(InterviewEvaluationModel)
+            .where(InterviewEvaluationModel.turn_id == turn.id)
+        )
+        events = await repository.list_events(interview.id)
+        assert evaluations == 1
+        assert sum(event.event_type == "ANSWER_EVALUATED" for event in events) == 1
+        assert sum(event.event_type == "FOLLOW_UP_CREATED" for event in events) == 1
     finally:
         await arq_redis.aclose()
         await session.rollback()

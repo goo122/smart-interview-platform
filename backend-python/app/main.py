@@ -35,7 +35,7 @@ from app.modules.speech.service import SpeechToTextService
 from app.modules.speech.tts_factory import TextToSpeechProviderFactory
 from app.modules.speech.tts_service import TextToSpeechService
 from app.workers.queue import InlineTaskQueue
-from app.workers.redis_queue import ArqDocumentTaskQueue
+from app.workers.redis_queue import ArqDocumentTaskQueue, ArqInterviewTaskQueue
 
 
 @asynccontextmanager
@@ -71,6 +71,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.interview_preparation_task_queue = ArqDocumentTaskQueue.create(
         str(settings.redis_url)
     )
+    app.state.interview_answer_task_queue = ArqInterviewTaskQueue.create(
+        str(settings.redis_url)
+    )
     app.state.speech_to_text_service = SpeechToTextService(speech_provider, settings)
     app.state.text_to_speech_service = TextToSpeechService(tts_provider, settings)
     try:
@@ -78,6 +81,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await app.state.document_task_queue.close()
         await app.state.interview_preparation_task_queue.close()
+        await app.state.interview_answer_task_queue.close()
         await app.state.redis.aclose()
         await engine.dispose()
 

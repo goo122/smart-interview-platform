@@ -26,9 +26,11 @@ from app.modules.interview.domain import (
 from app.modules.interview.exceptions import (
     InterviewAnswerConflictError,
     InterviewAnswerError,
+    InterviewEvaluationQueueUnavailableError,
     InterviewNotFoundError,
 )
 from app.modules.interview.follow_up import FollowUpPolicy
+from app.workers.queue import InterviewAnswerEvaluationJob
 
 
 class FakeEvaluationContextProvider:
@@ -45,6 +47,19 @@ class InvalidThenValidEvaluator:
         if self.calls == 1:
             return {"overall_score": 101}
         return _evaluation(score=90, follow_up=False)
+
+
+class DeferredAnswerEvaluationQueue:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.jobs: list[InterviewAnswerEvaluationJob] = []
+        self.error = error
+
+    async def enqueue_interview_answer_evaluation(
+        self, job: InterviewAnswerEvaluationJob
+    ) -> None:
+        if self.error is not None:
+            raise self.error
+        self.jobs.append(job)
 
 
 def _evaluation(*, score: int = 50, follow_up: bool = True) -> StructuredInterviewEvaluation:
@@ -141,6 +156,50 @@ async def test_submit_answer_is_idempotent_and_only_one_answer_is_saved() -> Non
     assert first.answer.id == repeated.answer.id
     assert len(repository.answers) == 1
     assert len(queue.tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_arq_answer_submission_returns_without_calling_evaluator() -> None:
+    queue = DeferredAnswerEvaluationQueue()
+    service, repository, user_id, session_id, _ = await _started_service(  # type: ignore[arg-type]
+        queue=queue  # type: ignore[arg-type]
+    )
+    turn = await service.current_turn(user_id, session_id)
+
+    progress = await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=turn.turn.id,
+        answer="我设计了异步服务并通过指标验证结果。",
+        request_id="arq-answer-1",
+    )
+
+    assert progress.turn.status == TurnStatus.EVALUATING
+    assert len(queue.jobs) == 1
+    assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
+    assert isinstance(service._workflow._evaluator, FakeInterviewAnswerEvaluator)
+    assert service._workflow._evaluator.calls == 0  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_arq_enqueue_failure_keeps_answer_recoverable() -> None:
+    queue = DeferredAnswerEvaluationQueue(RuntimeError("redis down"))
+    service, repository, user_id, session_id, _ = await _started_service(  # type: ignore[arg-type]
+        queue=queue  # type: ignore[arg-type]
+    )
+    turn = await service.current_turn(user_id, session_id)
+
+    with pytest.raises(InterviewEvaluationQueueUnavailableError):
+        await service.submit_answer(
+            user_id=user_id,
+            session_id=session_id,
+            turn_id=turn.turn.id,
+            answer="我设计了异步服务并通过指标验证结果。",
+            request_id="arq-answer-queue-failure",
+        )
+
+    assert repository.turns[session_id][0].status == TurnStatus.EVALUATING
+    assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
 
 
 @pytest.mark.asyncio

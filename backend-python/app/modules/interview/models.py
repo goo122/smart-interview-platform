@@ -220,6 +220,12 @@ class InterviewTurnModel(Base):
     __table_args__ = (
         UniqueConstraint("session_id", "sequence", name="uq_interview_turns_session_sequence"),
         Index("ix_interview_turns_session_status_sequence", "session_id", "status", "sequence"),
+        Index(
+            "ix_interview_turns_evaluation_recovery",
+            "status",
+            "evaluation_started_at",
+            "evaluation_attempt_count",
+        ),
         CheckConstraint("follow_up_depth >= 0", name="ck_interview_turns_follow_up_depth"),
     )
 
@@ -243,6 +249,20 @@ class InterviewTurnModel(Base):
     )
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evaluation_queued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    evaluation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    evaluation_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    evaluation_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    evaluation_failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evaluation_failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class InterviewAnswerModel(Base):

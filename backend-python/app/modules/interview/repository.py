@@ -157,6 +157,30 @@ class InterviewRepository(Protocol):
         request_id: str,
     ) -> InterviewProgress: ...
 
+    async def claim_evaluation(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        user_id: UUID,
+        answer_id: UUID,
+        request_id: str,
+        stale_before: datetime,
+        attempt: int = 1,
+    ) -> bool: ...
+
+    async def mark_evaluation_queue_unavailable(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        user_id: UUID,
+        failure_code: str,
+        failure_message: str,
+    ) -> InterviewProgress: ...
+
+    async def list_recoverable_evaluations(
+        self, stale_before: datetime, max_attempts: int, limit: int = 100
+    ) -> list[tuple[UUID, UUID, UUID, UUID, str, int]]: ...
+
     async def count_follow_ups(self, session_id: UUID) -> int: ...
 
     async def recent_answers(self, session_id: UUID, before_sequence: int) -> list[str]: ...
@@ -1006,6 +1030,11 @@ class SqlAlchemyInterviewRepository:
         )
         turn_row.status = TurnStatus.EVALUATING.value
         turn_row.answered_at = now
+        turn_row.evaluation_queued_at = now
+        turn_row.evaluation_started_at = None
+        turn_row.evaluation_completed_at = None
+        turn_row.evaluation_failure_code = None
+        turn_row.evaluation_failure_message = None
         session_row.version += 1
         session_row.updated_at = now
         self._session.add(answer_row)
@@ -1044,6 +1073,138 @@ class SqlAlchemyInterviewRepository:
             turn=_turn_to_domain(turn_row),
             answer=_answer_to_domain(answer_row),
         )
+
+    async def claim_evaluation(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        user_id: UUID,
+        answer_id: UUID,
+        request_id: str,
+        stale_before: datetime,
+        attempt: int = 1,
+    ) -> bool:
+        """Atomically claim one evaluation delivery for one database attempt."""
+
+        session_row = await self._locked_row(session_id, user_id)
+        if session_row is None:
+            await self._session.rollback()
+            return False
+        if InterviewStatus(session_row.status) != InterviewStatus.IN_PROGRESS:
+            await self._session.rollback()
+            return False
+        turn_row = await self._locked_turn(turn_id, session_id)
+        if turn_row is None:
+            await self._session.rollback()
+            return False
+        answer_row = await self._session.scalar(
+            select(InterviewAnswerModel).where(
+                InterviewAnswerModel.id == answer_id,
+                InterviewAnswerModel.turn_id == turn_id,
+                InterviewAnswerModel.session_id == session_id,
+                InterviewAnswerModel.user_id == user_id,
+                InterviewAnswerModel.request_id == request_id,
+            )
+        )
+        if answer_row is None or TurnStatus(turn_row.status) != TurnStatus.EVALUATING:
+            await self._session.rollback()
+            return False
+        if await self._session.scalar(
+            select(InterviewEvaluationModel.id).where(
+                InterviewEvaluationModel.turn_id == turn_id
+            )
+        ) is not None:
+            await self._session.rollback()
+            return False
+
+        expected_attempt = max(attempt - 1, 0)
+        if not (
+            turn_row.evaluation_attempt_count == expected_attempt
+            or turn_row.evaluation_started_at is None
+            or turn_row.evaluation_started_at < stale_before
+        ):
+            await self._session.rollback()
+            return False
+        now = utc_now()
+        turn_row.evaluation_started_at = now
+        turn_row.evaluation_attempt_count += 1
+        turn_row.evaluation_failure_code = None
+        turn_row.evaluation_failure_message = None
+        session_row.updated_at = now
+        await self._session.commit()
+        return True
+
+    async def mark_evaluation_queue_unavailable(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        user_id: UUID,
+        failure_code: str,
+        failure_message: str,
+    ) -> InterviewProgress:
+        """Record a recoverable enqueue failure without failing the interview."""
+
+        session_row = await self._locked_row(session_id, user_id)
+        if session_row is None:
+            raise InterviewNotFoundError("Interview session not found")
+        turn_row = await self._locked_turn(turn_id, session_id)
+        if turn_row is None:
+            raise InterviewNotFoundError("Interview turn not found")
+        if TurnStatus(turn_row.status) == TurnStatus.EVALUATING:
+            turn_row.evaluation_failure_code = failure_code[:64]
+            turn_row.evaluation_failure_message = failure_message[:2000]
+            session_row.updated_at = utc_now()
+            await self._session.commit()
+            await self._session.refresh(session_row)
+            await self._session.refresh(turn_row)
+        return InterviewProgress(
+            session=_session_to_domain(session_row),
+            turn=_turn_to_domain(turn_row),
+            answer=await self.get_answer_for_turn(turn_id, user_id),
+            evaluation=await self.get_evaluation_for_turn(turn_id, user_id),
+        )
+
+    async def list_recoverable_evaluations(
+        self, stale_before: datetime, max_attempts: int, limit: int = 100
+    ) -> list[tuple[UUID, UUID, UUID, UUID, str, int]]:
+        result = await self._session.execute(
+            select(
+                InterviewSessionModel.id,
+                InterviewSessionModel.user_id,
+                InterviewTurnModel.id,
+                InterviewAnswerModel.id,
+                InterviewAnswerModel.request_id,
+                InterviewTurnModel.evaluation_attempt_count,
+            )
+            .join(
+                InterviewTurnModel,
+                InterviewTurnModel.session_id == InterviewSessionModel.id,
+            )
+            .join(
+                InterviewAnswerModel,
+                InterviewAnswerModel.turn_id == InterviewTurnModel.id,
+            )
+            .outerjoin(
+                InterviewEvaluationModel,
+                InterviewEvaluationModel.turn_id == InterviewTurnModel.id,
+            )
+            .where(
+                InterviewSessionModel.status == InterviewStatus.IN_PROGRESS.value,
+                InterviewTurnModel.status == TurnStatus.EVALUATING.value,
+                InterviewEvaluationModel.id.is_(None),
+                InterviewTurnModel.evaluation_attempt_count < max_attempts,
+                or_(
+                    InterviewTurnModel.evaluation_started_at.is_(None),
+                    InterviewTurnModel.evaluation_started_at < stale_before,
+                ),
+            )
+            .order_by(
+                InterviewTurnModel.evaluation_started_at.asc().nullsfirst(),
+                InterviewTurnModel.sequence.asc(),
+            )
+            .limit(limit)
+        )
+        return [tuple(row) for row in result.all()]
 
     async def count_follow_ups(self, session_id: UUID) -> int:
         count = await self._session.scalar(
@@ -1091,12 +1252,10 @@ class SqlAlchemyInterviewRepository:
         )
         if existing is not None:
             return _session_to_domain(session_row)
-        if InterviewStatus(session_row.status) == InterviewStatus.COMPLETED and TurnStatus(
-            turn_row.status
-        ) == TurnStatus.SKIPPED:
+        if InterviewStatus(session_row.status) != InterviewStatus.IN_PROGRESS:
             return _session_to_domain(session_row)
         if TurnStatus(turn_row.status) != TurnStatus.EVALUATING:
-            raise InvalidInterviewTransitionError("Turn is not being evaluated")
+            return _session_to_domain(session_row)
         evaluation_row = InterviewEvaluationModel(
             id=evaluation.id,
             turn_id=turn_id,
@@ -1117,6 +1276,9 @@ class SqlAlchemyInterviewRepository:
         now = utc_now()
         turn_row.status = TurnStatus.COMPLETED.value
         turn_row.evaluated_at = now
+        turn_row.evaluation_completed_at = now
+        turn_row.evaluation_failure_code = None
+        turn_row.evaluation_failure_message = None
         session_row.version += 1
         session_row.updated_at = now
         self._session.add(evaluation_row)
@@ -1258,6 +1420,9 @@ class SqlAlchemyInterviewRepository:
         )
         turn_row.status = TurnStatus.FAILED.value
         turn_row.evaluated_at = now
+        turn_row.evaluation_completed_at = now
+        turn_row.evaluation_failure_code = failure_code[:64]
+        turn_row.evaluation_failure_message = failure_message[:2000]
         session_row.status = InterviewStatus.FAILED.value
         session_row.failure_code = failure_code[:64]
         session_row.failure_message = failure_message[:2000]
@@ -1496,6 +1661,12 @@ def _turn_to_domain(row: InterviewTurnModel) -> InterviewTurn:
         created_at=row.created_at,
         answered_at=row.answered_at,
         evaluated_at=row.evaluated_at,
+        evaluation_queued_at=row.evaluation_queued_at,
+        evaluation_started_at=row.evaluation_started_at,
+        evaluation_completed_at=row.evaluation_completed_at,
+        evaluation_attempt_count=row.evaluation_attempt_count,
+        evaluation_failure_code=row.evaluation_failure_code,
+        evaluation_failure_message=row.evaluation_failure_message,
     )
 
 

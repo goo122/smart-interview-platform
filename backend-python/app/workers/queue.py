@@ -60,6 +60,26 @@ class InterviewPreparationTaskQueuePort(Protocol):
     ) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class InterviewAnswerEvaluationJob:
+    """Serializable arguments for an interview-answer evaluation task."""
+
+    user_id: UUID
+    session_id: UUID
+    turn_id: UUID
+    answer_id: UUID
+    request_id: str
+    job_id: str | None = None
+
+
+class InterviewAnswerEvaluationTaskQueuePort(Protocol):
+    """Queue port for asynchronously evaluating one submitted answer."""
+
+    async def enqueue_interview_answer_evaluation(
+        self, job: InterviewAnswerEvaluationJob
+    ) -> None: ...
+
+
 class InlineDocumentTaskQueue:
     """In-process document queue substitute used by unit/API tests only."""
 

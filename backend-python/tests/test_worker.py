@@ -2,9 +2,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.workers.queue import InterviewPreparationJob
+from app.workers.queue import InterviewAnswerEvaluationJob, InterviewPreparationJob
 from app.workers.redis_queue import (
+    INTERVIEW_ANSWER_EVALUATION_FUNCTION,
     INTERVIEW_PREPARATION_FUNCTION,
+    enqueue_interview_answer_evaluation_job,
     enqueue_interview_preparation_job,
 )
 from app.workers.worker import worker_shutdown
@@ -65,6 +67,29 @@ async def test_recovery_job_can_use_a_deterministic_attempt_specific_id() -> Non
     await enqueue_interview_preparation_job(redis, job)  # type: ignore[arg-type]
 
     assert redis.calls[0][1]["_job_id"] == job.job_id
+
+
+@pytest.mark.asyncio
+async def test_answer_evaluation_job_has_only_serializable_identifiers() -> None:
+    redis = RecordingRedis()
+    job = InterviewAnswerEvaluationJob(uuid4(), uuid4(), uuid4(), uuid4(), "answer-1")
+
+    await enqueue_interview_answer_evaluation_job(redis, job)  # type: ignore[arg-type]
+
+    assert redis.calls == [
+        (
+            INTERVIEW_ANSWER_EVALUATION_FUNCTION,
+            {
+                "user_id": str(job.user_id),
+                "session_id": str(job.session_id),
+                "turn_id": str(job.turn_id),
+                "answer_id": str(job.answer_id),
+                "request_id": job.request_id,
+                "_job_id": f"interview-answer-evaluation:{job.turn_id}",
+                "_queue_name": "knowledge:documents",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

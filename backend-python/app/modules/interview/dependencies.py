@@ -35,11 +35,13 @@ from app.modules.knowledge.context import ContextAssembler
 from app.modules.knowledge.dependencies import (
     get_embedding,
     get_knowledge_repository,
-    get_task_queue,
 )
 from app.modules.knowledge.repository import KnowledgeRepository
 from app.modules.knowledge.retrieval import RetrieverPort
-from app.workers.queue import InterviewPreparationTaskQueuePort, TaskQueuePort
+from app.workers.queue import (
+    InterviewAnswerEvaluationTaskQueuePort,
+    InterviewPreparationTaskQueuePort,
+)
 
 
 async def get_interview_repository(
@@ -145,6 +147,17 @@ def get_interview_preparation_task_queue(request: Request) -> InterviewPreparati
     )
 
 
+def get_interview_answer_task_queue(
+    request: Request,
+) -> InterviewAnswerEvaluationTaskQueuePort:
+    """Return the serializable ARQ queue used only by answer evaluation."""
+
+    return cast(
+        InterviewAnswerEvaluationTaskQueuePort,
+        request.app.state.interview_answer_task_queue,
+    )
+
+
 def get_interview_service(
     repository: Annotated[InterviewRepository, Depends(get_interview_repository)],
     context_provider: Annotated[
@@ -185,7 +198,9 @@ def get_interview_answer_service(
     follow_up_generator: Annotated[
         FollowUpQuestionGeneratorPort, Depends(get_follow_up_question_generator)
     ],
-    task_queue: Annotated[TaskQueuePort, Depends(get_task_queue)],
+    task_queue: Annotated[
+        InterviewAnswerEvaluationTaskQueuePort, Depends(get_interview_answer_task_queue)
+    ],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> InterviewAnswerService:
     return InterviewAnswerService(

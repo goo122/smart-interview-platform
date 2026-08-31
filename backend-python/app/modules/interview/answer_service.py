@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import cast
 from uuid import UUID
 
 from app.ai.evaluation import InterviewAnswerEvaluatorPort
@@ -10,12 +11,17 @@ from app.modules.interview.domain import InterviewProgress, InterviewStatus
 from app.modules.interview.exceptions import (
     InterviewAnswerConflictError,
     InterviewAnswerError,
+    InterviewEvaluationQueueUnavailableError,
     InterviewNotFoundError,
     InvalidInterviewTransitionError,
 )
 from app.modules.interview.follow_up import FollowUpPolicy
 from app.modules.interview.repository import InterviewRepository
-from app.workers.queue import TaskQueuePort
+from app.workers.queue import (
+    InterviewAnswerEvaluationJob,
+    InterviewAnswerEvaluationTaskQueuePort,
+    TaskQueuePort,
+)
 
 
 class InterviewAnswerService:
@@ -25,7 +31,7 @@ class InterviewAnswerService:
         context_provider: InterviewEvaluationContextProviderPort,
         evaluator: InterviewAnswerEvaluatorPort,
         follow_up_generator: FollowUpQuestionGeneratorPort,
-        task_queue: TaskQueuePort,
+        task_queue: InterviewAnswerEvaluationTaskQueuePort | TaskQueuePort,
         settings: Settings,
     ) -> None:
         self._repository = repository
@@ -72,6 +78,13 @@ class InterviewAnswerService:
             session_id, user_id, clean_request_id
         )
         if existing is not None:
+            if (
+                existing.turn.status.value == "EVALUATING"
+                and existing.evaluation is None
+                and existing.turn.evaluation_failure_code
+                == "INTERVIEW_EVALUATION_QUEUE_UNAVAILABLE"
+            ):
+                await self._enqueue_evaluation(existing, user_id, session_id, clean_request_id)
             return existing
         try:
             progress = await self._repository.submit_answer(
@@ -83,20 +96,66 @@ class InterviewAnswerService:
             )
         except InvalidInterviewTransitionError as exc:
             raise InterviewAnswerConflictError(exc.message) from exc
-        try:
+        if callable(getattr(self._task_queue, "enqueue_interview_answer_evaluation", None)):
+            await self._enqueue_evaluation(progress, user_id, session_id, clean_request_id)
+        else:
             async def evaluate_task() -> None:
                 await self._workflow.evaluate(user_id, session_id, turn_id, content)
 
-            await self._task_queue.enqueue(evaluate_task)
-        except Exception:
-            await self._repository.fail_evaluation(
-                session_id,
-                turn_id,
-                user_id,
-                "INTERVIEW_EVALUATION_QUEUE_FAILED",
-                "Interview evaluation could not be queued",
-            )
+            try:
+                await cast(TaskQueuePort, self._task_queue).enqueue(evaluate_task)
+            except Exception:
+                await self._repository.fail_evaluation(
+                    session_id,
+                    turn_id,
+                    user_id,
+                    "INTERVIEW_EVALUATION_QUEUE_FAILED",
+                    "Interview evaluation could not be queued",
+                )
         return progress
+
+    async def _enqueue_evaluation(
+        self,
+        progress: InterviewProgress,
+        user_id: UUID,
+        session_id: UUID,
+        request_id: str,
+    ) -> None:
+        enqueue = cast(
+            InterviewAnswerEvaluationTaskQueuePort, self._task_queue
+        ).enqueue_interview_answer_evaluation
+        if progress.answer is None:
+            raise InterviewEvaluationQueueUnavailableError(
+                "Interview evaluation is temporarily unavailable"
+            )
+        try:
+            await enqueue(
+                InterviewAnswerEvaluationJob(
+                    user_id=user_id,
+                    session_id=session_id,
+                    turn_id=progress.turn.id,
+                    answer_id=progress.answer.id,
+                    request_id=request_id,
+                )
+            )
+        except Exception as exc:
+            marker = getattr(self._repository, "mark_evaluation_queue_unavailable", None)
+            if callable(marker):
+                try:
+                    await marker(
+                        session_id,
+                        progress.turn.id,
+                        user_id,
+                        "INTERVIEW_EVALUATION_QUEUE_UNAVAILABLE",
+                        "Interview evaluation is waiting to be rescheduled",
+                    )
+                except Exception as marker_exc:
+                    raise InterviewEvaluationQueueUnavailableError(
+                        "Interview evaluation is temporarily unavailable"
+                    ) from marker_exc
+            raise InterviewEvaluationQueueUnavailableError(
+                "Interview evaluation is temporarily unavailable"
+            ) from exc
 
     async def current_turn(self, user_id: UUID, session_id: UUID) -> InterviewProgress:
         session = await self._repository.get_for_user(session_id, user_id)

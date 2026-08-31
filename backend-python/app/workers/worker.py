@@ -14,14 +14,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.ai.factory import AiProviderFactory
 from app.core.config import Settings, get_settings
 from app.core.database import create_database_engine, create_session_factory
+from app.core.exceptions import AppError
 from app.infrastructure.storage.files import LocalFileStorage
 from app.infrastructure.storage.pdf import PypdfPdfParser
 from app.infrastructure.vectorstore.retriever import PgVectorRetriever
 from app.infrastructure.vectorstore.sqlalchemy import SqlAlchemyVectorStore
 from app.modules.auth.models import UserModel  # noqa: F401
-from app.modules.interview.context import InterviewContextProvider
+from app.modules.interview.answer_workflow import InterviewAnswerWorkflow
+from app.modules.interview.context import (
+    InterviewContextProvider,
+    InterviewEvaluationContextProvider,
+)
 from app.modules.interview.domain import InterviewStatus
-from app.modules.interview.exceptions import RetryableInterviewPreparationError
+from app.modules.interview.exceptions import (
+    InterviewEvaluationError,
+    RetryableInterviewPreparationError,
+)
+from app.modules.interview.follow_up import FollowUpPolicy
 from app.modules.interview.repository import SqlAlchemyInterviewRepository
 from app.modules.interview.workflow import InterviewPreparationWorkflow
 from app.modules.knowledge.context import ContextAssembler
@@ -32,11 +41,16 @@ from app.modules.knowledge.repository import (
 )
 from app.modules.knowledge.service import KnowledgeService
 from app.modules.knowledge.splitter import SimpleTextSplitter
-from app.workers.queue import DocumentImportJob, InterviewPreparationJob
+from app.workers.queue import (
+    DocumentImportJob,
+    InterviewAnswerEvaluationJob,
+    InterviewPreparationJob,
+)
 from app.workers.redis_queue import (
     DOCUMENT_IMPORT_QUEUE,
     ArqDocumentTaskQueue,
     enqueue_document_job,
+    enqueue_interview_answer_evaluation_job,
     enqueue_interview_preparation_job,
 )
 
@@ -200,6 +214,174 @@ async def process_interview_preparation(
         )
 
 
+async def process_interview_answer_evaluation(
+    ctx: dict[str, Any],
+    *,
+    user_id: str,
+    session_id: str,
+    turn_id: str,
+    answer_id: str,
+    request_id: str,
+) -> None:
+    """Evaluate one answer after an atomic PostgreSQL claim."""
+
+    settings = cast(Settings, ctx["settings"])
+    job_try = int(ctx.get("job_try", 1))
+    job = InterviewAnswerEvaluationJob(
+        user_id=UUID(user_id),
+        session_id=UUID(session_id),
+        turn_id=UUID(turn_id),
+        answer_id=UUID(answer_id),
+        request_id=request_id,
+    )
+    session_factory = cast(async_sessionmaker[AsyncSession], ctx["session_factory"])
+    started_at = time.perf_counter()
+    async with session_factory() as session:
+        repository = SqlAlchemyInterviewRepository(session)
+        stale_before = utc_now() - timedelta(seconds=settings.interview_answer_stale_seconds)
+        claimed = await repository.claim_evaluation(
+            job.session_id,
+            job.turn_id,
+            job.user_id,
+            job.answer_id,
+            job.request_id,
+            stale_before,
+            job_try,
+        )
+        if not claimed:
+            return
+        common_log = {
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "answer_id": answer_id,
+            "request_id": request_id,
+            "attempt": job_try,
+            "provider": settings.ai_provider,
+        }
+        logger.info("Interview answer evaluation started", extra=common_log)
+        if (
+            settings.ai_provider == "unavailable"
+            or settings.embedding_provider == "unavailable"
+        ):
+            await repository.fail_evaluation(
+                job.session_id,
+                job.turn_id,
+                job.user_id,
+                "INTERVIEW_EVALUATION_PROVIDER_UNAVAILABLE",
+                "Interview evaluation provider is not configured",
+            )
+            return
+
+        workflow = InterviewAnswerWorkflow(
+            repository,
+            InterviewEvaluationContextProvider(
+                SqlAlchemyKnowledgeRepository(session),
+                ctx["embedding"],
+                PgVectorRetriever(session, settings.embedding_dimensions),
+                ContextAssembler(settings.rag_max_context_tokens, settings.rag_max_chunk_tokens),
+                settings,
+            ),
+            ctx["interview_answer_evaluator"],
+            ctx["follow_up_question_generator"],
+            FollowUpPolicy(
+                max_depth=settings.interview_max_follow_up_depth,
+                score_threshold=settings.interview_follow_up_score_threshold,
+                max_follow_ups_per_session=settings.interview_max_follow_ups_per_session,
+                min_answer_length=settings.interview_min_answer_length,
+                max_answer_length=settings.interview_max_answer_length,
+            ),
+        )
+        try:
+            result = await workflow.evaluate(
+                job.user_id,
+                job.session_id,
+                job.turn_id,
+                "",
+                answer_id=job.answer_id,
+                request_id=job.request_id,
+                worker_mode=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except InterviewEvaluationError as exc:
+            await repository.fail_evaluation(
+                job.session_id,
+                job.turn_id,
+                job.user_id,
+                exc.code,
+                _safe_evaluation_failure_message(exc),
+            )
+            logger.warning(
+                "Interview answer evaluation failed permanently",
+                extra={
+                    **common_log,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "failure_code": exc.code,
+                },
+            )
+            return
+        except AppError as exc:
+            await repository.fail_evaluation(
+                job.session_id,
+                job.turn_id,
+                job.user_id,
+                exc.code,
+                "Interview evaluation could not be completed",
+            )
+            logger.warning(
+                "Interview answer evaluation rejected",
+                extra={
+                    **common_log,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "failure_code": exc.code,
+                },
+            )
+            return
+        except Exception as exc:
+            if job_try >= settings.interview_answer_task_max_attempts:
+                await repository.fail_evaluation(
+                    job.session_id,
+                    job.turn_id,
+                    job.user_id,
+                    "INTERVIEW_EVALUATION_RETRY_EXHAUSTED",
+                    "Interview evaluation failed after several attempts",
+                )
+                logger.warning(
+                    "Interview answer evaluation exhausted retries",
+                    extra={
+                        **common_log,
+                        "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                        "failure_code": "INTERVIEW_EVALUATION_RETRY_EXHAUSTED",
+                    },
+                )
+                return
+            delay = settings.interview_answer_retry_base_seconds * (2 ** (job_try - 1))
+            logger.warning(
+                "Interview answer evaluation will retry",
+                extra={
+                    **common_log,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "retry_delay_seconds": delay,
+                    "failure_category": type(exc).__name__,
+                },
+            )
+            raise Retry(defer=delay) from exc
+        logger.info(
+            "Interview answer evaluation completed",
+            extra={
+                **common_log,
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "status": result.status.value,
+            },
+        )
+
+
+def _safe_evaluation_failure_message(exc: InterviewEvaluationError) -> str:
+    if exc.code == "interview_evaluation_invalid":
+        return "Interview evaluation output was invalid"
+    return "Interview evaluation could not be completed"
+
+
 async def worker_startup(ctx: dict[str, Any]) -> None:
     settings = get_settings()
     providers = AiProviderFactory.build(settings)
@@ -215,6 +397,8 @@ async def worker_startup(ctx: dict[str, Any]) -> None:
     ctx["embedding"] = providers.embedding
     ctx["interview_question_generator"] = providers.interview_question_generator
     ctx["resume_evaluator"] = providers.resume_evaluator
+    ctx["interview_answer_evaluator"] = providers.interview_answer_evaluator
+    ctx["follow_up_question_generator"] = providers.follow_up_question_generator
     ctx["file_storage"] = LocalFileStorage(settings.knowledge_storage_dir)
     ctx["pdf_parser"] = PypdfPdfParser()
     ctx["text_splitter"] = SimpleTextSplitter(
@@ -224,9 +408,10 @@ async def worker_startup(ctx: dict[str, Any]) -> None:
     ctx["document_task_queue"] = ArqDocumentTaskQueue.create(str(settings.redis_url))
     await _recover_stale_documents(ctx)
     await _recover_interview_preparations(ctx)
+    await _recover_interview_evaluations(ctx)
     ctx["interview_recovery_task"] = asyncio.create_task(
-        _interview_preparation_recovery_loop(ctx),
-        name="interview-preparation-recovery",
+        _interview_recovery_loop(ctx),
+        name="interview-recovery",
     )
 
 
@@ -295,6 +480,59 @@ async def _interview_preparation_recovery_loop(ctx: dict[str, Any]) -> None:
             logger.exception("Interview preparation recovery failed")
 
 
+async def _recover_interview_evaluations(ctx: dict[str, Any]) -> None:
+    settings = cast(Settings, ctx["settings"])
+    session_factory = cast(async_sessionmaker[AsyncSession], ctx["session_factory"])
+    redis = cast(ArqRedis, ctx["redis"])
+    stale_before = utc_now() - timedelta(seconds=settings.interview_answer_stale_seconds)
+    async with session_factory() as session:
+        repository = SqlAlchemyInterviewRepository(session)
+        recoverable = await repository.list_recoverable_evaluations(
+            stale_before,
+            settings.interview_answer_task_max_attempts,
+            settings.interview_answer_recovery_batch_size,
+        )
+    for session_id, user_id, turn_id, answer_id, request_id, attempt_count in recoverable:
+        job = InterviewAnswerEvaluationJob(
+            user_id=user_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            answer_id=answer_id,
+            request_id=request_id,
+            job_id=f"interview-answer-evaluation:{turn_id}:{attempt_count}",
+        )
+        await enqueue_interview_answer_evaluation_job(redis, job)
+        logger.info(
+            "Recovered interview answer evaluation job",
+            extra={
+                "session_id": str(session_id),
+                "turn_id": str(turn_id),
+                "answer_id": str(answer_id),
+                "request_id": request_id,
+                "attempt": attempt_count,
+                "provider": settings.ai_provider,
+            },
+        )
+
+
+async def _interview_recovery_loop(ctx: dict[str, Any]) -> None:
+    settings = cast(Settings, ctx["settings"])
+    while True:
+        await asyncio.sleep(
+            min(
+                settings.interview_preparation_recovery_interval_seconds,
+                settings.interview_answer_recovery_interval_seconds,
+            )
+        )
+        try:
+            await _recover_interview_preparations(ctx)
+            await _recover_interview_evaluations(ctx)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Interview recovery failed")
+
+
 async def _recover_stale_documents(ctx: dict[str, Any]) -> None:
     settings = cast(Settings, ctx["settings"])
     session_factory = cast(async_sessionmaker[AsyncSession], ctx["session_factory"])
@@ -328,7 +566,11 @@ async def _recover_stale_documents(ctx: dict[str, Any]) -> None:
 def create_worker() -> Worker:
     settings = get_settings()
     return Worker(
-        functions=[process_knowledge_document, process_interview_preparation],
+        functions=[
+            process_knowledge_document,
+            process_interview_preparation,
+            process_interview_answer_evaluation,
+        ],
         queue_name=DOCUMENT_IMPORT_QUEUE,
         redis_settings=RedisSettings.from_dsn(str(settings.redis_url)),
         on_startup=worker_startup,
@@ -337,10 +579,12 @@ def create_worker() -> Worker:
         job_timeout=max(
             settings.knowledge_task_timeout_seconds,
             settings.interview_preparation_task_timeout_seconds,
+            settings.interview_answer_task_timeout_seconds,
         ),
         max_tries=max(
             settings.knowledge_task_max_attempts,
             settings.interview_preparation_task_max_attempts,
+            settings.interview_answer_task_max_attempts,
         ),
         retry_jobs=True,
         health_check_interval=15,

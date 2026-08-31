@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     interview_preparation_stale_seconds: int = Field(default=900, ge=60, le=86400)
     interview_preparation_recovery_interval_seconds: int = Field(default=60, ge=5, le=3600)
     interview_preparation_recovery_batch_size: int = Field(default=100, ge=1, le=1000)
+    interview_answer_task_max_attempts: int = Field(default=3, ge=1, le=10)
+    interview_answer_retry_base_seconds: float = Field(default=2.0, gt=0, le=300)
+    interview_answer_task_timeout_seconds: int = Field(default=300, ge=30, le=3600)
+    interview_answer_stale_seconds: int = Field(default=900, ge=60, le=86400)
+    interview_answer_recovery_interval_seconds: int = Field(default=60, ge=5, le=3600)
+    interview_answer_recovery_batch_size: int = Field(default=100, ge=1, le=1000)
     embedding_api_key: str | None = None
     embedding_base_url: str | None = None
     embedding_model: str | None = None

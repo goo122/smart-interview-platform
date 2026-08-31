@@ -6,11 +6,13 @@ from arq.connections import ArqRedis, RedisSettings
 from app.workers.queue import (
     DocumentImportHandler,
     DocumentImportJob,
+    InterviewAnswerEvaluationJob,
     InterviewPreparationJob,
 )
 
 DOCUMENT_IMPORT_FUNCTION = "process_knowledge_document"
 INTERVIEW_PREPARATION_FUNCTION = "process_interview_preparation"
+INTERVIEW_ANSWER_EVALUATION_FUNCTION = "process_interview_answer_evaluation"
 DOCUMENT_IMPORT_QUEUE = "knowledge:documents"
 
 
@@ -44,6 +46,12 @@ class ArqDocumentTaskQueue:
         redis = await self._get_redis()
         await enqueue_interview_preparation_job(redis, job)
 
+    async def enqueue_interview_answer_evaluation(
+        self, job: InterviewAnswerEvaluationJob
+    ) -> None:
+        redis = await self._get_redis()
+        await enqueue_interview_answer_evaluation_job(redis, job)
+
     def bind_inline_handler(self, handler: DocumentImportHandler) -> None:
         del handler
 
@@ -51,6 +59,10 @@ class ArqDocumentTaskQueue:
         if self._redis is not None:
             await self._redis.aclose(close_connection_pool=True)
             self._redis = None
+
+
+class ArqInterviewTaskQueue(ArqDocumentTaskQueue):
+    """ARQ queue facade for interview jobs sharing the Worker queue."""
 
 
 async def enqueue_document_job(redis: ArqRedis, job: DocumentImportJob) -> None:
@@ -78,5 +90,22 @@ async def enqueue_interview_preparation_job(
         user_id=str(job.user_id),
         request_id=job.request_id,
         _job_id=job.job_id or f"interview-preparation:{job.session_id}",
+        _queue_name=DOCUMENT_IMPORT_QUEUE,
+    )
+
+
+async def enqueue_interview_answer_evaluation_job(
+    redis: ArqRedis, job: InterviewAnswerEvaluationJob
+) -> None:
+    """Enqueue answer evaluation with a deterministic, attempt-aware ARQ ID."""
+
+    await redis.enqueue_job(
+        INTERVIEW_ANSWER_EVALUATION_FUNCTION,
+        user_id=str(job.user_id),
+        session_id=str(job.session_id),
+        turn_id=str(job.turn_id),
+        answer_id=str(job.answer_id),
+        request_id=job.request_id,
+        _job_id=job.job_id or f"interview-answer-evaluation:{job.turn_id}",
         _queue_name=DOCUMENT_IMPORT_QUEUE,
     )

@@ -198,6 +198,12 @@ class InterviewTurn:
     created_at: datetime
     answered_at: datetime | None
     evaluated_at: datetime | None
+    evaluation_queued_at: datetime | None = None
+    evaluation_started_at: datetime | None = None
+    evaluation_completed_at: datetime | None = None
+    evaluation_attempt_count: int = 0
+    evaluation_failure_code: str | None = None
+    evaluation_failure_message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

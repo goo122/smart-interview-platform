@@ -59,7 +59,8 @@ services:
       APP_ENV: test
       APP_AI_PROVIDER: fake
       APP_EMBEDDING_PROVIDER: fake
-      APP_AI_FAKE_MODE: normal
+      APP_AI_FAKE_MODE: follow_up
+      APP_INTERVIEW_FOLLOW_UP_SCORE_THRESHOLD: "90"
       APP_DATABASE_URL: postgresql+asyncpg://postgres:integration-only@postgres:5432/ai_interview_integration
       APP_REDIS_URL: redis://redis:6379/0
       APP_KNOWLEDGE_STORAGE_DIR: /app/storage

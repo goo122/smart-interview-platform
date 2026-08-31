@@ -67,6 +67,11 @@ class InterviewAnswerConflictError(AppError):
     code = "interview_answer_conflict"
 
 
+class InterviewEvaluationQueueUnavailableError(AppError):
+    status_code = 503
+    code = "interview_evaluation_queue_unavailable"
+
+
 class InterviewEvaluationError(AppError):
     status_code = 422
     code = "interview_evaluation_failed"
