@@ -190,8 +190,7 @@ class XunfeiSpeechToTextSession:
         if not isinstance(result, dict):
             return None
 
-        text_payload = result.get("text")
-        decoded_text = _decode_result_text(text_payload)
+        decoded_text = _resolve_result_payload(result)
         pgs = decoded_text.get("pgs")
         segment_id = _as_int(decoded_text.get("sn"))
         replace_range = _as_range(decoded_text.get("rg"))
@@ -247,7 +246,7 @@ class _XunfeiTranscriptAssembler:
         resolved_segment_id = segment_id if segment_id is not None else self._next_segment_id()
         if pgs == "rpl" and replace_range is not None:
             start, end = replace_range
-            for item in range(max(0, start - 1), end):
+            for item in range(start, end + 1):
                 self._segments.pop(item, None)
         self._segments[resolved_segment_id] = text
         next_snapshot = "".join(self._segments[index] for index in sorted(self._segments))
@@ -292,6 +291,14 @@ def _decode_result_text(value: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise SpeechProviderProtocolError("Invalid speech provider response")
     return payload
+
+
+def _resolve_result_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """Accept the official direct result object and the legacy encoded variant."""
+
+    if isinstance(result.get("ws"), list):
+        return result
+    return _decode_result_text(result.get("text"))
 
 
 def _extract_segment_text(payload: dict[str, Any]) -> str:

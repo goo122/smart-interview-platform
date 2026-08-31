@@ -92,7 +92,25 @@ class FakeXunfeiConnection:
         self.closed = True
 
 
-def _xunfei_result(*, text: str, segment_id: int, status: int = 1) -> str:
+def _xunfei_result(
+    *,
+    text: str,
+    segment_id: int,
+    status: int = 1,
+    pgs: str = "apd",
+    replace_range: list[int] | None = None,
+) -> str:
+    result = {
+        "sn": segment_id,
+        "pgs": pgs,
+        "ws": [{"cw": [{"w": text}]}],
+    }
+    if replace_range is not None:
+        result["rg"] = replace_range
+    return json.dumps({"code": 0, "data": {"status": status, "result": result}})
+
+
+def _legacy_xunfei_result(*, text: str, segment_id: int, status: int = 1) -> str:
     result = {
         "sn": segment_id,
         "pgs": "apd",
@@ -235,10 +253,10 @@ def test_fake_provider_emits_incremental_and_final_snapshots(speech_client) -> N
 def test_xunfei_provider_orders_and_deduplicates_transcript_snapshots() -> None:
     connection = FakeXunfeiConnection(
         [
-            _xunfei_result(text="世界", segment_id=1),
-            _xunfei_result(text="你好", segment_id=0),
-            _xunfei_result(text="你好", segment_id=0),
-            _xunfei_result(text="世界", segment_id=1, status=2),
+            _xunfei_result(text="世界", segment_id=2),
+            _xunfei_result(text="你好", segment_id=1),
+            _xunfei_result(text="你好", segment_id=1),
+            _xunfei_result(text="世界", segment_id=2, status=2),
         ]
     )
     session = XunfeiSpeechToTextSession(
@@ -263,6 +281,62 @@ def test_xunfei_provider_orders_and_deduplicates_transcript_snapshots() -> None:
         ("partial", "你好世界", 2),
         ("final", "你好世界", 3),
     ]
+
+
+def test_xunfei_provider_applies_official_dynamic_replacement_ranges() -> None:
+    connection = FakeXunfeiConnection(
+        [
+            _xunfei_result(text="你好", segment_id=1),
+            _xunfei_result(
+                text="您好",
+                segment_id=2,
+                pgs="rpl",
+                replace_range=[1, 1],
+                status=2,
+            ),
+        ]
+    )
+    session = XunfeiSpeechToTextSession(
+        connection=connection,
+        app_id="test-app",
+        audio_format=SpeechAudioFormat(
+            encoding="pcm_s16le", sample_rate=16000, channels=1
+        ),
+    )
+
+    async def collect_events() -> list[tuple[str, str, int]]:
+        events: list[tuple[str, str, int]] = []
+        async for event in session.events():
+            if event is not None:
+                events.append((event.status, event.text, event.revision))
+        return events
+
+    assert asyncio.run(collect_events()) == [
+        ("partial", "你好", 1),
+        ("final", "您好", 2),
+    ]
+
+
+def test_xunfei_provider_keeps_legacy_encoded_result_compatibility() -> None:
+    connection = FakeXunfeiConnection(
+        [_legacy_xunfei_result(text="兼容结果", segment_id=1, status=2)]
+    )
+    session = XunfeiSpeechToTextSession(
+        connection=connection,
+        app_id="test-app",
+        audio_format=SpeechAudioFormat(
+            encoding="pcm_s16le", sample_rate=16000, channels=1
+        ),
+    )
+
+    async def collect_events() -> list[tuple[str, str, int]]:
+        events: list[tuple[str, str, int]] = []
+        async for event in session.events():
+            if event is not None:
+                events.append((event.status, event.text, event.revision))
+        return events
+
+    assert asyncio.run(collect_events()) == [("final", "兼容结果", 1)]
 
 
 def test_unsupported_audio_format_is_rejected(speech_client) -> None:
