@@ -1,13 +1,9 @@
 export const MARKETING_HERO_VIDEO_SRC = "/videos/home-bg.mp4";
-export const MARKETING_PROJECT_DEMO_VIDEO_SRC = "/videos/interview.mp4";
 
 export const MARKETING_TEXT = {
   heroTitle: "寻知",
   heroSubtitle: "拟真AI面试场景，给你一次不一样的体验，帮你更快取得理想offer",
   startNow: "立即体验",
-  projectDemoTitle: "项目演示",
-  projectDemoSubtitle:
-    "这里先放一个演示占位视频，后续你可直接替换为正式项目演示视频。",
   advantagesTitle: "平台优势",
   workflowTitle: "使用流程",
   outcomeTitle: "你将获得",

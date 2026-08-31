@@ -68,6 +68,13 @@ describe("MarketingHomePage", () => {
     vi.clearAllMocks();
   });
 
+  it("does not render the project demo video module", () => {
+    const { container } = renderPage(false);
+
+    expect(screen.queryByRole("heading", { name: "项目演示" })).toBeNull();
+    expect(container.querySelectorAll("video")).toHaveLength(1);
+  });
+
   it("navigates to interview intro for authenticated users", () => {
     renderPage(true);
 

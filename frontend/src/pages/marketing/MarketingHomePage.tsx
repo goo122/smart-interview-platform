@@ -17,7 +17,6 @@ import {
   MARKETING_ADVANTAGES,
   MARKETING_HERO_VIDEO_SRC,
   MARKETING_OUTCOMES,
-  MARKETING_PROJECT_DEMO_VIDEO_SRC,
   MARKETING_TEXT,
   MARKETING_WORKFLOW,
 } from "@/pages/marketing/marketingHome.constants";
@@ -107,24 +106,6 @@ export default function MarketingHomePage() {
       </section>
 
       <main className="mx-auto w-full max-w-6xl space-y-8 px-6 py-10 md:px-8 md:py-12">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-          <h2 className="text-3xl font-semibold text-slate-900">
-            {MARKETING_TEXT.projectDemoTitle}
-          </h2>
-          <p className="mt-2 text-slate-600 md:text-lg">
-            {MARKETING_TEXT.projectDemoSubtitle}
-          </p>
-          <div className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-black">
-            <video
-              className="aspect-video w-full object-cover"
-              controls
-              preload="metadata"
-            >
-              <source src={MARKETING_PROJECT_DEMO_VIDEO_SRC} type="video/mp4" />
-            </video>
-          </div>
-        </section>
-
         <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <h2 className="text-3xl font-semibold text-slate-900">
             {MARKETING_TEXT.advantagesTitle}
