@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.interview.domain import (
+    InterviewDemeanorEvaluation,
     InterviewDifficulty,
     InterviewEvaluation,
     InterviewProgress,
@@ -43,6 +44,59 @@ class ResolveInterviewRoleResponse(BaseModel):
     confidence: int | None = Field(default=None, ge=0, le=100)
     inferred: bool
     inference_version: str = Field(alias="inferenceVersion")
+
+
+class DemeanorAnalysisCapabilitiesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    available: bool
+    provider: str
+    max_image_bytes: int = Field(alias="maxImageBytes")
+    max_pixels: int = Field(alias="maxPixels")
+    min_interval_seconds: float = Field(alias="minIntervalSeconds")
+    analysis_version: str = Field(alias="analysisVersion")
+
+
+class DemeanorDimensionsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    eye_contact: int = Field(alias="eyeContact", ge=0, le=100)
+    posture: int = Field(ge=0, le=100)
+    facial_visibility: int = Field(alias="facialVisibility", ge=0, le=100)
+    expression_naturalness: int = Field(alias="expressionNaturalness", ge=0, le=100)
+
+
+class DemeanorEvaluationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    session_id: UUID = Field(alias="sessionId")
+    status: str
+    overall_score: int = Field(alias="overallScore", ge=0, le=100)
+    dimensions: DemeanorDimensionsResponse
+    summary: str
+    suggestions: list[str]
+    confidence: int = Field(ge=0, le=100)
+    captured_at: datetime = Field(alias="capturedAt")
+
+    @classmethod
+    def from_domain(cls, evaluation: InterviewDemeanorEvaluation) -> "DemeanorEvaluationResponse":
+        return cls(
+            id=evaluation.id,
+            sessionId=evaluation.session_id,
+            status="COMPLETED",
+            overallScore=evaluation.overall_score,
+            dimensions=DemeanorDimensionsResponse(
+                eyeContact=evaluation.eye_contact_score,
+                posture=evaluation.posture_score,
+                facialVisibility=evaluation.facial_visibility_score,
+                expressionNaturalness=evaluation.expression_naturalness_score,
+            ),
+            summary=evaluation.summary,
+            suggestions=list(evaluation.suggestions),
+            confidence=evaluation.confidence,
+            capturedAt=evaluation.captured_at,
+        )
 
 
 class InterviewSessionResponse(BaseModel):

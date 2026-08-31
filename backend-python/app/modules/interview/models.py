@@ -143,6 +143,71 @@ class InterviewResumeEvaluationModel(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class InterviewDemeanorEvaluationModel(Base):
+    """A single validated, image-free observation sample from an interview."""
+
+    __tablename__ = "interview_demeanor_evaluations"
+    __table_args__ = (
+        Index(
+            "ix_interview_demeanor_evaluations_session_captured_at",
+            "session_id",
+            "captured_at",
+        ),
+        Index(
+            "ix_interview_demeanor_evaluations_user_session_captured_at",
+            "user_id",
+            "session_id",
+            "captured_at",
+        ),
+        CheckConstraint(
+            "overall_score BETWEEN 0 AND 100",
+            name="ck_interview_demeanor_evaluations_overall_score",
+        ),
+        CheckConstraint(
+            "eye_contact_score BETWEEN 0 AND 100",
+            name="ck_interview_demeanor_evaluations_eye_contact_score",
+        ),
+        CheckConstraint(
+            "posture_score BETWEEN 0 AND 100",
+            name="ck_interview_demeanor_evaluations_posture_score",
+        ),
+        CheckConstraint(
+            "facial_visibility_score BETWEEN 0 AND 100",
+            name="ck_interview_demeanor_evaluations_facial_visibility_score",
+        ),
+        CheckConstraint(
+            "expression_naturalness_score BETWEEN 0 AND 100",
+            name="ck_interview_demeanor_evaluations_expression_score",
+        ),
+        CheckConstraint(
+            "confidence BETWEEN 0 AND 100",
+            name="ck_interview_demeanor_evaluations_confidence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    session_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    overall_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    eye_contact_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    posture_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    facial_visibility_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    expression_naturalness_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    suggestions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    analysis_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class InterviewQuestionModel(Base):
     __tablename__ = "interview_questions"
     __table_args__ = (

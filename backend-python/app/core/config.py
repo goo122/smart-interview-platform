@@ -22,11 +22,21 @@ class Settings(BaseSettings):
     debug: bool = False
     ai_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
     embedding_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
+    demeanor_analysis_provider: Literal["unavailable", "fake", "openai_compatible"] = (
+        "unavailable"
+    )
     speech_to_text_provider: Literal["unavailable", "fake", "xunfei"] = "unavailable"
     text_to_speech_provider: Literal["unavailable", "fake", "xunfei"] = "unavailable"
     ai_fake_mode: Literal["normal", "follow_up", "failure"] = "normal"
     ai_request_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
     ai_max_retries: int = Field(default=2, ge=0, le=3)
+    demeanor_analysis_model: str | None = None
+    demeanor_analysis_max_image_bytes: int = Field(
+        default=2 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024
+    )
+    demeanor_analysis_max_pixels: int = Field(default=8_000_000, ge=1, le=100_000_000)
+    demeanor_analysis_min_interval_seconds: float = Field(default=5.0, ge=0, le=3600)
+    demeanor_analysis_request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     xunfei_asr_app_id: str | None = None
     xunfei_asr_api_key: str | None = None
     xunfei_asr_api_secret: str | None = None
@@ -121,6 +131,7 @@ class Settings(BaseSettings):
         if environment == "production" and (
             self.ai_provider == "fake"
             or self.embedding_provider == "fake"
+            or self.demeanor_analysis_provider == "fake"
             or self.speech_to_text_provider == "fake"
             or self.text_to_speech_provider == "fake"
         ):
@@ -155,6 +166,17 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "openai_compatible AI provider requires API key, base URL and model"
+            )
+        if self.demeanor_analysis_provider == "openai_compatible" and not all(
+            self._has_value(value)
+            for value in (
+                self.llm_api_key,
+                self.llm_base_url,
+                self.demeanor_analysis_model or self.llm_model,
+            )
+        ):
+            raise ValueError(
+                "openai_compatible demeanor provider requires API key, base URL and model"
             )
         if self.embedding_provider == "openai_compatible" and not all(
             self._has_value(value)

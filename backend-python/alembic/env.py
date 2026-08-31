@@ -16,6 +16,7 @@ from app.modules.chat.models import (  # noqa: F401
 )
 from app.modules.interview.models import (  # noqa: F401
     InterviewAnswerModel,
+    InterviewDemeanorEvaluationModel,
     InterviewEvaluationModel,
     InterviewEventModel,
     InterviewQuestionCitationModel,

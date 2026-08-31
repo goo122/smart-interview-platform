@@ -6,7 +6,9 @@ import CameraPreview, {
   type CameraPreviewHandle,
 } from "@/components/camera/CameraPreview";
 import ErrorNotice from "@/components/feedback/ErrorNotice";
+import type { InterviewDemeanorEvaluationResult } from "@/services/interviewService";
 import type { MediaError } from "@/lib/media";
+import type { DemeanorPollingStatus } from "@/hooks/interview/camera/useInterviewDemeanorPolling";
 import { cn } from "@/lib/utils";
 
 type CameraErrorCopy = {
@@ -19,6 +21,8 @@ type InterviewCameraOverlayProps = {
   cameraErrorCopy: CameraErrorCopy;
   onCameraError: (error: MediaError) => void;
   onToggleExpanded: () => void;
+  demeanorStatus: DemeanorPollingStatus;
+  latestDemeanorEvaluation: InterviewDemeanorEvaluationResult | null;
 };
 
 const InterviewCameraOverlay = forwardRef<
@@ -30,6 +34,8 @@ const InterviewCameraOverlay = forwardRef<
     cameraErrorCopy,
     onCameraError,
     onToggleExpanded,
+    demeanorStatus,
+    latestDemeanorEvaluation,
   }: InterviewCameraOverlayProps,
   ref,
 ) {
@@ -70,11 +76,37 @@ const InterviewCameraOverlay = forwardRef<
             )}
           </Button>
         </div>
-        <div className="absolute bottom-3 left-3 flex items-center gap-2">
-          <div className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
-          <span className="text-xs font-medium text-white drop-shadow-md">
-            正在分析状态...
-          </span>
+        <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 px-2 py-1.5">
+          <div className="flex items-center gap-2">
+            <div
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                demeanorStatus === "analyzing" && "animate-pulse bg-red-500",
+                demeanorStatus === "completed" && "bg-emerald-400",
+                demeanorStatus === "unavailable" && "bg-slate-400",
+                demeanorStatus === "error" && "bg-amber-400",
+                (demeanorStatus === "idle" || demeanorStatus === "checking") &&
+                  "bg-slate-300",
+              )}
+            />
+            <span className="truncate text-xs font-medium text-white drop-shadow-md">
+              {demeanorStatus === "checking" && "正在检查仪态分析服务..."}
+              {demeanorStatus === "analyzing" && "正在分析可观察的面试表现..."}
+              {demeanorStatus === "completed" &&
+                `仪态表达 ${latestDemeanorEvaluation?.overallScore ?? "--"} 分`}
+              {demeanorStatus === "unavailable" && "仪态分析未启用"}
+              {demeanorStatus === "error" && "本次仪态分析失败，面试可继续"}
+              {demeanorStatus === "idle" && "仪态分析已暂停"}
+            </span>
+          </div>
+          {demeanorStatus === "completed" && latestDemeanorEvaluation && (
+            <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-white/80">
+              <p className="truncate">{latestDemeanorEvaluation.summary}</p>
+              <p className="truncate">
+                建议：{latestDemeanorEvaluation.suggestions[0] ?? "保持自然表达"}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </Card>

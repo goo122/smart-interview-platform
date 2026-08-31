@@ -359,6 +359,28 @@ describe("fetchInterviewReportQueryData", () => {
     expect(generateSpy).not.toHaveBeenCalled();
   });
 
+  it("shows a persisted demeanor radar point without inventing one when absent", async () => {
+    const getReportSpy = vi
+      .spyOn(interviewService, "getInterviewReportBySessionId")
+      .mockResolvedValueOnce({
+        ...report,
+        dimensionScores: { ...report.dimensionScores, demeanor: 77 },
+        radarData: [
+          ...report.radarData,
+          { dimension: "demeanor", score: 77 },
+        ],
+      });
+
+    const result = await fetchInterviewReportQueryData("session-103");
+
+    expect(result.record?.radarDimensions).toEqual([
+      { label: "技术能力", value: 88 },
+      { label: "回答相关性", value: 84 },
+      { label: "仪态表达", value: 77 },
+    ]);
+    expect(getReportSpy).toHaveBeenCalledOnce();
+  });
+
   it("generates the report when it does not exist yet", async () => {
     const getReportSpy = vi
       .spyOn(interviewService, "getInterviewReportBySessionId")

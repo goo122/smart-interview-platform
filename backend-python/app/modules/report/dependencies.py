@@ -9,6 +9,10 @@ from app.ai.report import (
 )
 from app.core.config import Settings, get_settings
 from app.modules.auth.dependencies import get_db_session
+from app.modules.interview.demeanor_repository import (
+    DemeanorEvaluationRepository,
+    SqlAlchemyDemeanorEvaluationRepository,
+)
 from app.modules.interview.dependencies import get_interview_repository
 from app.modules.interview.repository import InterviewRepository
 from app.modules.report.repository import (
@@ -23,6 +27,12 @@ async def get_interview_report_repository(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> InterviewReportRepository:
     return SqlAlchemyInterviewReportRepository(session)
+
+
+async def get_report_demeanor_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> DemeanorEvaluationRepository:
+    return SqlAlchemyDemeanorEvaluationRepository(session)
 
 
 def get_interview_report_narrative(request: Request) -> InterviewReportNarrativePort:
@@ -59,6 +69,9 @@ def get_interview_report_service(
         InterviewReportTaskQueuePort, Depends(get_interview_report_task_queue)
     ],
     settings: Annotated[Settings, Depends(get_settings)],
+    demeanor_repository: Annotated[
+        DemeanorEvaluationRepository, Depends(get_report_demeanor_repository)
+    ],
 ) -> InterviewReportService:
     return InterviewReportService(
         interview_repository,
@@ -66,4 +79,5 @@ def get_interview_report_service(
         narrative,
         task_queue,
         settings,
+        demeanor_repository,
     )

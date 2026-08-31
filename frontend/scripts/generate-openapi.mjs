@@ -94,6 +94,18 @@ const selected = [
     schemaName: "ResolveInterviewRoleResponse",
   },
   {
+    exportName: "DemeanorAnalysisCapabilitiesResponse",
+    schemaName: "DemeanorAnalysisCapabilitiesResponse",
+  },
+  {
+    exportName: "DemeanorDimensionsResponse",
+    schemaName: "DemeanorDimensionsResponse",
+  },
+  {
+    exportName: "DemeanorEvaluationResponse",
+    schemaName: "DemeanorEvaluationResponse",
+  },
+  {
     exportName: "InterviewSessionResponse",
     schemaName: "InterviewSessionResponse",
   },

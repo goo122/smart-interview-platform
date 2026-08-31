@@ -12,6 +12,7 @@ from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.domain import User
 from app.modules.interview.domain import (
     InterviewAnswer,
+    InterviewDemeanorEvaluation,
     InterviewDifficulty,
     InterviewEvaluation,
     InterviewQuestion,
@@ -346,6 +347,20 @@ class FakeReportRepository:
         return report
 
 
+class FakeDemeanorRepository:
+    def __init__(self, samples: list[InterviewDemeanorEvaluation] | None = None) -> None:
+        self.samples = samples or []
+
+    async def list_completed(
+        self, session_id: UUID, user_id: UUID
+    ) -> list[InterviewDemeanorEvaluation]:
+        return [
+            sample
+            for sample in self.samples
+            if sample.session_id == session_id and sample.user_id == user_id
+        ]
+
+
 class FakeReportTaskQueue:
     def __init__(self, *, inline: bool = True) -> None:
         self.service: InterviewReportService | None = None
@@ -362,6 +377,7 @@ def _service(
     *,
     narrative: FakeInterviewReportNarrativeGenerator | None = None,
     inline_queue: bool = True,
+    demeanor_repository: FakeDemeanorRepository | None = None,
 ) -> tuple[InterviewReportService, FakeReportRepository, InMemoryInterviewRepository, UUID, UUID]:
     interview_repository, user_id, session_id = _completed_interview()
     report_repository = FakeReportRepository()
@@ -372,6 +388,7 @@ def _service(
         narrative or FakeInterviewReportNarrativeGenerator(),
         queue,
         Settings(),
+        demeanor_repository,
     )
     queue.service = service
     return service, report_repository, interview_repository, user_id, session_id
@@ -514,6 +531,63 @@ async def test_report_captures_resume_evaluation_snapshot() -> None:
     assert reports.reports[detail.report.id].resume_evaluation_snapshot == (
         detail.report.resume_evaluation_snapshot
     )
+
+
+@pytest.mark.asyncio
+async def test_report_aggregates_saved_demeanor_samples_into_immutable_radar_data() -> None:
+    demeanor_repository = FakeDemeanorRepository()
+    service, _, _, user_id, session_id = _service(demeanor_repository=demeanor_repository)
+    sample_time = datetime.now(UTC)
+    demeanor_repository.samples = [
+        InterviewDemeanorEvaluation(
+            id=uuid4(),
+            session_id=session_id,
+            user_id=user_id,
+            overall_score=71,
+            eye_contact_score=70,
+            posture_score=72,
+            facial_visibility_score=75,
+            expression_naturalness_score=68,
+            summary="仪态稳定",
+            suggestions=["保持视线稳定"],
+            confidence=90,
+            provider_name="fake",
+            analysis_version="demeanor-v1",
+            captured_at=sample_time,
+            created_at=sample_time,
+        ),
+        InterviewDemeanorEvaluation(
+            id=uuid4(),
+            session_id=session_id,
+            user_id=user_id,
+            overall_score=82,
+            eye_contact_score=80,
+            posture_score=84,
+            facial_visibility_score=85,
+            expression_naturalness_score=78,
+            summary="表达自然",
+            suggestions=["保持面部清晰"],
+            confidence=88,
+            provider_name="fake",
+            analysis_version="demeanor-v1",
+            captured_at=sample_time,
+            created_at=sample_time,
+        ),
+    ]
+
+    detail = await service.generate(user_id, session_id)
+
+    assert detail.report.radar_data[-1] == {"dimension": "demeanor", "score": 77}
+
+
+@pytest.mark.asyncio
+async def test_report_omits_demeanor_dimension_when_no_valid_samples_exist() -> None:
+    demeanor_repository = FakeDemeanorRepository()
+    service, _, _, user_id, session_id = _service(demeanor_repository=demeanor_repository)
+
+    detail = await service.generate(user_id, session_id)
+
+    assert not any(point.get("dimension") == "demeanor" for point in detail.report.radar_data)
 
 
 @pytest.mark.asyncio

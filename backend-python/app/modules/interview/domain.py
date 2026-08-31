@@ -143,6 +143,25 @@ class ResumeEvaluation:
     completed_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class InterviewDemeanorEvaluation:
+    id: UUID
+    session_id: UUID
+    user_id: UUID
+    overall_score: int
+    eye_contact_score: int
+    posture_score: int
+    facial_visibility_score: int
+    expression_naturalness_score: int
+    summary: str
+    suggestions: list[str]
+    confidence: int
+    provider_name: str
+    analysis_version: str
+    captured_at: datetime
+    created_at: datetime
+
+
 @dataclass(slots=True)
 class InterviewQuestion:
     id: UUID

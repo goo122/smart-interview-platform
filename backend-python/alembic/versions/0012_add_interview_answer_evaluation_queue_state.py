@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 
 from alembic import op
+
 revision: str = "0012_interview_answer_eval_queue"
 down_revision: str | None = "0011_interview_preparation_queue"
 branch_labels: str | Sequence[str] | None = None

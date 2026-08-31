@@ -2,6 +2,8 @@ import service, { assertRequestAuthorized, buildApiUrl } from "@/lib/request";
 import { AppError, ErrorCode } from "@/lib/errors";
 import { knowledgeApi } from "@/features/knowledge/api";
 import type {
+  DemeanorAnalysisCapabilitiesResponse,
+  DemeanorEvaluationResponse,
   InterviewDifficulty,
   InterviewReportPage,
   InterviewReportResponse,
@@ -245,6 +247,10 @@ export interface EvaluateInterviewDemeanorParams {
   userPhoto: Blob;
   fileName?: string;
 }
+
+export type InterviewDemeanorCapabilities = DemeanorAnalysisCapabilitiesResponse;
+
+export type InterviewDemeanorEvaluationResult = DemeanorEvaluationResponse;
 
 export interface AnswerInterviewQuestionResult {
   turnId?: string;
@@ -1237,7 +1243,7 @@ export const interviewService = {
       params.fileName || `demeanor-${Date.now()}.jpg`,
     );
 
-    return service.post<string, FormData>(
+    return service.post<InterviewDemeanorEvaluationResult, FormData>(
       `/xunzhi/v1/interview/sessions/${encodeURIComponent(params.sessionId)}/demeanor-evaluation`,
       formData,
       {
@@ -1246,6 +1252,12 @@ export const interviewService = {
           "Content-Type": "multipart/form-data",
         },
       },
+    );
+  },
+  getInterviewDemeanorCapabilities: async () => {
+    return service.get<InterviewDemeanorCapabilities>(
+      "/xunzhi/v1/interview/demeanor/capabilities",
+      { timeout: 10000 },
     );
   },
   finishInterviewSession: async (sessionId: string) => {

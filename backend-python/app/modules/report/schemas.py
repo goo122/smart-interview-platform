@@ -128,6 +128,17 @@ class InterviewReportResponse(BaseModel):
             if not replaced_resume_point:
                 normalized_radar_data.insert(0, resume_radar_point)
             radar_data = normalized_radar_data
+        demeanor_score = next(
+            (
+                point.get("score")
+                for point in radar_data
+                if point.get("dimension") == "demeanor"
+                and isinstance(point.get("score"), int)
+            ),
+            None,
+        )
+        if isinstance(demeanor_score, int):
+            dimension_scores["demeanor"] = max(0, min(100, demeanor_score))
         return cls(
             reportId=report.id,
             sessionId=report.session_id,

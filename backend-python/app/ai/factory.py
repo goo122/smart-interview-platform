@@ -15,6 +15,12 @@ from app.ai.chat import (
     LangChainChatModelAdapter,
     UnavailableChatModel,
 )
+from app.ai.demeanor import (
+    DemeanorAnalyzerPort,
+    FakeDemeanorAnalyzer,
+    LangChainDemeanorAnalyzerAdapter,
+    UnavailableDemeanorAnalyzer,
+)
 from app.ai.embedding import (
     EmbeddingPort,
     FakeEmbedding,
@@ -75,6 +81,7 @@ class AiProviderBundle:
     resume_evaluator: ResumeEvaluatorPort
     resume_role_inference: ResumeRoleInferencePort
     embedding: EmbeddingPort
+    demeanor_analyzer: DemeanorAnalyzerPort
     model_metadata: AiModelMetadataPort
 
 
@@ -88,6 +95,7 @@ class AiProviderFactory:
         if (
             settings.ai_provider == "openai_compatible"
             or settings.embedding_provider == "openai_compatible"
+            or settings.demeanor_analysis_provider == "openai_compatible"
         ):
             return cls._build_openai_compatible(settings, model_metadata)
         return cls._build_non_network(settings, model_metadata)
@@ -120,7 +128,9 @@ class AiProviderFactory:
     @staticmethod
     def _validate_environment(settings: Settings) -> None:
         if settings.app_env.strip().lower() == "production" and (
-            settings.ai_provider == "fake" or settings.embedding_provider == "fake"
+            settings.ai_provider == "fake"
+            or settings.embedding_provider == "fake"
+            or settings.demeanor_analysis_provider == "fake"
         ):
             raise AiProviderConfigurationError("Fake AI providers are not allowed in production")
 
@@ -165,6 +175,11 @@ class AiProviderFactory:
             resume_role_inference: ResumeRoleInferencePort = FakeResumeRoleInference(
                 error=evaluation_error
             )
+            demeanor_analyzer: DemeanorAnalyzerPort = (
+                FakeDemeanorAnalyzer(error=evaluation_error)
+                if settings.demeanor_analysis_provider == "fake"
+                else UnavailableDemeanorAnalyzer()
+            )
             chat_model: ChatModelPort = FakeChatModel(
                 chunks=("这是开发环境的模拟回答。",), error=evaluation_error
             )
@@ -180,6 +195,11 @@ class AiProviderFactory:
             )
             resume_evaluator = UnavailableResumeEvaluator()
             resume_role_inference = UnavailableResumeRoleInference()
+            demeanor_analyzer = (
+                FakeDemeanorAnalyzer()
+                if settings.demeanor_analysis_provider == "fake"
+                else UnavailableDemeanorAnalyzer()
+            )
         embedding: EmbeddingPort = (
             FakeEmbedding(settings.embedding_dimensions)
             if settings.embedding_provider == "fake"
@@ -194,6 +214,7 @@ class AiProviderFactory:
             resume_evaluator,
             resume_role_inference,
             embedding,
+            demeanor_analyzer,
             model_metadata,
         )
 
@@ -218,6 +239,7 @@ class AiProviderFactory:
         report_narrative: InterviewReportNarrativePort
         resume_evaluator: ResumeEvaluatorPort
         resume_role_inference: ResumeRoleInferencePort
+        demeanor_analyzer: DemeanorAnalyzerPort
         if settings.ai_provider == "openai_compatible":
             assert settings.llm_api_key is not None
             assert settings.llm_base_url is not None
@@ -258,6 +280,31 @@ class AiProviderFactory:
             report_narrative = RuleBasedInterviewReportNarrativeGenerator()
             resume_evaluator = UnavailableResumeEvaluator()
             resume_role_inference = UnavailableResumeRoleInference()
+
+        if settings.demeanor_analysis_provider == "openai_compatible":
+            assert settings.llm_api_key is not None
+            assert settings.llm_base_url is not None
+            demeanor_model_name = settings.demeanor_analysis_model or settings.llm_model
+            assert demeanor_model_name is not None
+            if (
+                settings.ai_provider == "openai_compatible"
+                and demeanor_model_name == settings.llm_model
+            ):
+                demeanor_model = model
+            else:
+                demeanor_model = ChatOpenAI(
+                    api_key=SecretStr(settings.llm_api_key),
+                    base_url=settings.llm_base_url,
+                    model=demeanor_model_name,
+                    temperature=0,
+                    timeout=settings.demeanor_analysis_request_timeout_seconds,
+                    max_retries=settings.ai_max_retries,
+                )
+            demeanor_analyzer = LangChainDemeanorAnalyzerAdapter(demeanor_model)
+        elif settings.demeanor_analysis_provider == "fake":
+            demeanor_analyzer = FakeDemeanorAnalyzer()
+        else:
+            demeanor_analyzer = UnavailableDemeanorAnalyzer()
 
         if settings.embedding_provider == "openai_compatible":
             assert settings.embedding_api_key is not None
@@ -300,5 +347,6 @@ class AiProviderFactory:
             resume_evaluator,
             resume_role_inference,
             embedding,
+            demeanor_analyzer,
             model_metadata,
         )

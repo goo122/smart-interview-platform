@@ -3,6 +3,7 @@ from typing import Annotated, cast
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.demeanor import DemeanorAnalyzerPort, UnavailableDemeanorAnalyzer
 from app.ai.embedding import EmbeddingPort
 from app.ai.evaluation import InterviewAnswerEvaluatorPort, UnavailableInterviewAnswerEvaluator
 from app.ai.followup import FollowUpQuestionGeneratorPort, UnavailableFollowUpQuestionGenerator
@@ -25,6 +26,14 @@ from app.modules.interview.context import (
     InterviewContextProviderPort,
     InterviewEvaluationContextProvider,
     InterviewEvaluationContextProviderPort,
+)
+from app.modules.interview.demeanor_repository import (
+    DemeanorEvaluationRepository,
+    SqlAlchemyDemeanorEvaluationRepository,
+)
+from app.modules.interview.demeanor_service import (
+    DemeanorAnalysisService,
+    RedisRateLimiter,
 )
 from app.modules.interview.repository import (
     InterviewRepository,
@@ -49,6 +58,37 @@ async def get_interview_repository(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> InterviewRepository:
     return SqlAlchemyInterviewRepository(session)
+
+
+async def get_demeanor_evaluation_repository(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> DemeanorEvaluationRepository:
+    return SqlAlchemyDemeanorEvaluationRepository(session)
+
+
+def get_demeanor_analyzer(request: Request) -> DemeanorAnalyzerPort:
+    return cast(
+        DemeanorAnalyzerPort,
+        getattr(request.app.state, "demeanor_analyzer", UnavailableDemeanorAnalyzer()),
+    )
+
+
+def get_demeanor_analysis_service(
+    request: Request,
+    interview_repository: Annotated[InterviewRepository, Depends(get_interview_repository)],
+    repository: Annotated[
+        DemeanorEvaluationRepository, Depends(get_demeanor_evaluation_repository)
+    ],
+    provider: Annotated[DemeanorAnalyzerPort, Depends(get_demeanor_analyzer)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DemeanorAnalysisService:
+    return DemeanorAnalysisService(
+        interview_repository,
+        repository,
+        provider,
+        settings,
+        cast(RedisRateLimiter, request.app.state.redis),
+    )
 
 
 async def get_interview_retriever(

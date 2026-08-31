@@ -125,6 +125,36 @@ describe("interviewService.resolveInterviewRole", () => {
   });
 });
 
+describe("interviewService.evaluateInterviewDemeanor", () => {
+  it("uploads the camera frame as multipart form data", async () => {
+    const frame = new Blob(["frame"], { type: "image/jpeg" });
+    const postSpy = vi.spyOn(service, "post").mockResolvedValue({} as never);
+
+    try {
+      await interviewService.evaluateInterviewDemeanor({
+        sessionId: "session-1",
+        userPhoto: frame,
+      });
+
+      expect(postSpy).toHaveBeenCalledWith(
+        "/xunzhi/v1/interview/sessions/session-1/demeanor-evaluation",
+        expect.any(FormData),
+        {
+          timeout: 180_000,
+          headers: { "Content-Type": "multipart/form-data" },
+        },
+      );
+      const requestFormData = postSpy.mock.calls[0]?.[1] as FormData;
+      const uploadedPhoto = requestFormData.get("userPhoto");
+      expect(uploadedPhoto).toBeInstanceOf(File);
+      expect((uploadedPhoto as File).type).toBe("image/jpeg");
+      expect((uploadedPhoto as File).name).toMatch(/^demeanor-\d+\.jpg$/);
+    } finally {
+      postSpy.mockRestore();
+    }
+  });
+});
+
 describe("interviewService.prepareInterviewSessionFromResume", () => {
   it("skips role inference when the caller supplies both job fields", async () => {
     const file = new File(["resume"], "candidate.pdf", {

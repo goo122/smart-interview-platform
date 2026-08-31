@@ -43,7 +43,7 @@ export default function InterviewPage() {
     });
   }, [setIsPreviewOpen]);
 
-  useInterviewDemeanorPolling({
+  const demeanorPolling = useInterviewDemeanorPolling({
     sessionId: interview.sessionId,
     enabled:
       Boolean(interview.sessionId) &&
@@ -125,6 +125,8 @@ export default function InterviewPage() {
             cameraErrorCopy={camera.errorCopy}
             onCameraError={camera.handleCameraError}
             onToggleExpanded={camera.handleToggleExpanded}
+            demeanorStatus={demeanorPolling.status}
+            latestDemeanorEvaluation={demeanorPolling.latestEvaluation}
           />
           ) : null
         }

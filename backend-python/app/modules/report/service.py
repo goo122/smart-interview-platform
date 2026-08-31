@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -14,6 +15,7 @@ from app.ai.report import (
     StructuredInterviewReportNarrative,
 )
 from app.core.config import Settings
+from app.modules.interview.demeanor_repository import DemeanorEvaluationRepository
 from app.modules.interview.domain import (
     InterviewEvaluation,
     InterviewSession,
@@ -65,12 +67,14 @@ class InterviewReportService:
         narrative: InterviewReportNarrativePort,
         task_queue: InterviewReportTaskQueuePort,
         settings: Settings,
+        demeanor_repository: DemeanorEvaluationRepository | None = None,
     ) -> None:
         self._interview_repository = interview_repository
         self._report_repository = report_repository
         self._narrative = narrative
         self._task_queue = task_queue
         self._settings = settings
+        self._demeanor_repository = demeanor_repository
         self._aggregator = InterviewScoreAggregator(
             ReportAggregationWeights(
                 primary_turn=settings.report_primary_turn_weight,
@@ -235,18 +239,13 @@ class InterviewReportService:
         )
         resume_evaluation = await self._load_resume_evaluation(job.session_id, job.user_id)
         resume_snapshot = _resume_evaluation_snapshot(resume_evaluation)
+        radar_data = list(scores.radar_data)
         if resume_evaluation is not None and resume_evaluation.overall_score is not None:
-            scores = type(scores)(
-                overall_score=scores.overall_score,
-                technical_score=scores.technical_score,
-                relevance_score=scores.relevance_score,
-                clarity_score=scores.clarity_score,
-                depth_score=scores.depth_score,
-                radar_data=(
-                    {"dimension": "resume", "score": resume_evaluation.overall_score},
-                    *scores.radar_data,
-                ),
-            )
+            radar_data.insert(0, {"dimension": "resume", "score": resume_evaluation.overall_score})
+        demeanor_score = await self._load_demeanor_score(job.session_id, job.user_id)
+        if demeanor_score is not None:
+            radar_data.append({"dimension": "demeanor", "score": demeanor_score})
+        scores = replace(scores, radar_data=tuple(radar_data))
         strengths = _dedupe(
             item for snapshot in snapshots for item in snapshot.evaluation.strengths
         )
@@ -420,6 +419,16 @@ class InterviewReportService:
         if getter is None:
             return None
         return cast(ResumeEvaluation | None, await getter(session_id, user_id))
+
+    async def _load_demeanor_score(self, session_id: UUID, user_id: UUID) -> int | None:
+        if self._demeanor_repository is None:
+            return None
+        samples = await self._demeanor_repository.list_completed(session_id, user_id)
+        if not samples:
+            return None
+        return int(
+            sum(sample.overall_score for sample in samples) / len(samples) + 0.5
+        )
 
 
 def _dedupe(values: Iterable[str], limit: int = 10) -> list[str]:

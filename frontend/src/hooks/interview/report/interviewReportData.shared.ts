@@ -92,6 +92,7 @@ const REPORT_DIMENSION_LABELS: Record<string, string> = {
   relevance: "回答相关性",
   clarity: "表达清晰度",
   depth: "回答深度",
+  demeanor: "仪态表达",
 };
 
 const translateReportValue = (value: string) => {

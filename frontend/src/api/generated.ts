@@ -210,6 +210,31 @@ export interface components {
       "inferred": boolean;
       "inferenceVersion": string;
     };
+    DemeanorAnalysisCapabilitiesResponse: {
+      "available": boolean;
+      "provider": string;
+      "maxImageBytes": number;
+      "maxPixels": number;
+      "minIntervalSeconds": number;
+      "analysisVersion": string;
+    };
+    DemeanorDimensionsResponse: {
+      "eyeContact": number;
+      "posture": number;
+      "facialVisibility": number;
+      "expressionNaturalness": number;
+    };
+    DemeanorEvaluationResponse: {
+      "id": string;
+      "sessionId": string;
+      "status": string;
+      "overallScore": number;
+      "dimensions": components["schemas"]["DemeanorDimensionsResponse"];
+      "summary": string;
+      "suggestions": Array<string>;
+      "confidence": number;
+      "capturedAt": string;
+    };
     InterviewSessionResponse: {
       "id": string;
       "sessionId": string;
@@ -463,6 +488,9 @@ export type InterviewDifficulty = components["schemas"]["InterviewDifficulty"];
 export type CreateInterviewSessionRequest = components["schemas"]["CreateInterviewSessionRequest"];
 export type ResolveInterviewRoleRequest = components["schemas"]["ResolveInterviewRoleRequest"];
 export type ResolveInterviewRoleResponse = components["schemas"]["ResolveInterviewRoleResponse"];
+export type DemeanorAnalysisCapabilitiesResponse = components["schemas"]["DemeanorAnalysisCapabilitiesResponse"];
+export type DemeanorDimensionsResponse = components["schemas"]["DemeanorDimensionsResponse"];
+export type DemeanorEvaluationResponse = components["schemas"]["DemeanorEvaluationResponse"];
 export type InterviewSessionResponse = components["schemas"]["InterviewSessionResponse"];
 export type ResumeEvaluationResponse = components["schemas"]["ResumeEvaluationResponse"];
 export type InterviewQuestionResponse = components["schemas"]["InterviewQuestionResponse"];

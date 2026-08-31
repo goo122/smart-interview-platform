@@ -79,3 +79,28 @@ class InterviewEvaluationError(AppError):
 
 class InterviewEvaluationValidationError(InterviewEvaluationError):
     code = "interview_evaluation_invalid"
+
+
+class InvalidDemeanorImageError(AppError):
+    status_code = 400
+    code = "invalid_demeanor_image"
+
+
+class DemeanorAnalysisConflictError(AppError):
+    status_code = 409
+    code = "demeanor_analysis_in_progress"
+
+
+class DemeanorAnalysisRateLimitError(AppError):
+    status_code = 429
+    code = "demeanor_analysis_rate_limited"
+
+
+class DemeanorAnalysisUnavailableError(AppError):
+    status_code = 503
+    code = "demeanor_analysis_unavailable"
+
+
+class DemeanorAnalysisFailedError(AppError):
+    status_code = 422
+    code = "demeanor_analysis_failed"

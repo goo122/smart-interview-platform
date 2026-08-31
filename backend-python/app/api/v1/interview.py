@@ -1,18 +1,22 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.domain import User
 from app.modules.interview.answer_service import InterviewAnswerService
+from app.modules.interview.demeanor_service import DemeanorAnalysisService
 from app.modules.interview.dependencies import (
+    get_demeanor_analysis_service,
     get_interview_answer_service,
     get_interview_service,
 )
 from app.modules.interview.schemas import (
     CreateInterviewSessionRequest,
+    DemeanorAnalysisCapabilitiesResponse,
+    DemeanorEvaluationResponse,
     InterviewConversationResponse,
     InterviewPageResponse,
     InterviewQuestionResponse,
@@ -34,6 +38,28 @@ from app.modules.report.schemas import (
 from app.modules.report.service import InterviewReportService
 
 router = APIRouter(prefix="/xunzhi/v1/interview", tags=["interview"])
+
+
+@router.get(
+    "/demeanor/capabilities",
+    response_model=DemeanorAnalysisCapabilitiesResponse,
+)
+async def demeanor_capabilities(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[DemeanorAnalysisService, Depends(get_demeanor_analysis_service)],
+) -> DemeanorAnalysisCapabilitiesResponse:
+    """Expose safe capability metadata so the browser can disable unsupported polling."""
+
+    del current_user
+    capabilities = service.capabilities()
+    return DemeanorAnalysisCapabilitiesResponse(
+        available=capabilities.available,
+        provider=capabilities.provider,
+        maxImageBytes=capabilities.max_image_bytes,
+        maxPixels=capabilities.max_pixels,
+        minIntervalSeconds=capabilities.min_interval_seconds,
+        analysisVersion=capabilities.analysis_version,
+    )
 
 
 @router.post(
@@ -145,6 +171,29 @@ async def get_session(
     session = await service.get_session(current_user.id, session_id)
     evaluation = await service.get_resume_evaluation(current_user.id, session_id)
     return InterviewSessionResponse.from_domain(session, evaluation)
+
+
+@router.post(
+    "/sessions/{session_id}/demeanor-evaluation",
+    response_model=DemeanorEvaluationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def evaluate_demeanor(
+    session_id: UUID,
+    user_photo: Annotated[UploadFile, File(..., alias="userPhoto")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[DemeanorAnalysisService, Depends(get_demeanor_analysis_service)],
+) -> DemeanorEvaluationResponse:
+    """Analyze one camera frame without persisting the original image."""
+
+    image_bytes = await user_photo.read(service.max_image_bytes + 1)
+    result = await service.analyze(
+        user_id=current_user.id,
+        session_id=session_id,
+        image_bytes=image_bytes,
+        mime_type=user_photo.content_type,
+    )
+    return DemeanorEvaluationResponse.from_domain(result)
 
 
 @router.get(

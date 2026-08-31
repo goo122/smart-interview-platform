@@ -63,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.resume_evaluator = providers.resume_evaluator
     app.state.resume_role_inference = providers.resume_role_inference
     app.state.embedding = providers.embedding
+    app.state.demeanor_analyzer = providers.demeanor_analyzer
     app.state.ai_model_metadata = providers.model_metadata
     app.state.file_storage = LocalFileStorage(settings.knowledge_storage_dir)
     app.state.pdf_parser = PypdfPdfParser()
