@@ -58,6 +58,9 @@ class TextToSpeechService:
         self._settings = settings
         self._tasks: dict[UUID, TtsSynthesisRecord] = {}
         self._idempotency: dict[tuple[UUID, str], tuple[str, UUID]] = {}
+        self._inflight: dict[
+            tuple[UUID, str], tuple[str, asyncio.Task[TtsSynthesisRecord]]
+        ] = {}
         self._request_times: dict[UUID, deque[float]] = {}
         self._lock = asyncio.Lock()
 
@@ -157,62 +160,101 @@ class TextToSpeechService:
     async def _synthesize_with_idempotency(
         self, user_id: UUID, request: TextToSpeechRequest, request_id: str | None
     ) -> TtsSynthesisRecord:
+        if request_id is None:
+            async with self._lock:
+                self._check_rate_limit(user_id)
+            return await self._synthesize_and_store(user_id, request)
+
         fingerprint = _request_fingerprint(request)
+        key = (user_id, request_id)
         async with self._lock:
             self._purge_expired()
-            if request_id:
-                key = (user_id, request_id)
-                existing = self._idempotency.get(key)
-                if existing:
-                    if existing[0] != fingerprint:
-                        raise TextToSpeechIdempotencyConflictError(
-                            "requestId 已用于其他 TTS 请求。"
-                        )
-                    cached = self._tasks.get(existing[1])
-                    if cached is not None:
-                        return cached
+            existing = self._idempotency.get(key)
+            if existing:
+                if existing[0] != fingerprint:
+                    raise TextToSpeechIdempotencyConflictError(
+                        "requestId 已用于其他 TTS 请求。"
+                    )
+                cached = self._tasks.get(existing[1])
+                if cached is not None:
+                    return cached
 
-            self._check_rate_limit(user_id)
-
-            if not self._provider.is_available:
-                raise TextToSpeechUnavailableError("语音合成服务暂时不可用，请稍后重试。")
-
-            try:
-                result = await asyncio.wait_for(
-                    self._provider.synthesize(request),
-                    timeout=request.timeout_seconds,
+            active = self._inflight.get(key)
+            if active:
+                if active[0] != fingerprint:
+                    raise TextToSpeechIdempotencyConflictError(
+                        "requestId 已用于其他 TTS 请求。"
+                    )
+                task = active[1]
+            else:
+                self._check_rate_limit(user_id)
+                task = asyncio.create_task(
+                    self._run_idempotent_synthesis(key, fingerprint, user_id, request)
                 )
-            except asyncio.CancelledError:
-                raise
-            except TextToSpeechProviderUnavailable as exc:
-                raise TextToSpeechUnavailableError(
-                    "语音合成服务暂时不可用，请稍后重试。"
-                ) from exc
-            except TimeoutError as exc:
-                raise TextToSpeechUnavailableError(
-                    "语音合成服务响应超时，请稍后重试。"
-                ) from exc
-            except TextToSpeechProviderError as exc:
-                raise TextToSpeechFailedError(
-                    "语音合成失败，请稍后重试。"
-                ) from exc
-            except Exception as exc:
-                raise TextToSpeechFailedError("语音合成失败，请稍后重试。") from exc
+                self._inflight[key] = (fingerprint, task)
 
-            self._validate_result(result)
-            record = TtsSynthesisRecord(
-                task_id=uuid4(),
-                user_id=user_id,
-                audio_base64=base64.b64encode(result.audio_bytes).decode("ascii"),
-                audio_format=result.audio_format,
-                content_type=result.content_type,
-                expires_at=datetime.now(UTC)
-                + timedelta(seconds=self._settings.tts_task_ttl_seconds),
-            )
-            self._tasks[record.task_id] = record
-            if request_id:
-                self._idempotency[(user_id, request_id)] = (fingerprint, record.task_id)
+        # One caller cancelling must not cancel work shared by other callers.
+        return await asyncio.shield(task)
+
+    async def _run_idempotent_synthesis(
+        self,
+        key: tuple[UUID, str],
+        fingerprint: str,
+        user_id: UUID,
+        request: TextToSpeechRequest,
+    ) -> TtsSynthesisRecord:
+        current_task = asyncio.current_task()
+        try:
+            record = await self._synthesize_and_store(user_id, request)
+            async with self._lock:
+                self._idempotency[key] = (fingerprint, record.task_id)
             return record
+        finally:
+            async with self._lock:
+                active = self._inflight.get(key)
+                if active is not None and active[1] is current_task:
+                    self._inflight.pop(key, None)
+
+    async def _synthesize_and_store(
+        self, user_id: UUID, request: TextToSpeechRequest
+    ) -> TtsSynthesisRecord:
+        result = await self._synthesize_with_provider(request)
+        self._validate_result(result)
+        record = TtsSynthesisRecord(
+            task_id=uuid4(),
+            user_id=user_id,
+            audio_base64=base64.b64encode(result.audio_bytes).decode("ascii"),
+            audio_format=result.audio_format,
+            content_type=result.content_type,
+            expires_at=datetime.now(UTC)
+            + timedelta(seconds=self._settings.tts_task_ttl_seconds),
+        )
+        async with self._lock:
+            self._tasks[record.task_id] = record
+        return record
+
+    async def _synthesize_with_provider(
+        self, request: TextToSpeechRequest
+    ) -> TextToSpeechResult:
+        try:
+            return await asyncio.wait_for(
+                self._provider.synthesize(request),
+                timeout=request.timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TextToSpeechProviderUnavailable as exc:
+            raise TextToSpeechUnavailableError(
+                "语音合成服务暂时不可用，请稍后重试。"
+            ) from exc
+        except TimeoutError as exc:
+            raise TextToSpeechUnavailableError(
+                "语音合成服务响应超时，请稍后重试。"
+            ) from exc
+        except TextToSpeechProviderError as exc:
+            raise TextToSpeechFailedError("语音合成失败，请稍后重试。") from exc
+        except Exception as exc:
+            raise TextToSpeechFailedError("语音合成失败，请稍后重试。") from exc
 
     def _validate_result(self, result: TextToSpeechResult) -> None:
         if not result.audio_bytes or len(result.audio_bytes) > self._settings.tts_max_audio_bytes:

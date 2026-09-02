@@ -2,9 +2,13 @@ import { useEffect, useState } from "react";
 import { RouterProvider } from "react-router-dom";
 import { appRouter } from "@/app/router";
 import { useAppDispatch } from "@/store/hooks";
-import { checkAuthStatus } from "@/store/slices/userSlice";
+import { checkAuthStatus, expireSession } from "@/store/slices/userSlice";
 import { Loader2 } from "lucide-react";
-import { getAuthToken } from "@/lib/authToken";
+import {
+  AUTH_SESSION_EXPIRED_EVENT,
+  getAuthToken,
+} from "@/lib/authToken";
+import { ROUTES } from "@/lib/constants";
 
 function App() {
   const dispatch = useAppDispatch();
@@ -28,6 +32,17 @@ function App() {
       }
     };
     initAuth();
+  }, [dispatch]);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      dispatch(expireSession());
+      void appRouter.navigate(ROUTES.auth, { replace: true });
+    };
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    };
   }, [dispatch]);
 
   if (isInitializing) {

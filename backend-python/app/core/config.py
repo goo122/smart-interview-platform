@@ -156,7 +156,8 @@ class Settings(BaseSettings):
             )
         ):
             raise ValueError(
-                "xunfei text-to-speech provider requires TTS credentials or reusable ASR credentials"
+                "xunfei text-to-speech provider requires TTS credentials "
+                "or reusable ASR credentials"
             )
         if self.asr_max_frame_bytes > self.asr_max_audio_bytes:
             raise ValueError("asr_max_frame_bytes must not exceed asr_max_audio_bytes")

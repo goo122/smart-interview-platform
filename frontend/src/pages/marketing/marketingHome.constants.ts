@@ -12,7 +12,7 @@ export const MARKETING_TEXT = {
 export const MARKETING_ADVANTAGES = [
   {
     icon: "target",
-    title: "岗位定制题库",
+    title: "岗位定制问题",
     description: "按岗位方向与技能栈生成高相关问题，覆盖真实面试高频场景。",
   },
   {

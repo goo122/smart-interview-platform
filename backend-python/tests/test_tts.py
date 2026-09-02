@@ -244,6 +244,51 @@ async def test_concurrent_idempotent_requests_share_one_provider_call() -> None:
     assert provider.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_distinct_requests_do_not_block_each_other_behind_service_lock() -> None:
+    class ConcurrentTextToSpeechAdapter:
+        provider_name = "fake"
+        is_available = True
+        supported_audio_formats = ("wav",)
+        supported_voices = ("x4_mingge",)
+        max_text_length = 10000
+        supports_streaming = False
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.both_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def synthesize(self, _request: TextToSpeechRequest) -> TextToSpeechResult:
+            self.calls += 1
+            if self.calls == 2:
+                self.both_started.set()
+            await self.release.wait()
+            return TextToSpeechResult(
+                audio_bytes=b"audio",
+                audio_format="wav",
+                content_type="audio/wav",
+            )
+
+    provider = ConcurrentTextToSpeechAdapter()
+    service = TextToSpeechService(provider, _settings(tts_audio_format="wav"))
+    first = asyncio.create_task(service.synthesize(uuid4(), _request_payload()))
+    second = asyncio.create_task(service.synthesize(uuid4(), _request_payload()))
+    try:
+        await asyncio.wait_for(provider.both_started.wait(), timeout=1)
+        provider.release.set()
+        records = await asyncio.gather(first, second)
+    finally:
+        provider.release.set()
+        for task in (first, second):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
+
+    assert provider.calls == 2
+    assert records[0].task_id != records[1].task_id
+
+
 def test_capabilities_are_authenticated_and_secret_free(tts_client) -> None:
     client, _ = tts_client
     assert client.get("/api/xunzhi/v1/speech/tts/capabilities").status_code == 401
@@ -368,21 +413,32 @@ class FailingTextToSpeechAdapter(BlockingTextToSpeechAdapter):
 @pytest.mark.asyncio
 async def test_provider_cancellation_releases_operation() -> None:
     provider = BlockingTextToSpeechAdapter()
-    service = TextToSpeechService(provider, _settings(tts_request_timeout_seconds=10))
+    service = TextToSpeechService(
+        provider,
+        _settings(tts_audio_format="wav", tts_request_timeout_seconds=10),
+    )
     task = asyncio.create_task(
         service.synthesize(uuid4(), _request_payload())
     )
-    await provider.started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     assert provider.released is True
 
 
 @pytest.mark.asyncio
 async def test_provider_timeout_releases_operation() -> None:
     provider = BlockingTextToSpeechAdapter()
-    service = TextToSpeechService(provider, _settings(tts_request_timeout_seconds=0.01))
+    service = TextToSpeechService(
+        provider,
+        _settings(tts_audio_format="wav", tts_request_timeout_seconds=0.01),
+    )
     with pytest.raises(TextToSpeechUnavailableError):
         await service.synthesize(uuid4(), _request_payload())
     assert provider.released is True
@@ -390,7 +446,9 @@ async def test_provider_timeout_releases_operation() -> None:
 
 @pytest.mark.asyncio
 async def test_provider_failure_is_safe() -> None:
-    service = TextToSpeechService(FailingTextToSpeechAdapter(), _settings())
+    service = TextToSpeechService(
+        FailingTextToSpeechAdapter(), _settings(tts_audio_format="wav")
+    )
     with pytest.raises(TextToSpeechFailedError) as error:
         await service.synthesize(uuid4(), _request_payload())
     assert "secret provider response" not in str(error.value)

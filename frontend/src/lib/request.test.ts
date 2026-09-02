@@ -1,22 +1,39 @@
-import type { AxiosError } from "axios";
-import { describe, expect, it, vi } from "vitest";
-import { getAuthToken } from "@/lib/authToken";
+import axios, { type AxiosError } from "axios";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearAuthToken,
+  getAuthToken,
+  getRefreshToken,
+  notifyAuthSessionExpired,
+  setAuthToken,
+  setRefreshToken,
+} from "@/lib/authToken";
 import { AppError, ErrorCode } from "@/lib/errors";
 import {
   assertRequestAuthorized,
   buildRequestPolicyKey,
   buildApiUrl,
   mapAxiosErrorToAppError,
+  refreshAccessToken,
   requiresAuthTokenForRequest,
   resolveRequestPolicy,
   unwrapResponseData,
 } from "@/lib/request";
 
 vi.mock("@/lib/authToken", () => ({
+  clearAuthToken: vi.fn(),
   getAuthToken: vi.fn(),
+  getRefreshToken: vi.fn(),
+  notifyAuthSessionExpired: vi.fn(),
+  setAuthToken: vi.fn(),
+  setRefreshToken: vi.fn(),
 }));
 
 describe("request utilities", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("requires auth token for protected business endpoints", () => {
     expect(requiresAuthTokenForRequest("/xunzhi/v1/interview/sessions")).toBe(
       true,
@@ -170,5 +187,36 @@ describe("request utilities", () => {
       },
     });
     expect(keyA).toBe(keyB);
+  });
+
+  it("refreshes concurrent requests with a single token rotation", async () => {
+    vi.mocked(getRefreshToken).mockReturnValue("refresh-old");
+    const post = vi.spyOn(axios, "post").mockResolvedValue({
+      data: {
+        access_token: "access-new",
+        refresh_token: "refresh-new",
+      },
+    });
+
+    const tokens = await Promise.all([
+      refreshAccessToken(),
+      refreshAccessToken(),
+      refreshAccessToken(),
+    ]);
+
+    expect(tokens).toEqual(["access-new", "access-new", "access-new"]);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(setAuthToken).toHaveBeenCalledWith("access-new");
+    expect(setRefreshToken).toHaveBeenCalledWith("refresh-new");
+  });
+
+  it("clears authentication and announces an expired session when refresh fails", async () => {
+    vi.mocked(getRefreshToken).mockReturnValue("refresh-invalid");
+    vi.spyOn(axios, "post").mockRejectedValue(new Error("refresh failed"));
+
+    await expect(refreshAccessToken()).rejects.toThrow("refresh failed");
+
+    expect(clearAuthToken).toHaveBeenCalledTimes(1);
+    expect(notifyAuthSessionExpired).toHaveBeenCalledTimes(1);
   });
 });

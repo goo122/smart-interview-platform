@@ -1,6 +1,5 @@
 import { Suspense, lazy, type ReactNode } from "react";
 import {
-  Navigate,
   createBrowserRouter,
   type RouteObject,
 } from "react-router-dom";
@@ -76,14 +75,6 @@ export const appRoutes: RouteObject[] = [
           {
             path: `${ROUTES.chat}/:sessionId?`,
             element: withRouteSuspense(<ChatPage />),
-          },
-          {
-            path: ROUTES.questionBank,
-            element: <Navigate to={ROUTES.chat} replace />,
-          },
-          {
-            path: ROUTES.questionBankManage,
-            element: <Navigate to={ROUTES.chat} replace />,
           },
         ],
       },

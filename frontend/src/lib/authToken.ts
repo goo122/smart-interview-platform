@@ -1,5 +1,7 @@
-const AUTH_TOKEN_KEY = 'token';
-const REFRESH_TOKEN_KEY = 'refresh_token';
+const AUTH_TOKEN_KEY = "token";
+const REFRESH_TOKEN_KEY = "refresh_token";
+
+export const AUTH_SESSION_EXPIRED_EVENT = "xunzhi:auth-session-expired";
 
 export const getAuthToken = (): string | null => {
   try {
@@ -38,4 +40,10 @@ export const getRefreshToken = (): string | null => {
 export const clearAuthToken = () => {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
+};
+
+export const notifyAuthSessionExpired = () => {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_SESSION_EXPIRED_EVENT));
+  }
 };

@@ -84,6 +84,13 @@ export const userSlice = createSlice({
     clearError: (state) => {
       state.error = null;
     },
+    expireSession: (state) => {
+      state.isAuthenticated = false;
+      state.currentUser = null;
+      state.loading = false;
+      state.error = "Session expired. Please sign in again.";
+      state.authEpoch += 1;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -144,5 +151,5 @@ export const userSlice = createSlice({
   },
 });
 
-export const { clearError } = userSlice.actions;
+export const { clearError, expireSession } = userSlice.actions;
 export default userSlice.reducer;

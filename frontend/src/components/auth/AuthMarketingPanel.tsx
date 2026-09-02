@@ -3,7 +3,7 @@ import { APP_BRAND_NAME, APP_MARKETING_TAGLINE } from "@/lib/branding";
 
 const highlights = [
   "对话记录与资料安全保存",
-  "个性化面试与题库推荐",
+  "基于简历与岗位的个性化出题",
   "跨设备同步进度",
 ];
 
@@ -18,7 +18,7 @@ export default function AuthMarketingPanel() {
           登录后开启高效 AI 面试体验
         </h1>
         <p className="text-lg text-slate-500">
-          一站式管理面试准备、题库练习与智能对话，始终保持专注与高效。
+          一站式管理面试准备、岗位练习与智能对话，始终保持专注与高效。
         </p>
       </div>
       <div className="space-y-3">

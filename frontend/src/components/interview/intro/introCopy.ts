@@ -34,9 +34,9 @@ const INTRO_COPY_BY_LOCALE: Record<InterviewIntroLocale, InterviewIntroCopy> = {
     startButton: "进入面试室",
     reportButton: "查看示例报告",
     processTitle: "面试流程",
-    processUpdateTitle: "题库每日动态更新",
+    processUpdateTitle: "问题按岗位动态生成",
     processUpdateDescription:
-      "覆盖新技术栈与真实面试场景，持续保持命中率。",
+      "结合简历、目标岗位与面试难度生成本次练习问题。",
     sampleRadarTitle: "示例雷达图",
     highlights: [
       {
@@ -52,8 +52,8 @@ const INTRO_COPY_BY_LOCALE: Record<InterviewIntroLocale, InterviewIntroCopy> = {
         description: "技术深度、沟通、项目、临场综合画像",
       },
       {
-        title: "题库日更",
-        description: "每日更新题库，覆盖最新趋势与场景",
+        title: "岗位定制问题",
+        description: "结合简历和岗位方向生成本次练习问题",
       },
     ],
     steps: [
@@ -78,9 +78,9 @@ const INTRO_COPY_BY_LOCALE: Record<InterviewIntroLocale, InterviewIntroCopy> = {
     startButton: "Enter interview room",
     reportButton: "View sample report",
     processTitle: "Interview flow",
-    processUpdateTitle: "Daily question updates",
+    processUpdateTitle: "Questions generated for your role",
     processUpdateDescription:
-      "Stay aligned with current stacks and realistic interview scenarios.",
+      "Generate each practice set from your resume, target role, and difficulty.",
     sampleRadarTitle: "Sample radar chart",
     highlights: [
       {
@@ -96,8 +96,8 @@ const INTRO_COPY_BY_LOCALE: Record<InterviewIntroLocale, InterviewIntroCopy> = {
         description: "Technical depth, communication, projects, and live response",
       },
       {
-        title: "Fresh question bank",
-        description: "Updated daily with new trends and interview scenarios",
+        title: "Role-specific questions",
+        description: "Generate each practice set from your resume and target role",
       },
     ],
     steps: [

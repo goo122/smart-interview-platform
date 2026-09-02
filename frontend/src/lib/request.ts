@@ -2,6 +2,7 @@ import axios, {
   AxiosError,
   AxiosHeaders,
   type AxiosInstance,
+  type InternalAxiosRequestConfig,
   type AxiosRequestConfig,
   type AxiosResponse,
 } from "axios";
@@ -11,7 +12,14 @@ import {
   ErrorCode,
   type ErrorCode as ErrorCodeValue,
 } from "@/lib/errors";
-import { getAuthToken } from "@/lib/authToken";
+import {
+  clearAuthToken,
+  getAuthToken,
+  getRefreshToken,
+  notifyAuthSessionExpired,
+  setAuthToken,
+  setRefreshToken,
+} from "@/lib/authToken";
 
 export interface BaseResponse<T = unknown> {
   code: string;
@@ -505,6 +513,63 @@ export const createAxiosClient = (): AxiosInstance => {
   });
 };
 
+type RefreshTokenResponse = {
+  access_token?: string;
+  refresh_token?: string;
+};
+
+type RetryableRequestConfig = InternalAxiosRequestConfig & {
+  _authRetry?: boolean;
+};
+
+let refreshPromise: Promise<string> | null = null;
+
+const requestFreshAccessToken = async () => {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    throw new AppError(ErrorCode.UNAUTHORIZED, "Session expired. Please sign in again.");
+  }
+
+  const response = await axios.post<
+    BaseResponse<RefreshTokenResponse> | RefreshTokenResponse
+  >(
+    `${getApiBaseUrl()}/v1/auth/refresh`,
+    { refresh_token: refreshToken },
+    {
+      timeout: 10_000,
+      headers: { "Content-Type": "application/json;charset=utf-8" },
+    },
+  );
+  const payload = unwrapResponseData(response.data);
+  const accessToken = payload.access_token?.trim();
+  const rotatedRefreshToken = payload.refresh_token?.trim();
+  if (!accessToken || !rotatedRefreshToken) {
+    throw new AppError(
+      ErrorCode.UNAUTHORIZED,
+      "Token refresh returned an invalid response.",
+    );
+  }
+
+  setAuthToken(accessToken);
+  setRefreshToken(rotatedRefreshToken);
+  return accessToken;
+};
+
+export const refreshAccessToken = () => {
+  if (!refreshPromise) {
+    refreshPromise = requestFreshAccessToken()
+      .catch((error: unknown) => {
+        clearAuthToken();
+        notifyAuthSessionExpired();
+        throw AppError.from(error, ErrorCode.UNAUTHORIZED);
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+};
+
 const axiosInstance = createAxiosClient();
 
 axiosInstance.interceptors.request.use(
@@ -527,7 +592,29 @@ axiosInstance.interceptors.request.use(
 
 axiosInstance.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => Promise.reject(mapAxiosErrorToAppError(error)),
+  async (error: AxiosError) => {
+    const config = error.config as RetryableRequestConfig | undefined;
+    const shouldRefresh =
+      error.response?.status === 401 &&
+      config !== undefined &&
+      !config._authRetry &&
+      requiresAuthTokenForRequest(config.url);
+
+    if (!shouldRefresh || !config) {
+      return Promise.reject(mapAxiosErrorToAppError(error));
+    }
+
+    config._authRetry = true;
+    try {
+      const accessToken = await refreshAccessToken();
+      const headers = new AxiosHeaders(config.headers);
+      headers.set("Authorization", `Bearer ${accessToken}`);
+      config.headers = headers;
+      return await axiosInstance.request(config);
+    } catch (refreshError) {
+      return Promise.reject(AppError.from(refreshError, ErrorCode.UNAUTHORIZED));
+    }
+  },
 );
 
 const executeWithPolicy = <T, D>(args: {
