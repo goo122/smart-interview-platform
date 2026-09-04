@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
@@ -67,6 +67,16 @@ logger = logging.getLogger(__name__)
 WORKER_HEALTH_KEY = "knowledge-import-worker:health"
 
 
+def _queue_wait_ms(ctx: dict[str, Any]) -> float | None:
+    """Return ARQ queue latency when the worker context provides an enqueue time."""
+
+    enqueue_time = ctx.get("enqueue_time")
+    if not isinstance(enqueue_time, datetime):
+        return None
+    now = datetime.now(tz=enqueue_time.tzinfo) if enqueue_time.tzinfo else datetime.now()
+    return round(max(0.0, (now - enqueue_time).total_seconds() * 1000), 2)
+
+
 async def process_knowledge_document(
     ctx: dict[str, Any],
     *,
@@ -84,6 +94,16 @@ async def process_knowledge_document(
         user_id=UUID(user_id),
         knowledge_base_id=UUID(knowledge_base_id),
         request_id=request_id,
+    )
+    logger.info(
+        "Knowledge document dequeued",
+        extra={
+            "document_id": document_id,
+            "knowledge_base_id": knowledge_base_id,
+            "request_id": request_id,
+            "attempt": job_try,
+            "queue_wait_ms": _queue_wait_ms(ctx),
+        },
     )
     session_factory = cast(async_sessionmaker[AsyncSession], ctx["session_factory"])
     async with session_factory() as session:
@@ -176,6 +196,7 @@ async def process_interview_preparation(
             "request_id": request_id,
             "attempt": job_try,
             "provider": settings.ai_provider,
+            "queue_wait_ms": _queue_wait_ms(ctx),
         }
         logger.info("Interview preparation started", extra=common_log)
         try:
@@ -225,6 +246,12 @@ async def process_interview_preparation(
                 "context_retrieval_ms": workflow.timings.get("context_retrieval_ms"),
                 "resume_evaluation_ms": None,
                 "question_generation_ms": workflow.timings.get("question_generation_ms"),
+                "question_generation_attempts": workflow.timings.get(
+                    "question_generation_attempts"
+                ),
+                "question_validation_retry_count": workflow.timings.get(
+                    "question_validation_retry_count", 0
+                ),
                 "database_storage_ms": workflow.timings.get("database_storage_ms"),
                 "status": result.status.value,
             },

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -22,6 +23,19 @@ from app.workers.redis_queue import (
     enqueue_interview_resume_evaluation_job,
 )
 from app.workers.worker import worker_shutdown
+
+
+def test_queue_wait_ms_uses_arq_enqueue_time() -> None:
+    enqueue_time = datetime.now(UTC) - timedelta(seconds=2)
+
+    result = worker_module._queue_wait_ms({"enqueue_time": enqueue_time})
+
+    assert result is not None
+    assert 1_900 <= result <= 3_000
+
+
+def test_queue_wait_ms_is_optional_outside_arq() -> None:
+    assert worker_module._queue_wait_ms({}) is None
 
 
 class RecordingQueue:

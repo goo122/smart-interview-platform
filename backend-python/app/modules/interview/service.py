@@ -1,3 +1,5 @@
+import logging
+import time
 from collections.abc import Sequence
 from typing import cast
 from uuid import UUID
@@ -48,6 +50,7 @@ CONVERSATION_STATUS_TO_DOMAIN: dict[str, InterviewStatus] = {
     "CANCELLED": InterviewStatus.CANCELLED,
 }
 INTERVIEW_QUEUE_FAILURE_CODE = "INTERVIEW_QUEUE_UNAVAILABLE"
+logger = logging.getLogger(__name__)
 
 
 class InterviewService:
@@ -81,7 +84,9 @@ class InterviewService:
     ) -> StructuredResumeRoleInference:
         """Infer a role from the user's ready resume context only."""
 
+        started_at = time.perf_counter()
         await self._context_provider.validate_knowledge_base(user_id, knowledge_base_id)
+        context_started_at = time.perf_counter()
         context = await self._context_provider.build(
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
@@ -90,14 +95,30 @@ class InterviewService:
             difficulty="MEDIUM",
             question_count=5,
         )
+        context_retrieval_ms = round((time.perf_counter() - context_started_at) * 1000, 2)
         if self._role_inference is None:
             raise RuntimeError("No resume role inference is configured")
-        return await self._role_inference.infer(
+        inference_started_at = time.perf_counter()
+        result = await self._role_inference.infer(
             ResumeRoleInferenceRequest(
                 resume_context=context.prompt,
                 source_ids=tuple(citation.source_id for citation in context.citations),
             )
         )
+        logger.info(
+            "Resume role inference completed",
+            extra={
+                "user_id": str(user_id),
+                "knowledge_base_id": str(knowledge_base_id),
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "context_retrieval_ms": context_retrieval_ms,
+                "role_inference_ms": round(
+                    (time.perf_counter() - inference_started_at) * 1000, 2
+                ),
+                "source_count": len(context.citations),
+            },
+        )
+        return result
 
     async def create_session(
         self,

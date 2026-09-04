@@ -758,6 +758,8 @@ async def test_preparation_generates_questions_citations_and_events() -> None:
     ]
     assert provider.build_calls == 1
     assert generator.calls == 1
+    assert service._workflow.timings["question_generation_attempts"] == 1
+    assert service._workflow.timings["question_validation_retry_count"] == 0
     assert generator.requests[0].source_ids == ("[S1]",)
 
 
@@ -854,10 +856,13 @@ async def test_request_id_is_idempotent_and_failed_output_cleans_questions() -> 
             ),
         ]
     )
-    bad_service, bad_repo, _, _ = _service(context=_context(), output=bad_output)
+    bad_service, bad_repo, _, bad_generator = _service(context=_context(), output=bad_output)
     failed = await bad_service.create_session(**_create_args(uuid4(), uuid4()))
     assert failed.status == InterviewStatus.FAILED
     assert failed.failure_code == "interview_questions_invalid"
+    assert bad_generator.calls == 2
+    assert bad_service._workflow.timings["question_generation_attempts"] == 2
+    assert bad_service._workflow.timings["question_validation_retry_count"] == 1
     assert await bad_repo.list_questions(failed.id) == []
 
 

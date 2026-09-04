@@ -56,6 +56,8 @@ class InterviewGraphState(TypedDict, total=False):
     preparation_claimed: bool
     context_retrieval_ms: float
     question_generation_ms: float
+    question_generation_attempts: int
+    question_validation_retry_count: int
     database_storage_ms: float
 
 
@@ -275,7 +277,11 @@ class InterviewPreparationWorkflow:
     async def _generate_questions(self, state: InterviewGraphState) -> InterviewGraphState:
         started_at = time.perf_counter()
         last_error: InterviewQuestionValidationError | None = None
-        for _attempt in range(2):
+        for attempt in range(1, 3):
+            state["question_generation_attempts"] = attempt
+            self.timings["question_generation_attempts"] = attempt
+            state["question_validation_retry_count"] = attempt - 1
+            self.timings["question_validation_retry_count"] = attempt - 1
             try:
                 state["generated"] = await self._generator.generate(
                     state["generation_request"]
@@ -292,6 +298,15 @@ class InterviewPreparationWorkflow:
                 return state
             except InterviewQuestionValidationError as exc:
                 last_error = exc
+                logger.warning(
+                    "Generated interview questions failed validation",
+                    extra={
+                        "session_id": str(state["session_id"]),
+                        "attempt": attempt,
+                        "will_retry": attempt < 2,
+                        "failure_reason": str(exc),
+                    },
+                )
         if last_error is not None:
             raise last_error
         return state
