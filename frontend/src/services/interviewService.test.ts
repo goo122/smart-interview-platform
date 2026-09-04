@@ -256,6 +256,7 @@ describe("interviewService reports", () => {
     const getSpy = vi.spyOn(service, "get").mockResolvedValue({
       records: [
         {
+          reportId: "report-1",
           sessionId: "session-1",
           status: "READY",
           overallScore: 86,
@@ -281,6 +282,7 @@ describe("interviewService reports", () => {
         params: { current: 1, size: 20 },
       });
       expect(page.records[0]).toMatchObject({
+        id: "report-1",
         sessionId: "session-1",
         interviewScore: 86,
         interviewDirection: "Java 开发工程师",

@@ -167,8 +167,7 @@ const adaptInterviewReport = (
       : report.suggestedImprovements;
 
   return {
-    id: 0,
-    userId: 0,
+    id: report.reportId,
     sessionId: report.sessionId,
     interviewStatus: report.status,
     questionCount: report.items.filter((item) => item.turnType === "PRIMARY")

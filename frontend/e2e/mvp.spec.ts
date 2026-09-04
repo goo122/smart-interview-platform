@@ -303,13 +303,13 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   if (
     (await questionAudioButton.getAttribute("aria-label")) === "暂停题目播报"
   ) {
-    await questionAudioButton.click();
+    await questionAudioButton.press("Enter");
     await expect(questionAudioButton).toHaveAttribute(
       "aria-label",
       "播放题目播报",
     );
   }
-  await questionAudioButton.click();
+  await questionAudioButton.press("Enter");
   const audioElement = page.locator('audio[data-tts-playback="true"]');
   await expect(audioElement).toBeAttached();
   await expect
@@ -325,9 +325,9 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   if (
     (await questionAudioButton.getAttribute("aria-label")) === "暂停题目播报"
   ) {
-    await questionAudioButton.click();
+    await questionAudioButton.press("Enter");
   }
-  await questionAudioButton.click();
+  await questionAudioButton.press("Enter");
   await expect
     .poll(() => ttsRequests.length, { timeout: 10_000 })
     .toBe(requestsAfterFirstPlay);

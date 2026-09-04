@@ -1,6 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { aiService } from "@/services/aiService";
 import { useAppSelector } from "@/store/hooks";
+import { getScopedUserIdentity } from "@/lib/userIdentity";
 import type { UserRespDTO } from "@/types/auth";
 
 type ConversationUserIdentity =
@@ -13,12 +14,7 @@ type UseConversationsOptions = {
 };
 
 export const getConversationUserKey = (user: ConversationUserIdentity) => {
-  if (!user) return "anonymous";
-  if (typeof user.id === "number" && Number.isFinite(user.id) && user.id > 0) {
-    return `id:${user.id}`;
-  }
-  if (user.username) return `username:${user.username}`;
-  return "anonymous";
+  return getScopedUserIdentity(user);
 };
 
 export const getConversationsQueryKey = (userKey: string, authEpoch: number) =>

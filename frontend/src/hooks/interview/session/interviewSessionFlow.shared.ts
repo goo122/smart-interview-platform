@@ -3,7 +3,7 @@ import type { ChatMessage, ChatMessageStatus } from "@/lib/chat";
 import type { AnswerInterviewQuestionResult } from "@/services/interviewService";
 
 export type InterviewFlowUser = {
-  id?: number | null;
+  id?: string | null;
   username?: string | null;
 } | null;
 

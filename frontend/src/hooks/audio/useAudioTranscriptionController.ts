@@ -22,10 +22,7 @@ const START_RECORDING_ERROR =
 
 const resolveAudioUserId = (currentUser: UserRespDTO | null) => {
   const normalizedUsername = currentUser?.username?.trim();
-  const normalizedUserId =
-    typeof currentUser?.id === "number" && currentUser.id > 0
-      ? String(currentUser.id)
-      : null;
+  const normalizedUserId = currentUser?.id?.trim() || null;
 
   return normalizedUsername || normalizedUserId || null;
 };

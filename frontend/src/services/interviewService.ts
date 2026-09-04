@@ -93,8 +93,8 @@ export interface ExtractInterviewQuestionsResult {
 }
 
 export interface InterviewRecordResult {
-  id: number;
-  userId: number;
+  id: string;
+  userId?: string;
   sessionId: string;
   resumeScore?: number | null;
   resumeEvaluation?: {
@@ -1297,9 +1297,8 @@ export const interviewService = {
       },
     );
     return {
-      records: page.records.map((report, index) => ({
-        id: index,
-        userId: 0,
+      records: page.records.map((report) => ({
+        id: report.reportId,
         sessionId: report.sessionId,
         interviewStatus: report.status,
         interviewScore: report.overallScore,

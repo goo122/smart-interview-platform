@@ -31,7 +31,7 @@ const createStore = (isAuthenticated: boolean) =>
       user: {
         currentUser: isAuthenticated
           ? {
-              id: 1,
+              id: "11111111-1111-4111-8111-111111111111",
               username: "tester",
             }
           : null,

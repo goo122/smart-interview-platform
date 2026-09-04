@@ -48,14 +48,14 @@ type FastApiUserResponse = {
   updated_at?: string;
 };
 
-const normalizeUser = (raw: unknown): UserRespDTO | null => {
+export const normalizeUser = (raw: unknown): UserRespDTO | null => {
   if (!isRecord(raw)) return null;
 
   const username = toString(raw.username) || "";
   if (!username) return null;
 
   return {
-    id: toNumber(raw.id),
+    id: toString(raw.id),
     username,
     realName: toString(raw.realName ?? raw.real_name),
     phone: toString(raw.phone),

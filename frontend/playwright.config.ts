@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:18080";
 const startServer = process.env.PLAYWRIGHT_START_SERVER === "1";
+const captureTrace = process.env.PLAYWRIGHT_CAPTURE_TRACE === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -15,7 +16,9 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     baseURL,
-    trace: "retain-on-failure",
+    // Traces include network metadata and may capture authorization headers.
+    // Keep them opt-in; CI uploads only synthetic screenshots/video/text.
+    trace: captureTrace ? "retain-on-failure" : "off",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },

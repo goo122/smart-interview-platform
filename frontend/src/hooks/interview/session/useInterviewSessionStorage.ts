@@ -1,22 +1,16 @@
 import { useState, type SetStateAction } from "react";
+import { getScopedUserIdentity } from "@/lib/userIdentity";
 
 const INTERVIEW_SESSION_STORAGE_KEY = "interview.activeSessionId";
 
 type InterviewStorageUser = {
-  id?: number | null;
+  id?: string | null;
   username?: string | null;
 } | null;
 
 const getInterviewStorageIdentity = (user: InterviewStorageUser) => {
-  if (!user) return null;
-  if (typeof user.id === "number" && Number.isFinite(user.id) && user.id > 0) {
-    return `id:${user.id}`;
-  }
-  const username = user.username?.trim();
-  if (username) {
-    return `username:${username}`;
-  }
-  return null;
+  const identity = getScopedUserIdentity(user);
+  return identity === "anonymous" ? null : identity;
 };
 
 const getInterviewSessionStorageKey = (identity: string) =>

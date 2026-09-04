@@ -2,7 +2,7 @@ name: interviewplatform-e2e
 
 services:
   migrate:
-    env_file:
+    env_file: !override
       - ./backend-python/.env.example
     environment:
       APP_ENV: test
@@ -14,7 +14,7 @@ services:
       APP_EMBEDDING_BATCH_SIZE: "10"
 
   api:
-    env_file:
+    env_file: !override
       - ./backend-python/.env.example
     environment:
       APP_ENV: test
@@ -33,7 +33,7 @@ services:
       - "18000:8000"
 
   worker:
-    env_file:
+    env_file: !override
       - ./backend-python/.env.example
     environment:
       APP_ENV: test

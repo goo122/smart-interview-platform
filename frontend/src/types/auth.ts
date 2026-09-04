@@ -14,7 +14,7 @@ export interface UserRegisterReqDTO {
 
 // Backend table mapping: t_user
 export interface UserEntity {
-  id?: number;
+  id?: string;
   username: string;
   password?: string | null;
   realName?: string | null;

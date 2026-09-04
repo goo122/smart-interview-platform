@@ -1,6 +1,7 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import { clearAuthToken } from "@/lib/authToken";
 import { AppError, ErrorCode } from "@/lib/errors";
+import { getScopedUserIdentity } from "@/lib/userIdentity";
 import { authService } from "@/services/authService";
 import type { UserLoginReqDTO, UserRespDTO } from "@/types/auth";
 
@@ -18,13 +19,6 @@ const initialState: UserState = {
   loading: false,
   error: null,
   authEpoch: 0,
-};
-
-const getUserIdentityKey = (user: UserRespDTO | null) => {
-  if (!user) {
-    return "anonymous";
-  }
-  return `${user.id ?? "none"}:${user.username}`;
 };
 
 type AuthStatusRejectValue = {
@@ -110,8 +104,8 @@ export const userSlice = createSlice({
         state.error = action.payload ?? "Login failed";
       })
       .addCase(checkAuthStatus.fulfilled, (state, action) => {
-        const prevIdentity = getUserIdentityKey(state.currentUser);
-        const nextIdentity = getUserIdentityKey(action.payload);
+        const prevIdentity = getScopedUserIdentity(state.currentUser);
+        const nextIdentity = getScopedUserIdentity(action.payload);
 
         state.isAuthenticated = true;
         state.currentUser = action.payload;

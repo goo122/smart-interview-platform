@@ -13,8 +13,8 @@ afterEach(() => {
 describe("buildInterviewReportViewModel", () => {
   it("computes estimated composite score from record fields", () => {
     const viewModel = buildInterviewReportViewModel({
-      id: 1,
-      userId: 1,
+      id: "report-1",
+      userId: "user-1",
       sessionId: "session-1",
       resumeScore: 80,
       interviewScore: 90,
@@ -49,8 +49,8 @@ describe("buildInterviewReportViewModel", () => {
 
   it("falls back to record and snapshot data, and dedupes qa reviews", () => {
     const viewModel = buildInterviewReportViewModel({
-      id: 2,
-      userId: 1,
+      id: "report-2",
+      userId: "user-1",
       sessionId: "session-2",
       totalScore: 93,
       interviewSuggestionsMap: {
@@ -115,8 +115,8 @@ describe("buildInterviewReportViewModel", () => {
 
   it("reads structured review feedback from the report payload", () => {
     const viewModel = buildInterviewReportViewModel({
-      id: 3,
-      userId: 1,
+      id: "report-3",
+      userId: "user-1",
       sessionId: "session-3",
       reviewFeedback: {
         overallComment: "overall",
@@ -136,8 +136,8 @@ describe("buildInterviewReportViewModel", () => {
 
   it("parses follow-up metadata from playback items", () => {
     const viewModel = buildInterviewReportViewModel({
-      id: 4,
-      userId: 1,
+      id: "report-4",
+      userId: "user-1",
       sessionId: "session-4",
       playbackItems: [
         {
@@ -183,8 +183,8 @@ describe("buildInterviewReportViewModel", () => {
 
   it("prefers record.radarChart over top-level and snapshot radar data", () => {
     const viewModel = buildInterviewReportViewModel({
-      id: 5,
-      userId: 1,
+      id: "report-5",
+      userId: "user-1",
       sessionId: "session-5",
       radarChart: {
         radarMetrics: [
@@ -212,8 +212,8 @@ describe("buildInterviewReportViewModel", () => {
 
   it("falls back to top-level record radar when radarChart is missing", () => {
     const viewModel = buildInterviewReportViewModel({
-      id: 6,
-      userId: 1,
+      id: "report-6",
+      userId: "user-1",
       sessionId: "session-6",
       radarPoints: [
         { label: "Top-level A", value: 71 },
@@ -229,8 +229,8 @@ describe("buildInterviewReportViewModel", () => {
 
   it("falls back to snapshot radar when record radar is missing", () => {
     const viewModel = buildInterviewReportViewModel({
-      id: 7,
-      userId: 1,
+      id: "report-7",
+      userId: "user-1",
       sessionId: "session-7",
       sessionSnapshotJson: JSON.stringify({
         radarScores: {
