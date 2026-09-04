@@ -176,14 +176,46 @@ class InMemoryInterviewRepository:
         existing_sequences = {
             question.sequence for question in self.questions.get(session_id, [])
         }
-        self.questions.setdefault(session_id, []).extend(
+        appended = [
             question
             for question in questions
             if question.sequence not in existing_sequences
-        )
+        ]
+        self.questions.setdefault(session_id, []).extend(appended)
         session.prepared_at = utc_now()
         session.version += 1
         session.updated_at = session.prepared_at
+        active_turns = [
+            turn
+            for turn in self.turns[session_id]
+            if turn.status in {TurnStatus.WAITING_ANSWER, TurnStatus.EVALUATING}
+        ]
+        next_question = next(
+            (
+                question
+                for question in appended
+                if question.sequence == session.current_question_index + 2
+            ),
+            None,
+        )
+        if session.status == InterviewStatus.IN_PROGRESS and not active_turns and next_question:
+            session.current_question_index += 1
+            self.turns[session_id].append(
+                InterviewTurn(
+                    id=uuid4(),
+                    session_id=session_id,
+                    question_id=next_question.id,
+                    parent_turn_id=None,
+                    sequence=len(self.turns[session_id]) + 1,
+                    turn_type=TurnType.PRIMARY,
+                    question_content=next_question.content,
+                    status=TurnStatus.WAITING_ANSWER,
+                    follow_up_depth=0,
+                    created_at=utc_now(),
+                    answered_at=None,
+                    evaluated_at=None,
+                )
+            )
         return session
 
     async def update_job_context(
@@ -303,7 +335,11 @@ class InMemoryInterviewRepository:
 
         skipped_sequences: list[int] = []
         for turn in self.turns[session_id]:
-            if turn.status not in {TurnStatus.WAITING_ANSWER, TurnStatus.EVALUATING}:
+            if turn.status not in {
+                TurnStatus.DEFERRED,
+                TurnStatus.WAITING_ANSWER,
+                TurnStatus.EVALUATING,
+            }:
                 continue
             turn.status = TurnStatus.SKIPPED
             skipped_sequences.append(turn.sequence)
@@ -466,6 +502,46 @@ class InMemoryInterviewRepository:
         turn.status = TurnStatus.EVALUATING
         turn.answered_at = answer.created_at
         self.answers[turn_id] = answer
+        session = self.sessions[session_id]
+        deferred_turn = next(
+            (
+                item
+                for item in sorted(
+                    self.turns[session_id], key=lambda candidate: candidate.sequence
+                )
+                if item.status == TurnStatus.DEFERRED
+            ),
+            None,
+        )
+        if deferred_turn is not None:
+            deferred_turn.status = TurnStatus.WAITING_ANSWER
+        else:
+            next_question = next(
+                (
+                    question
+                    for question in self.questions[session_id]
+                    if question.sequence == session.current_question_index + 2
+                ),
+                None,
+            )
+            if next_question is not None:
+                session.current_question_index += 1
+                self.turns[session_id].append(
+                    InterviewTurn(
+                        id=uuid4(),
+                        session_id=session_id,
+                        question_id=next_question.id,
+                        parent_turn_id=None,
+                        sequence=len(self.turns[session_id]) + 1,
+                        turn_type=TurnType.PRIMARY,
+                        question_content=next_question.content,
+                        status=TurnStatus.WAITING_ANSWER,
+                        follow_up_depth=0,
+                        created_at=utc_now(),
+                        answered_at=None,
+                        evaluated_at=None,
+                    )
+                )
         return InterviewProgress(self.sessions[session_id], turn, answer, None)
 
     async def count_follow_ups(self, session_id: UUID) -> int:
@@ -498,6 +574,10 @@ class InMemoryInterviewRepository:
         self.evaluations[turn_id] = evaluation
         turn.status = TurnStatus.COMPLETED
         turn.evaluated_at = utc_now()
+        later_turns = [
+            item for item in self.turns[session_id] if item.sequence > turn.sequence
+        ]
+        created_next_turn = False
         if should_follow_up:
             self.turns[session_id].append(
                 InterviewTurn(
@@ -508,14 +588,22 @@ class InMemoryInterviewRepository:
                     sequence=len(self.turns[session_id]) + 1,
                     turn_type=TurnType.FOLLOW_UP,
                     question_content=evaluation.follow_up_question or "请进一步说明。",
-                    status=TurnStatus.WAITING_ANSWER,
+                    status=(
+                        TurnStatus.DEFERRED
+                        if any(
+                            item.status == TurnStatus.WAITING_ANSWER
+                            for item in later_turns
+                        )
+                        else TurnStatus.WAITING_ANSWER
+                    ),
                     follow_up_depth=turn.follow_up_depth + 1,
                     created_at=utc_now(),
                     answered_at=None,
                     evaluated_at=None,
                 )
             )
-        else:
+            created_next_turn = True
+        elif not any(item.status == TurnStatus.WAITING_ANSWER for item in later_turns):
             next_question = next(
                 (
                     question
@@ -524,10 +612,7 @@ class InMemoryInterviewRepository:
                 ),
                 None,
             )
-            if next_question is None:
-                session.status = InterviewStatus.COMPLETED
-                session.finished_at = utc_now()
-            else:
+            if next_question is not None:
                 session.current_question_index += 1
                 self.turns[session_id].append(
                     InterviewTurn(
@@ -545,6 +630,25 @@ class InMemoryInterviewRepository:
                         evaluated_at=None,
                     )
                 )
+                created_next_turn = True
+        if not created_next_turn:
+            pending_turns = [
+                item
+                for item in self.turns[session_id]
+                if item.id != turn_id
+                and item.status
+                in {
+                    TurnStatus.DEFERRED,
+                    TurnStatus.WAITING_ANSWER,
+                    TurnStatus.EVALUATING,
+                }
+            ]
+            if (
+                not pending_turns
+                and session.current_question_index + 1 >= session.question_count
+            ):
+                session.status = InterviewStatus.COMPLETED
+                session.finished_at = utc_now()
         return session
 
     async def fail_evaluation(
@@ -559,9 +663,10 @@ class InMemoryInterviewRepository:
         session = self.sessions[session_id]
         turn = next(turn for turn in self.turns[session_id] if turn.id == turn_id)
         turn.status = TurnStatus.FAILED
-        session.status = InterviewStatus.FAILED
-        session.failure_code = failure_code
-        session.failure_message = failure_message
+        if not any(item.sequence > turn.sequence for item in self.turns[session_id]):
+            session.status = InterviewStatus.FAILED
+            session.failure_code = failure_code
+            session.failure_message = failure_message
         return session
 
     @staticmethod
@@ -795,6 +900,8 @@ async def test_state_machine_transitions_and_invalid_states() -> None:
     machine.transition(InterviewStatus.CREATED, InterviewStatus.PREPARING)
     machine.transition(InterviewStatus.PREPARING, InterviewStatus.READY)
     machine.transition(InterviewStatus.READY, InterviewStatus.IN_PROGRESS)
+    machine.transition_turn(TurnStatus.DEFERRED, TurnStatus.WAITING_ANSWER)
+    machine.transition_turn(TurnStatus.DEFERRED, TurnStatus.SKIPPED)
     with pytest.raises(InvalidInterviewTransitionError):
         machine.transition(InterviewStatus.FAILED, InterviewStatus.IN_PROGRESS)
 

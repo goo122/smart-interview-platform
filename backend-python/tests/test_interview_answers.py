@@ -21,6 +21,7 @@ from app.modules.interview.domain import (
     InterviewStatus,
     InterviewType,
     TurnStatus,
+    TurnType,
     utc_now,
 )
 from app.modules.interview.exceptions import (
@@ -155,6 +156,7 @@ async def test_submit_answer_is_idempotent_and_only_one_answer_is_saved() -> Non
     assert first.answer and repeated.answer
     assert first.answer.id == repeated.answer.id
     assert len(repository.answers) == 1
+    assert len(repository.turns[session_id]) == 2
     assert len(queue.tasks) == 1
 
 
@@ -179,6 +181,10 @@ async def test_arq_answer_submission_returns_without_calling_evaluator() -> None
     assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
     assert isinstance(service._workflow._evaluator, FakeInterviewAnswerEvaluator)
     assert service._workflow._evaluator.calls == 0  # type: ignore[union-attr]
+    next_turn = await service.current_turn(user_id, session_id)
+    assert next_turn.turn.id != turn.turn.id
+    assert next_turn.turn.status == TurnStatus.WAITING_ANSWER
+    assert next_turn.turn.question_id == repository.questions[session_id][1].id
 
 
 @pytest.mark.asyncio
@@ -355,8 +361,10 @@ async def test_invalid_evaluation_output_after_retry_fails_safely() -> None:
     )
     await queue.tasks.pop(0)()
     assert evaluator.calls == 2
-    assert repository.sessions[session_id].status == InterviewStatus.FAILED
+    assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
     assert repository.evaluations == {}
+    assert repository.turns[session_id][0].status == TurnStatus.FAILED
+    assert (await service.current_turn(user_id, session_id)).turn.id != turn.turn.id
 
 
 @pytest.mark.asyncio
@@ -386,6 +394,7 @@ async def test_duplicate_follow_up_question_fails_without_leaking_details() -> N
         expected_points=["方案"],
     )
     service, repository, user_id, session_id, queue = await _started_service(evaluator=evaluator)
+    repository.questions[session_id] = repository.questions[session_id][:1]
     service._workflow._follow_up_generator = FakeFollowUpQuestionGenerator(output=duplicate)
     turn = await service.current_turn(user_id, session_id)
     await service.submit_answer(
@@ -397,7 +406,7 @@ async def test_duplicate_follow_up_question_fails_without_leaking_details() -> N
     )
     await queue.tasks.pop(0)()
     assert repository.sessions[session_id].status == InterviewStatus.FAILED
-    assert repository.sessions[session_id].failure_code == "interview_evaluation_invalid"
+    assert repository.turns[session_id][0].status == TurnStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -423,11 +432,11 @@ async def test_cancelled_evaluation_marks_turn_failed_and_cancels_fake_model() -
     with pytest.raises(asyncio.CancelledError):
         await task
     assert evaluator.cancelled is True
-    assert repository.sessions[session_id].status == InterviewStatus.FAILED
+    assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
 
 
 @pytest.mark.asyncio
-async def test_scoring_creates_follow_up_then_advances_and_completes() -> None:
+async def test_scoring_defers_follow_up_until_preadvanced_turn_is_answered() -> None:
     evaluator = FakeInterviewAnswerEvaluator(output=_evaluation(score=50, follow_up=True))
     service, repository, user_id, session_id, queue = await _started_service(evaluator=evaluator)
     first = await service.current_turn(user_id, session_id)
@@ -438,32 +447,44 @@ async def test_scoring_creates_follow_up_then_advances_and_completes() -> None:
         answer="我负责架构设计并通过监控验证了效果。",
         request_id="answer-1",
     )
+    next_turn = await service.current_turn(user_id, session_id)
+    assert next_turn.turn.question_id == repository.questions[session_id][1].id
+
     await queue.tasks.pop(0)()
-    follow_up = await service.current_turn(user_id, session_id)
-    assert follow_up.turn.turn_type.value == "FOLLOW_UP"
-    assert follow_up.evaluation is None
+    current = await service.current_turn(user_id, session_id)
+    assert current.turn.id == next_turn.turn.id
+    follow_up = next(
+        turn
+        for turn in repository.turns[session_id]
+        if turn.turn_type == TurnType.FOLLOW_UP
+    )
+    assert follow_up.status == TurnStatus.DEFERRED
+    assert follow_up.parent_turn_id == first.turn.id
     assert evaluator.calls == 1
+    generator = service._workflow._follow_up_generator
+    assert isinstance(generator, FakeFollowUpQuestionGenerator)
+    assert generator.calls == 1
 
     evaluator.output = _evaluation(score=90, follow_up=False)
     await service.submit_answer(
         user_id=user_id,
         session_id=session_id,
-        turn_id=follow_up.turn.id,
+        turn_id=next_turn.turn.id,
         answer="我补充了取舍、边界和上线后的量化结果。",
         request_id="answer-2",
     )
-    await queue.tasks.pop(0)()
-    next_turn = await service.current_turn(user_id, session_id)
-    assert next_turn.turn.sequence == 3
-    assert next_turn.turn.question_id == repository.questions[session_id][1].id
+    current = await service.current_turn(user_id, session_id)
+    assert current.turn.id == follow_up.id
+    assert current.turn.status == TurnStatus.WAITING_ANSWER
 
     await service.submit_answer(
         user_id=user_id,
         session_id=session_id,
-        turn_id=next_turn.turn.id,
-        answer="我实现了第二个方案并完成了性能复盘。",
-        request_id="answer-3",
+        turn_id=follow_up.id,
+        answer="我进一步解释了指标口径和故障恢复策略。",
+        request_id="answer-follow-up",
     )
+    await queue.tasks.pop(0)()
     await queue.tasks.pop(0)()
     assert (await service.get_turn(user_id, next_turn.turn.id)).evaluation is not None
     assert repository.sessions[session_id].status == InterviewStatus.COMPLETED
@@ -471,7 +492,79 @@ async def test_scoring_creates_follow_up_then_advances_and_completes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_evaluation_failure_marks_turn_and_session_failed() -> None:
+async def test_out_of_order_background_evaluations_complete_after_all_are_done() -> None:
+    evaluator = FakeInterviewAnswerEvaluator(output=_evaluation(score=90, follow_up=False))
+    service, repository, user_id, session_id, queue = await _started_service(evaluator=evaluator)
+    first = await service.current_turn(user_id, session_id)
+    await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=first.turn.id,
+        answer="第一题回答已提交，评分可以在后台执行。",
+        request_id="out-of-order-1",
+    )
+    second = await service.current_turn(user_id, session_id)
+    await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=second.turn.id,
+        answer="第二题回答也已经提交并等待后台评分。",
+        request_id="out-of-order-2",
+    )
+
+    await queue.tasks.pop(1)()
+    assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
+    await queue.tasks.pop(0)()
+
+    assert repository.sessions[session_id].status == InterviewStatus.COMPLETED
+    assert all(turn.status == TurnStatus.COMPLETED for turn in repository.turns[session_id])
+
+
+@pytest.mark.asyncio
+async def test_late_prefetched_question_restores_missing_current_turn() -> None:
+    evaluator = FakeInterviewAnswerEvaluator(output=_evaluation(score=90, follow_up=False))
+    service, repository, user_id, session_id, queue = await _started_service(evaluator=evaluator)
+    repository.sessions[session_id].question_count = 3
+    first = await service.current_turn(user_id, session_id)
+    await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=first.turn.id,
+        answer="第一题完成，继续下一道缓冲题。",
+        request_id="late-prefetch-1",
+    )
+    await queue.tasks.pop(0)()
+    second = await service.current_turn(user_id, session_id)
+    await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=second.turn.id,
+        answer="第二题完成，但第三题仍在后台生成。",
+        request_id="late-prefetch-2",
+    )
+    await queue.tasks.pop(0)()
+    assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
+
+    third_question = InterviewQuestion(
+        id=uuid4(),
+        session_id=session_id,
+        sequence=3,
+        content="后台刚刚完成的第三题",
+        category="TECHNICAL",
+        difficulty=InterviewDifficulty.MEDIUM,
+        expected_points=["方案", "结果"],
+        source_summary=None,
+        created_at=utc_now(),
+    )
+    await repository.append_questions(session_id, user_id, [third_question])
+
+    third = await service.current_turn(user_id, session_id)
+    assert third.turn.question_id == third_question.id
+    assert third.turn.status == TurnStatus.WAITING_ANSWER
+
+
+@pytest.mark.asyncio
+async def test_evaluation_failure_does_not_block_preadvanced_turn() -> None:
     evaluator = FakeInterviewAnswerEvaluator(error=RuntimeError("provider unavailable"))
     service, repository, user_id, session_id, queue = await _started_service(evaluator=evaluator)
     turn = await service.current_turn(user_id, session_id)
@@ -483,9 +576,30 @@ async def test_evaluation_failure_marks_turn_and_session_failed() -> None:
         request_id="answer-fail",
     )
     await queue.tasks.pop(0)()
-    assert repository.sessions[session_id].status == InterviewStatus.FAILED
+    assert repository.sessions[session_id].status == InterviewStatus.IN_PROGRESS
     assert repository.turns[session_id][0].status == TurnStatus.FAILED
     assert repository.evaluations == {}
+    assert (await service.current_turn(user_id, session_id)).turn.id != turn.turn.id
+
+
+@pytest.mark.asyncio
+async def test_final_turn_evaluation_failure_still_fails_session() -> None:
+    evaluator = FakeInterviewAnswerEvaluator(error=RuntimeError("provider unavailable"))
+    service, repository, user_id, session_id, queue = await _started_service(evaluator=evaluator)
+    repository.questions[session_id] = repository.questions[session_id][:1]
+    turn = await service.current_turn(user_id, session_id)
+
+    await service.submit_answer(
+        user_id=user_id,
+        session_id=session_id,
+        turn_id=turn.turn.id,
+        answer="我负责完整的技术实现和验证过程。",
+        request_id="final-answer-fail",
+    )
+    await queue.tasks.pop(0)()
+
+    assert repository.sessions[session_id].status == InterviewStatus.FAILED
+    assert repository.turns[session_id][0].status == TurnStatus.FAILED
 
 
 def test_answer_api_requires_auth_and_returns_contract() -> None:
@@ -524,5 +638,7 @@ def test_answer_api_requires_auth_and_returns_contract() -> None:
             )
             assert response.status_code == 202
             assert response.json()["status"] == "EVALUATING"
+            assert response.json()["nextTurn"]["status"] == "WAITING_ANSWER"
+            assert response.json()["nextTurn"]["sequence"] == 2
     finally:
         app.dependency_overrides.clear()

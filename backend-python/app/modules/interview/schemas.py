@@ -358,15 +358,6 @@ class SubmitInterviewAnswerRequest(BaseModel):
     request_id: str = Field(alias="requestId", min_length=1, max_length=128)
 
 
-class SubmitInterviewAnswerResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    session_id: UUID = Field(alias="sessionId")
-    turn_id: UUID = Field(alias="turnId")
-    status: str
-    request_id: str = Field(alias="requestId")
-
-
 class InterviewEvaluationResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -451,3 +442,13 @@ class InterviewTurnResponse(BaseModel):
             createdAt=progress.turn.created_at,
             evaluatedAt=progress.turn.evaluated_at,
         )
+
+
+class SubmitInterviewAnswerResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: UUID = Field(alias="sessionId")
+    turn_id: UUID = Field(alias="turnId")
+    status: str
+    request_id: str = Field(alias="requestId")
+    next_turn: InterviewTurnResponse | None = Field(default=None, alias="nextTurn")

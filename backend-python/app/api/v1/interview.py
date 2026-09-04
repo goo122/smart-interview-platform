@@ -331,11 +331,15 @@ async def submit_answer(
         answer=payload.answer,
         request_id=payload.request_id,
     )
+    next_turn = await service.next_turn_after_submission(
+        current_user.id, session_id, progress.turn.id
+    )
     return SubmitInterviewAnswerResponse(
         sessionId=progress.session.id,
         turnId=progress.turn.id,
         status=progress.turn.status.value,
         requestId=payload.request_id.strip(),
+        nextTurn=InterviewTurnResponse.from_progress(next_turn) if next_turn else None,
     )
 
 

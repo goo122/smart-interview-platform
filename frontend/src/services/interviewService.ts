@@ -274,6 +274,14 @@ export interface AnswerInterviewQuestionResult {
   failed?: boolean;
 }
 
+interface SubmitInterviewAnswerResponsePayload {
+  sessionId: string;
+  turnId: string;
+  status: string;
+  requestId: string;
+  nextTurn?: InterviewTurnResponse | null;
+}
+
 type AnswerInterviewQuestionJsonPayload = {
   questionNumber: string;
   answerContent?: string;
@@ -1152,8 +1160,8 @@ export const interviewService = {
         debounceMs: 250,
         key: `interview-answer:${params.sessionId}:${params.turnId}`,
       };
-      await service.post<
-        { sessionId: string; turnId: string; status: string; requestId: string },
+      const submission = await service.post<
+        SubmitInterviewAnswerResponsePayload,
         { turnId: string; answer: string; requestId: string }
       >(
         `/xunzhi/v1/interview/sessions/${encodeURIComponent(params.sessionId)}/answers`,
@@ -1163,6 +1171,10 @@ export const interviewService = {
           requestPolicy: answerRequestPolicy,
         },
       );
+
+      if (submission.nextTurn) {
+        return normalizeInterviewTurn(submission.nextTurn);
+      }
 
       const evaluatedTurn = await pollUntil(
         () => interviewService.getInterviewTurn(params.sessionId, params.turnId!),
@@ -1198,8 +1210,41 @@ export const interviewService = {
         if (!shouldFallbackToLegacyPath(error)) {
           throw error;
         }
+        const recovered = await pollUntil(
+          async () => {
+            const currentSession = await interviewService.getInterviewSession(
+              params.sessionId,
+            );
+            if (["COMPLETED", "FAILED", "CANCELLED"].includes(currentSession.status)) {
+              return { session: currentSession, turn: null };
+            }
+            try {
+              return {
+                session: currentSession,
+                turn: await interviewService.getCurrentInterviewTurn(params.sessionId),
+              };
+            } catch (nextError) {
+              if (!shouldFallbackToLegacyPath(nextError)) {
+                throw nextError;
+              }
+              return { session: currentSession, turn: null };
+            }
+          },
+          (state) =>
+            state.turn !== null ||
+            ["COMPLETED", "FAILED", "CANCELLED"].includes(state.session.status),
+          INTERVIEW_READY_TIMEOUT_MS,
+        );
+        if (recovered.turn) {
+          return {
+            ...normalizeInterviewTurn(recovered.turn),
+            feedback: evaluatedTurn.evaluation?.feedback,
+            score: evaluatedTurn.evaluation?.overallScore,
+            totalScore: evaluatedTurn.evaluation?.overallScore,
+          };
+        }
         return normalizeInterviewTurn(evaluatedTurn, {
-          finished: false,
+          finished: recovered.session.status === "COMPLETED",
           totalScore: evaluatedTurn.evaluation?.overallScore,
         });
       }

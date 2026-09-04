@@ -40,6 +40,7 @@ from app.modules.interview.domain import (
     InterviewStatus,
     InterviewType,
     TurnStatus,
+    TurnType,
 )
 from app.modules.interview.models import (
     InterviewAnswerModel,
@@ -686,7 +687,7 @@ async def test_arq_worker_prepares_interview_and_persists_ready_state(
 
 
 @pytest.mark.asyncio
-async def test_arq_worker_evaluates_answer_and_persists_follow_up_idempotently(
+async def test_arq_worker_evaluates_answer_without_interrupting_preadvanced_turn(
     database_session: AsyncSession,
 ) -> None:
     session = database_session
@@ -833,9 +834,12 @@ async def test_arq_worker_evaluates_answer_and_persists_follow_up_idempotently(
         assert current_turn.status == TurnStatus.COMPLETED
         assert current_turn.evaluation_attempt_count == 1
         turns = await repository.list_turns(interview.id, user_id)
-        assert len(turns) == 2
+        assert len(turns) == 3
         assert turns[1].status == TurnStatus.WAITING_ANSWER
-        assert turns[1].parent_turn_id == turn.id
+        assert turns[1].parent_turn_id is None
+        assert turns[2].turn_type == TurnType.FOLLOW_UP
+        assert turns[2].status == TurnStatus.DEFERRED
+        assert turns[2].parent_turn_id == turn.id
 
         duplicate = await arq_redis.enqueue_job(
             INTERVIEW_ANSWER_EVALUATION_FUNCTION,
@@ -857,7 +861,8 @@ async def test_arq_worker_evaluates_answer_and_persists_follow_up_idempotently(
         events = await repository.list_events(interview.id)
         assert evaluations == 1
         assert sum(event.event_type == "ANSWER_EVALUATED" for event in events) == 1
-        assert sum(event.event_type == "FOLLOW_UP_CREATED" for event in events) == 1
+        assert sum(event.event_type == "FOLLOW_UP_CREATED" for event in events) == 0
+        assert sum(event.event_type == "FOLLOW_UP_DEFERRED" for event in events) == 1
     finally:
         await arq_redis.aclose()
         await session.rollback()
@@ -1071,7 +1076,7 @@ async def test_real_interview_preparation_retrieves_resume_generates_and_persist
 
 
 @pytest.mark.asyncio
-async def test_real_langgraph_answer_evaluation_follow_up_and_completion(
+async def test_real_langgraph_answer_evaluation_and_preadvanced_completion(
     database_session: AsyncSession,
 ) -> None:
     session = database_session
@@ -1185,9 +1190,9 @@ async def test_real_langgraph_answer_evaluation_follow_up_and_completion(
             answer="我负责异步架构设计并验证了性能指标。",
             request_id="answer-flow-1",
         )
-        follow_up = await answer_service.current_turn(user_id, created.id)
-        assert follow_up.turn.status == TurnStatus.WAITING_ANSWER
-        assert follow_up.turn.parent_turn_id == first_turn.turn.id
+        next_turn = await answer_service.current_turn(user_id, created.id)
+        assert next_turn.turn.status == TurnStatus.WAITING_ANSWER
+        assert next_turn.turn.parent_turn_id is None
         first_completed = await answer_service.get_turn(user_id, first_turn.turn.id)
         assert first_completed.evaluation is not None
 
@@ -1208,29 +1213,29 @@ async def test_real_langgraph_answer_evaluation_follow_up_and_completion(
         await answer_service.submit_answer(
             user_id=user_id,
             session_id=created.id,
-            turn_id=follow_up.turn.id,
+            turn_id=next_turn.turn.id,
             answer="我补充了技术取舍、边界和上线结果。",
             request_id="answer-flow-2",
         )
-        next_turn = await answer_service.current_turn(user_id, created.id)
-        assert next_turn.turn.question_id is not None
+        follow_up_turn = await answer_service.current_turn(user_id, created.id)
+        assert follow_up_turn.turn.turn_type == TurnType.FOLLOW_UP
+        assert follow_up_turn.turn.parent_turn_id == first_turn.turn.id
         await answer_service.submit_answer(
             user_id=user_id,
             session_id=created.id,
-            turn_id=next_turn.turn.id,
-            answer="第二题也完成了设计、实现和性能复盘。",
-            request_id="answer-flow-3",
+            turn_id=follow_up_turn.turn.id,
+            answer="我进一步说明了指标口径、边界条件和故障恢复策略。",
+            request_id="answer-flow-follow-up",
         )
-        completed = await interview_repository.get_for_user(created.id, user_id)
-        assert completed is not None
-        assert completed.status == InterviewStatus.IN_PROGRESS
         final_turn = await answer_service.current_turn(user_id, created.id)
+        assert final_turn.turn.turn_type == TurnType.PRIMARY
+        assert final_turn.turn.question_id is not None
         await answer_service.submit_answer(
             user_id=user_id,
             session_id=created.id,
             turn_id=final_turn.turn.id,
-            answer="我完成了最后一个方案并总结了风险与收益。",
-            request_id="answer-flow-4",
+            answer="第二题也完成了设计、实现和性能复盘。",
+            request_id="answer-flow-3",
         )
         completed = await interview_repository.get_for_user(created.id, user_id)
         assert completed is not None
@@ -1239,7 +1244,8 @@ async def test_real_langgraph_answer_evaluation_follow_up_and_completion(
         event_types = [event.event_type for event in events]
         assert "ANSWER_SUBMITTED" in event_types
         assert "ANSWER_EVALUATED" in event_types
-        assert "FOLLOW_UP_CREATED" in event_types
+        assert "FOLLOW_UP_DEFERRED" in event_types
+        assert "FOLLOW_UP_ACTIVATED" in event_types
         assert "INTERVIEW_COMPLETED" in event_types
     finally:
         await session.rollback()
