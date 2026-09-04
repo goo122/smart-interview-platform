@@ -120,7 +120,29 @@ def _wait_for_worker(docker: str, timeout_seconds: int = 120) -> None:
     raise IntegrationGateError("Knowledge worker did not become healthy before timeout")
 
 
-def _verify_schema(docker: str) -> None:
+def _migration_head(docker: str) -> str:
+    result = _run(
+        _compose_command(
+            docker,
+            "run",
+            "--rm",
+            "--no-deps",
+            "--entrypoint",
+            "alembic",
+            "migrate",
+            "heads",
+        )
+    )
+    output = _require_success(result, "Alembic head verification")
+    heads = re.findall(r"^([0-9A-Za-z_]+)\s+\(head\)$", output, flags=re.MULTILINE)
+    if len(heads) != 1:
+        raise IntegrationGateError(
+            f"Expected exactly one Alembic head, found {len(heads)}"
+        )
+    return heads[0]
+
+
+def _verify_schema(docker: str, expected_migration_head: str) -> None:
     sql = """
 select version_num from alembic_version;
 select exists(select 1 from pg_extension where extname = 'vector');
@@ -163,13 +185,14 @@ select exists(select 1 from pg_extension where extname = 'vector');
     )
     output = _require_success(result, "Schema verification")
     values = [line.strip() for line in output.splitlines() if line.strip()]
-    expected = ["0013_interview_report_queue", "t", "1536", "t", "t", "t", "t"]
+    expected = [expected_migration_head, "t", "1536", "t", "t", "t", "t"]
     if values != expected:
         raise IntegrationGateError(
             f"Schema verification returned unexpected safe values: {values}"
         )
     print(
-        "Schema: Alembic 0013, pgvector enabled, embedding dimension 1536, "
+        f"Schema: Alembic {expected_migration_head}, pgvector enabled, "
+        "embedding dimension 1536, "
         "resume snapshot and report generation fencing present"
     )
 
@@ -228,7 +251,8 @@ def _run_pytest(docker: str, run_number: int) -> str:
         or int(match.group("skipped") or 0) != 0
     ):
         raise IntegrationGateError(
-            f"Integration pytest run {run_number} did not report 9 passed and 0 skipped"
+            f"Integration pytest run {run_number} did not report at least 9 passed "
+            "and 0 skipped"
         )
     summary = (
         f"run {run_number}: {match.group('passed')} passed, "
@@ -277,7 +301,7 @@ def main() -> int:
         )
         _wait_for_worker(docker)
         print("Worker: healthy")
-        _verify_schema(docker)
+        _verify_schema(docker, _migration_head(docker))
         _run_pytest(docker, 1)
         _run_pytest(docker, 2)
         print("Integration gate: 2 consecutive runs passed")

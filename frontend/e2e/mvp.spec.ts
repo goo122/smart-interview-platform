@@ -230,6 +230,18 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
       },
     )
     .toBe("READY");
+  await expect
+    .poll(
+      async () =>
+        (
+          await apiGet(`/api/xunzhi/v1/interview/sessions/${sessionId}`)
+        ).resumeEvaluationStatus,
+      {
+        timeout: 60_000,
+        intervals: [500, 1000, 2000],
+      },
+    )
+    .toBe("COMPLETED");
   const preparedSession = await apiGet(
     `/api/xunzhi/v1/interview/sessions/${sessionId}`,
   );
@@ -446,6 +458,11 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   ).toBeVisible();
   await expect(
     page.getByText("简历匹配度", { exact: true }).first(),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("简历得分", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(String(resumeScore), { exact: true }).first(),
   ).toBeVisible();
 
   const { response: earlyCreateResponse, body: earlyCreatedSession } =

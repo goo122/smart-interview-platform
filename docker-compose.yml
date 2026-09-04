@@ -22,6 +22,7 @@ services:
   frontend:
     build:
       context: ./frontend
+    restart: unless-stopped
     ports:
       - "8080:80"
     depends_on:
@@ -33,6 +34,7 @@ services:
   api:
     build:
       context: ./backend-python
+    restart: unless-stopped
     env_file:
       - ./backend-python/.env
     environment:
@@ -64,6 +66,7 @@ services:
   worker:
     build:
       context: ./backend-python
+    restart: unless-stopped
     env_file:
       - ./backend-python/.env
     environment:
@@ -92,6 +95,7 @@ services:
 
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ai_interview
       POSTGRES_USER: postgres
@@ -108,6 +112,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
