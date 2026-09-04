@@ -184,13 +184,9 @@ describe("interviewService.prepareInterviewSessionFromResume", () => {
     const createSessionSpy = vi
       .spyOn(interviewService, "createInterviewSession")
       .mockResolvedValue({ sessionId: "session-1", status: "PREPARING" });
-    const getSessionSpy = vi
-      .spyOn(interviewService, "getInterviewSession")
-      .mockResolvedValue({
-        sessionId: "session-1",
-        status: "READY",
-        canStart: true,
-      } as never);
+    const waitForFirstQuestionSpy = vi
+      .spyOn(interviewService, "waitForFirstQuestion")
+      .mockResolvedValue();
     const startSessionSpy = vi
       .spyOn(interviewService, "startInterviewSession")
       .mockResolvedValue({ sessionId: "session-1", status: "IN_PROGRESS" } as never);
@@ -205,6 +201,10 @@ describe("interviewService.prepareInterviewSessionFromResume", () => {
 
       expect(result.sessionId).toBe("session-1");
       expect(resolveRoleSpy).not.toHaveBeenCalled();
+      expect(waitForFirstQuestionSpy).toHaveBeenCalledWith(
+        "session-1",
+        undefined,
+      );
       expect(createSessionSpy).toHaveBeenCalledWith({
         knowledgeBaseId: "knowledge-1",
         jobTitle: "Java 后端工程师",
@@ -215,13 +215,27 @@ describe("interviewService.prepareInterviewSessionFromResume", () => {
         requestId: "request-1",
       });
       expect(stages).toEqual([0, 1, 2, 2]);
+
+      await interviewService.prepareInterviewSessionFromResume(file);
+
+      expect(resolveRoleSpy).not.toHaveBeenCalled();
+      expect(createSessionSpy).toHaveBeenLastCalledWith({
+        knowledgeBaseId: "knowledge-1",
+        jobTitle: "基于简历的技术面试",
+        jobDescription:
+          "围绕候选人简历中的技能、项目经历和问题解决能力进行技术面试。",
+        interviewType: "TECHNICAL",
+        difficulty: "MEDIUM",
+        questionCount: 5,
+        requestId: undefined,
+      });
     } finally {
       createBaseSpy.mockRestore();
       uploadDocumentSpy.mockRestore();
       listDocumentsSpy.mockRestore();
       resolveRoleSpy.mockRestore();
       createSessionSpy.mockRestore();
-      getSessionSpy.mockRestore();
+      waitForFirstQuestionSpy.mockRestore();
       startSessionSpy.mockRestore();
     }
   });

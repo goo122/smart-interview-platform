@@ -10,6 +10,7 @@ from app.ai.interview import (
     GeneratedInterviewQuestion,
     GeneratedQuestionSet,
 )
+from app.ai.resume import FakeResumeRoleInference
 from app.core.config import Settings
 from app.main import app
 from app.modules.auth.dependencies import get_current_user
@@ -17,6 +18,8 @@ from app.modules.auth.domain import User
 from app.modules.interview.context import InterviewContext
 from app.modules.interview.dependencies import get_interview_service
 from app.modules.interview.domain import (
+    AUTO_DETECT_JOB_DESCRIPTION,
+    AUTO_DETECT_JOB_TITLE,
     InterviewAnswer,
     InterviewDifficulty,
     InterviewEvaluation,
@@ -40,6 +43,7 @@ from app.modules.interview.exceptions import (
     InvalidInterviewRequestError,
     InvalidInterviewTransitionError,
 )
+from app.modules.interview.question_bank import select_question_buffer
 from app.modules.interview.schemas import CreateInterviewSessionRequest
 from app.modules.interview.service import InterviewService
 from app.modules.interview.state_machine import InterviewStateMachine
@@ -162,6 +166,35 @@ class InMemoryInterviewRepository:
         self.events[session.id].append(
             self._event(session, InterviewStatus.PREPARING, InterviewStatus.READY)
         )
+        return session
+
+    async def append_questions(
+        self, session_id: UUID, user_id: UUID, questions: list[InterviewQuestion]
+    ) -> InterviewSession:
+        session = self.sessions[session_id]
+        assert session.user_id == user_id
+        existing_sequences = {
+            question.sequence for question in self.questions.get(session_id, [])
+        }
+        self.questions.setdefault(session_id, []).extend(
+            question
+            for question in questions
+            if question.sequence not in existing_sequences
+        )
+        session.prepared_at = utc_now()
+        session.version += 1
+        session.updated_at = session.prepared_at
+        return session
+
+    async def update_job_context(
+        self, session_id: UUID, user_id: UUID, job_title: str, job_description: str
+    ) -> InterviewSession:
+        session = self.sessions[session_id]
+        assert session.user_id == user_id
+        session.job_title = job_title
+        session.job_description = job_description
+        session.version += 1
+        session.updated_at = utc_now()
         return session
 
     async def mark_failed(
@@ -622,6 +655,31 @@ def _context() -> InterviewContext:
     )
 
 
+def test_question_bank_prefers_resume_skills_for_initial_buffer() -> None:
+    session = InterviewSession.new(
+        user_id=uuid4(),
+        knowledge_base_id=uuid4(),
+        job_title="后端工程师",
+        job_description="负责 API 开发",
+        interview_type=InterviewType.TECHNICAL,
+        difficulty=InterviewDifficulty.MEDIUM,
+        question_count=3,
+        request_id=None,
+    )
+    context = _context()
+    context = InterviewContext(
+        prompt="候选人使用 FastAPI、Redis 和 RAG 构建平台",
+        citations=context.citations,
+    )
+
+    questions = select_question_buffer(session, context, count=2)
+
+    assert [question.sequence for question in questions] == [1, 2]
+    assert "FastAPI" in questions[0].content
+    assert "Redis" in questions[1].content
+    assert all(question.citations for question in questions)
+
+
 def _service(
     *,
     context: InterviewContext | None = None,
@@ -760,7 +818,80 @@ async def test_preparation_generates_questions_citations_and_events() -> None:
     assert generator.calls == 1
     assert service._workflow.timings["question_generation_attempts"] == 1
     assert service._workflow.timings["question_validation_retry_count"] == 0
+    assert generator.requests[0].question_count == 1
     assert generator.requests[0].source_ids == ("[S1]",)
+
+
+@pytest.mark.asyncio
+async def test_preparation_event_stream_emits_first_ready_question() -> None:
+    user_id, base_id = uuid4(), uuid4()
+    service, _, _, _ = _service(context=_context())
+    session = await service.create_session(**_create_args(user_id, base_id, "stream-ready"))
+
+    stream = service.stream_preparation_events(user_id, session.id)
+    created = await anext(stream)
+    ready = await anext(stream)
+
+    assert created["event"] == "interview_created"
+    assert ready["event"] == "question_ready"
+    assert ready["data"]["questionCountReady"] == 3
+
+
+@pytest.mark.asyncio
+async def test_auto_job_detection_runs_after_initial_buffer_is_ready() -> None:
+    user_id, base_id = uuid4(), uuid4()
+    repository = InMemoryInterviewRepository()
+    provider = FakeInterviewContextProvider(_context())
+    generator = FakeInterviewQuestionGenerator()
+    role_inference = FakeResumeRoleInference()
+    service = InterviewService(
+        repository,
+        provider,
+        generator,
+        FakeTaskQueue(),
+        Settings(),
+        role_inference=role_inference,
+    )
+    arguments = _create_args(user_id, base_id, "auto-job")
+    arguments["job_title"] = AUTO_DETECT_JOB_TITLE
+    arguments["job_description"] = AUTO_DETECT_JOB_DESCRIPTION
+
+    session = await service.create_session(**arguments)
+
+    assert role_inference.calls == 1
+    assert session.job_title == "软件开发工程师"
+    assert len(await repository.list_questions(session.id)) == 3
+
+
+def test_preparation_event_stream_api_returns_sse() -> None:
+    user = User(
+        id=uuid4(),
+        username="stream-user",
+        email="stream@example.com",
+        password_hash="hidden",
+        is_active=True,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    service, _, _, _ = _service(context=_context())
+    session = __import__("asyncio").run(
+        service.create_session(**_create_args(user.id, uuid4(), "stream-api"))
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_interview_service] = lambda: service
+    try:
+        client = TestClient(app)
+        response = client.get(
+            f"/api/xunzhi/v1/interview/sessions/{session.id}/events/stream"
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert "event: interview_created" in response.text
+        assert "event: question_ready" in response.text
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
@@ -823,7 +954,7 @@ async def test_retrying_same_request_requeues_recoverable_preparation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_id_is_idempotent_and_failed_output_cleans_questions() -> None:
+async def test_request_id_is_idempotent_and_failed_prefetch_preserves_buffer() -> None:
     user_id, base_id = uuid4(), uuid4()
     service, repository, _, generator = _service(context=_context())
     first = await service.create_session(**_create_args(user_id, base_id, "same"))
@@ -858,12 +989,12 @@ async def test_request_id_is_idempotent_and_failed_output_cleans_questions() -> 
     )
     bad_service, bad_repo, _, bad_generator = _service(context=_context(), output=bad_output)
     failed = await bad_service.create_session(**_create_args(uuid4(), uuid4()))
-    assert failed.status == InterviewStatus.FAILED
-    assert failed.failure_code == "interview_questions_invalid"
+    assert failed.status == InterviewStatus.READY
+    assert failed.failure_code is None
     assert bad_generator.calls == 2
     assert bad_service._workflow.timings["question_generation_attempts"] == 2
     assert bad_service._workflow.timings["question_validation_retry_count"] == 1
-    assert await bad_repo.list_questions(failed.id) == []
+    assert len(await bad_repo.list_questions(failed.id)) == 2
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ import { INTERVIEW_DEFAULTS } from "@/lib/constants";
 const RESUME_UPLOAD_STAGES = [
   "正在上传简历",
   "正在解析简历",
-  "正在生成面试题",
+  "正在准备第一道题",
 ] as const;
 
 type InterviewResumeUploadCardProps = {

@@ -1,4 +1,5 @@
 import service, { assertRequestAuthorized, buildApiUrl } from "@/lib/request";
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { AppError, ErrorCode } from "@/lib/errors";
 import { knowledgeApi } from "@/features/knowledge/api";
 import type {
@@ -65,6 +66,7 @@ export interface PrepareInterviewSessionOptions {
   requestId?: string;
   signal?: AbortSignal;
   onPreparationStage?: (stage: 0 | 1 | 2) => void;
+  onSessionCreated?: (session: InterviewSessionResponse) => void;
   jobTitle?: string;
   jobDescription?: string;
   interviewType?: InterviewType;
@@ -861,6 +863,53 @@ export const interviewService = {
       { knowledgeBaseId },
       { timeout: INTERVIEW_LONG_TIMEOUT_MS },
     ),
+  waitForFirstQuestion: async (
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const path = `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/events/stream`;
+    const token = assertRequestAuthorized(path);
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abortFromCaller, { once: true });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        void fetchEventSource(buildApiUrl(path), {
+          method: "GET",
+          credentials: "same-origin",
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          signal: controller.signal,
+          openWhenHidden: true,
+          onmessage(message) {
+            if (message.event === "question_ready") {
+              controller.abort();
+              resolve();
+              return;
+            }
+            if (message.event === "generation_failed") {
+              const payload = JSON.parse(message.data) as {
+                failureMessage?: string;
+              };
+              controller.abort();
+              reject(new Error(payload.failureMessage || "面试题准备失败，请稍后重试"));
+            }
+          },
+          onerror(error) {
+            controller.abort();
+            reject(error);
+            throw error;
+          },
+        }).catch((error: unknown) => {
+          if (!controller.signal.aborted) {
+            reject(error);
+          }
+        });
+      });
+    } finally {
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
+  },
   prepareInterviewSessionFromResume: async (
     file: File,
     options: PrepareInterviewSessionOptions = {},
@@ -902,7 +951,10 @@ export const interviewService = {
           jobTitle: providedJobTitle,
           jobDescription: providedJobDescription,
         }
-      : await interviewService.resolveInterviewRole(knowledgeBase.id);
+      : {
+          jobTitle: "基于简历的技术面试",
+          jobDescription: "围绕候选人简历中的技能、项目经历和问题解决能力进行技术面试。",
+        };
     const created = await interviewService.createInterviewSession({
       knowledgeBaseId: knowledgeBase.id,
       jobTitle: resolvedRole.jobTitle,
@@ -916,22 +968,14 @@ export const interviewService = {
       (created as CreateInterviewSessionResult | InterviewSessionResponse)
         .sessionId,
     );
-    const readySession = await pollUntil(
-      () => interviewService.getInterviewSession(sessionId),
-      (session) => {
-        if (session.status === "FAILED") {
-          throw new Error(session.failureMessage || "面试题准备失败，请稍后重试");
-        }
-        return session.status === "READY";
-      },
-      INTERVIEW_READY_TIMEOUT_MS,
-      options.signal,
-    );
+    options.onSessionCreated?.(created as InterviewSessionResponse);
+    await interviewService.waitForFirstQuestion(sessionId, options.signal);
+    const readySession = await interviewService.startInterviewSession(sessionId);
     options.onPreparationStage?.(2);
-    if (!readySession.canStart) {
-      throw new Error("面试题暂未准备完成，请稍后刷新页面");
+    if (readySession.status !== "IN_PROGRESS") {
+      throw new Error("第一道题暂未准备完成，请稍后刷新页面");
     }
-    return interviewService.startInterviewSession(sessionId);
+    return readySession;
   },
   getInterviewSession: async (sessionId: string) =>
     service.get<InterviewSessionResponse>(

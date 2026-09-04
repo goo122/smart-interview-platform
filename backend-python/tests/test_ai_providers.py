@@ -348,31 +348,31 @@ async def test_embedding_adapter_does_not_retry_provider_configuration_errors() 
 
 
 @pytest.mark.asyncio
-async def test_question_adapter_normalizes_provider_source_ids() -> None:
+async def test_question_adapter_requests_minimal_structured_output() -> None:
     class StructuredModel:
         async def ainvoke(self, prompt: str) -> dict[str, object]:
-            assert "包括方括号" in prompt
+            assert "只输出 question、category、difficulty" in prompt
+            assert "expected_points 至少" not in prompt
             return {
                 "questions": [
                     {
-                        "content": "请介绍项目中的缓存设计",
+                        "question": "请介绍项目中的缓存设计",
                         "category": "PROJECT_EXPERIENCE",
                         "difficulty": "MEDIUM",
-                        "expected_points": ["说明缓存策略"],
-                        "source_ids": ["S1", "[S9]"],
                     },
                     {
-                        "content": "如何保证接口幂等性",
+                        "question": "如何保证接口幂等性",
                         "category": "SYSTEM_DESIGN",
                         "difficulty": "MEDIUM",
-                        "expected_points": ["说明幂等键"],
-                        "source_ids": ["source 99"],
                     },
                 ]
             }
 
     class Model:
-        def with_structured_output(self, _schema: object) -> StructuredModel:
+        def with_structured_output(
+            self, _schema: object, *, include_raw: bool
+        ) -> StructuredModel:
+            assert include_raw is True
             return StructuredModel()
 
     adapter = LangChainInterviewQuestionGeneratorAdapter(Model())
@@ -390,6 +390,7 @@ async def test_question_adapter_normalizes_provider_source_ids() -> None:
 
     assert generated.questions[0].source_ids == ["[S1]"]
     assert generated.questions[1].source_ids == ["[S1]"]
+    assert generated.questions[0].expected_points
 
 
 @pytest.mark.asyncio

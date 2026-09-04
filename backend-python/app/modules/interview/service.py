@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import cast
 from uuid import UUID
 
@@ -76,6 +77,7 @@ class InterviewService:
             generator,
             resume_evaluator,
             resume_evaluation_queue,
+            role_inference,
         )
         self._role_inference = role_inference
 
@@ -323,6 +325,64 @@ class InterviewService:
     async def get_events(self, user_id: UUID, session_id: UUID) -> Sequence[InterviewEvent]:
         await self.get_session(user_id, session_id)
         return await self._repository.list_events(session_id)
+
+    async def stream_preparation_events(
+        self, user_id: UUID, session_id: UUID
+    ) -> AsyncIterator[dict[str, object]]:
+        """Stream preparation changes while PostgreSQL remains the source of truth."""
+
+        session = await self.get_session(user_id, session_id)
+        yield {
+            "event": "interview_created",
+            "id": str(session.version),
+            "data": {
+                "sessionId": str(session.id),
+                "status": session.status.value,
+                "serverSentAtMs": time.time_ns() // 1_000_000,
+            },
+        }
+        last_signature: tuple[int, int] | None = None
+        while True:
+            session = await self.get_session(user_id, session_id)
+            questions = await self._repository.list_questions(session_id)
+            signature = (session.version, len(questions))
+            if questions:
+                yield {
+                    "event": "question_ready",
+                    "id": f"{session.version}:{len(questions)}",
+                    "data": {
+                        "sessionId": str(session.id),
+                        "status": session.status.value,
+                        "questionCountReady": len(questions),
+                        "serverSentAtMs": time.time_ns() // 1_000_000,
+                    },
+                }
+                return
+            if session.status == InterviewStatus.FAILED:
+                yield {
+                    "event": "generation_failed",
+                    "id": str(session.version),
+                    "data": {
+                        "sessionId": str(session.id),
+                        "status": session.status.value,
+                        "failureCode": session.failure_code,
+                        "failureMessage": session.failure_message,
+                        "serverSentAtMs": time.time_ns() // 1_000_000,
+                    },
+                }
+                return
+            if signature != last_signature:
+                yield {
+                    "event": "preparation_started",
+                    "id": str(session.version),
+                    "data": {
+                        "sessionId": str(session.id),
+                        "status": session.status.value,
+                        "serverSentAtMs": time.time_ns() // 1_000_000,
+                    },
+                }
+                last_signature = signature
+            await asyncio.sleep(0.1)
 
     async def start(self, user_id: UUID, session_id: UUID) -> InterviewSession:
         await self.get_session(user_id, session_id)

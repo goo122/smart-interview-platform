@@ -656,7 +656,12 @@ async def test_arq_worker_prepares_interview_and_persists_ready_state(
         while asyncio.get_running_loop().time() < deadline:
             await session.rollback()
             current = await repository.get_for_user(interview.id, user_id)
-            if current is not None and current.status == InterviewStatus.READY:
+            questions = await repository.list_questions(interview.id)
+            if (
+                current is not None
+                and current.status == InterviewStatus.READY
+                and len(questions) == 3
+            ):
                 break
             await asyncio.sleep(0.5)
         else:
@@ -670,6 +675,7 @@ async def test_arq_worker_prepares_interview_and_persists_ready_state(
         assert [event.to_status for event in await repository.list_events(interview.id)] == [
             InterviewStatus.CREATED,
             InterviewStatus.PREPARING,
+            InterviewStatus.READY,
             InterviewStatus.READY,
         ]
     finally:
@@ -1041,6 +1047,7 @@ async def test_real_interview_preparation_retrieves_resume_generates_and_persist
         assert [event.to_status for event in events] == [
             InterviewStatus.CREATED,
             InterviewStatus.PREPARING,
+            InterviewStatus.READY,
             InterviewStatus.READY,
         ]
         duplicate = await service.create_session(

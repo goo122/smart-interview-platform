@@ -75,7 +75,7 @@ class InterviewContextProvider:
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             query_vector=query_vector,
-            top_k=self._settings.rag_top_k,
+            top_k=self._settings.interview_question_rag_top_k,
             similarity_threshold=self._settings.rag_similarity_threshold,
         )
         # A resume is the bounded source of truth for an interview. Embedding
@@ -87,7 +87,7 @@ class InterviewContextProvider:
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
                 query_vector=query_vector,
-                top_k=self._settings.rag_top_k,
+                top_k=self._settings.interview_question_rag_top_k,
                 similarity_threshold=0.0,
             )
         assembled = self._assembler.assemble(chunks)

@@ -161,16 +161,24 @@ async def process_interview_preparation(
     async with session_factory() as session:
         repository = SqlAlchemyInterviewRepository(session)
         current = await repository.get_for_user(job.session_id, job.user_id)
-        if current is None or current.status != InterviewStatus.PREPARING:
+        if current is None:
             return
-        stale_before = utc_now() - timedelta(
-            seconds=settings.interview_preparation_stale_seconds
+        existing_questions = await repository.list_questions(job.session_id)
+        has_incomplete_buffer = (
+            current.status in {InterviewStatus.READY, InterviewStatus.IN_PROGRESS}
+            and len(existing_questions) < current.question_count
         )
-        claimed = await repository.claim_preparation(
-            job.session_id, job.user_id, stale_before, job_try
-        )
-        if claimed is None:
+        if current.status != InterviewStatus.PREPARING and not has_incomplete_buffer:
             return
+        if current.status == InterviewStatus.PREPARING:
+            stale_before = utc_now() - timedelta(
+                seconds=settings.interview_preparation_stale_seconds
+            )
+            claimed = await repository.claim_preparation(
+                job.session_id, job.user_id, stale_before, job_try
+            )
+            if claimed is None:
+                return
         if (
             settings.ai_provider == "unavailable"
             or settings.embedding_provider == "unavailable"
@@ -194,6 +202,7 @@ async def process_interview_preparation(
             ctx["interview_question_generator"],
             ctx["resume_evaluator"],
             cast(InterviewResumeEvaluationTaskQueuePort, ctx["document_task_queue"]),
+            ctx["resume_role_inference"],
         )
         common_log = {
             "session_id": session_id,
@@ -214,14 +223,16 @@ async def process_interview_preparation(
         except RetryableInterviewPreparationError as exc:
             await session.rollback()
             if job_try >= settings.interview_preparation_task_max_attempts:
-                await repository.mark_failed(
-                    job.session_id,
-                    job.user_id,
-                    "INTERVIEW_PREPARATION_RETRY_EXHAUSTED",
-                    "Interview preparation failed after several attempts",
-                )
+                current = await repository.get_for_user(job.session_id, job.user_id)
+                if current is not None and current.status == InterviewStatus.PREPARING:
+                    await repository.mark_failed(
+                        job.session_id,
+                        job.user_id,
+                        "INTERVIEW_PREPARATION_RETRY_EXHAUSTED",
+                        "Interview preparation failed after several attempts",
+                    )
                 logger.warning(
-                    "Interview preparation failed after retries",
+                    "Interview question prefetch failed after retries",
                     extra={
                         **common_log,
                         "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
@@ -241,11 +252,17 @@ async def process_interview_preparation(
             )
             raise Retry(defer=delay) from exc
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        all_questions_ready_ms = round(
+            (utc_now() - result.created_at).total_seconds() * 1000, 2
+        )
         logger.info(
             "Interview preparation completed duration_ms=%s queue_wait_ms=%s "
             "context_retrieval_ms=%s question_generation_ms=%s "
             "question_generation_attempts=%s question_validation_retry_count=%s "
-            "database_storage_ms=%s status=%s",
+            "database_storage_ms=%s question_ready_first_ms=%s "
+            "all_questions_ready_ms=%s retrieved_chunks=%s "
+            "retrieved_context_chars=%s job_detection_ms=%s model=%s "
+            "ttft_ms=%s input_tokens=%s output_tokens=%s status=%s",
             duration_ms,
             common_log["queue_wait_ms"],
             workflow.timings.get("context_retrieval_ms"),
@@ -253,6 +270,17 @@ async def process_interview_preparation(
             workflow.timings.get("question_generation_attempts"),
             workflow.timings.get("question_validation_retry_count", 0),
             workflow.timings.get("database_storage_ms"),
+            workflow.timings.get("question_ready_first_ms"),
+            all_questions_ready_ms,
+            workflow.timings.get("retrieved_chunks"),
+            workflow.timings.get("retrieved_context_chars"),
+            workflow.timings.get("job_detection_ms"),
+            workflow.timings.get("question_generation_model")
+            or settings.interview_question_model
+            or settings.llm_model,
+            workflow.timings.get("question_generation_ttft_ms"),
+            workflow.timings.get("question_generation_input_tokens"),
+            workflow.timings.get("question_generation_output_tokens"),
             result.status.value,
             extra={
                 **common_log,
@@ -260,6 +288,7 @@ async def process_interview_preparation(
                 "preparation_duration_ms": duration_ms,
                 "context_retrieval_ms": workflow.timings.get("context_retrieval_ms"),
                 "resume_evaluation_ms": None,
+                "job_detection_ms": workflow.timings.get("job_detection_ms"),
                 "question_generation_ms": workflow.timings.get("question_generation_ms"),
                 "question_generation_attempts": workflow.timings.get(
                     "question_generation_attempts"
@@ -268,6 +297,26 @@ async def process_interview_preparation(
                     "question_validation_retry_count", 0
                 ),
                 "database_storage_ms": workflow.timings.get("database_storage_ms"),
+                "question_ready_first_ms": workflow.timings.get("question_ready_first_ms"),
+                "all_questions_ready_ms": all_questions_ready_ms,
+                "question_generation_model": workflow.timings.get(
+                    "question_generation_model"
+                )
+                or settings.interview_question_model
+                or settings.llm_model,
+                "question_generation_ttft_ms": workflow.timings.get(
+                    "question_generation_ttft_ms"
+                ),
+                "question_generation_input_tokens": workflow.timings.get(
+                    "question_generation_input_tokens"
+                ),
+                "question_generation_output_tokens": workflow.timings.get(
+                    "question_generation_output_tokens"
+                ),
+                "retrieved_chunks": workflow.timings.get("retrieved_chunks"),
+                "retrieved_context_chars": workflow.timings.get(
+                    "retrieved_context_chars"
+                ),
                 "status": result.status.value,
             },
         )
@@ -587,6 +636,7 @@ async def worker_startup(ctx: dict[str, Any]) -> None:
     ctx["embedding"] = providers.embedding
     ctx["interview_question_generator"] = providers.interview_question_generator
     ctx["resume_evaluator"] = providers.resume_evaluator
+    ctx["resume_role_inference"] = providers.resume_role_inference
     ctx["interview_answer_evaluator"] = providers.interview_answer_evaluator
     ctx["follow_up_question_generator"] = providers.follow_up_question_generator
     ctx["interview_report_narrative"] = providers.interview_report_narrative

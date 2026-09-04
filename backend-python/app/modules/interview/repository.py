@@ -120,6 +120,14 @@ class InterviewRepository(Protocol):
         self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
     ) -> InterviewSession: ...
 
+    async def append_questions(
+        self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
+    ) -> InterviewSession: ...
+
+    async def update_job_context(
+        self, session_id: UUID, user_id: UUID, job_title: str, job_description: str
+    ) -> InterviewSession: ...
+
     async def mark_failed(
         self, session_id: UUID, user_id: UUID, failure_code: str, failure_message: str
     ) -> InterviewSession: ...
@@ -618,6 +626,102 @@ class SqlAlchemyInterviewRepository:
                 InterviewStatus.READY,
                 {"question_count": len(questions), "version": row.version},
                 f"preparation:{row.id}:ready",
+            )
+        )
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _session_to_domain(row)
+
+    async def append_questions(
+        self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
+    ) -> InterviewSession:
+        row = await self._locked_row(session_id, user_id)
+        if row is None:
+            raise InterviewNotFoundError("Interview session not found")
+        existing_sequences = set(
+            (
+                await self._session.scalars(
+                    select(InterviewQuestionModel.sequence).where(
+                        InterviewQuestionModel.session_id == session_id
+                    )
+                )
+            ).all()
+        )
+        appended = [
+            question
+            for question in questions
+            if question.sequence not in existing_sequences
+        ]
+        for question in appended:
+            self._session.add(
+                InterviewQuestionModel(
+                    id=question.id,
+                    session_id=question.session_id,
+                    sequence=question.sequence,
+                    content=question.content,
+                    category=question.category,
+                    difficulty=question.difficulty.value,
+                    expected_points=question.expected_points,
+                    source_summary=question.source_summary,
+                    created_at=question.created_at,
+                )
+            )
+        await self._session.flush()
+        for question in appended:
+            self._session.add_all(
+                InterviewQuestionCitationModel(
+                    id=citation.id,
+                    question_id=question.id,
+                    chunk_id=citation.chunk_id,
+                    document_id=citation.document_id,
+                    source_id=citation.source_id,
+                    page_number=citation.page_number,
+                    score=citation.score,
+                    excerpt=citation.excerpt,
+                    ordinal=citation.ordinal,
+                    created_at=citation.created_at,
+                )
+                for citation in question.citations
+            )
+        if appended:
+            now = utc_now()
+            row.prepared_at = now
+            row.updated_at = now
+            row.version += 1
+            self._session.add(
+                _event_row(
+                    row.id,
+                    "QUESTIONS_PREFETCHED",
+                    InterviewStatus(row.status),
+                    InterviewStatus(row.status),
+                    {"question_count": len(existing_sequences) + len(appended)},
+                    f"preparation:{row.id}:prefetched:{len(existing_sequences) + len(appended)}",
+                )
+            )
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _session_to_domain(row)
+
+    async def update_job_context(
+        self, session_id: UUID, user_id: UUID, job_title: str, job_description: str
+    ) -> InterviewSession:
+        row = await self._locked_row(session_id, user_id)
+        if row is None:
+            raise InterviewNotFoundError("Interview session not found")
+        previous_title = row.job_title
+        now = utc_now()
+        row.job_title = job_title
+        row.job_description = job_description
+        row.updated_at = now
+        row.version += 1
+        self._session.add(
+            _event_row(
+                row.id,
+                "JOB_DETECTED",
+                InterviewStatus(row.status),
+                InterviewStatus(row.status),
+                {"previous_job_title": previous_title, "job_title": job_title},
+                f"job-detection:{row.id}",
             )
         )
         await self._session.commit()
