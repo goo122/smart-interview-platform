@@ -235,14 +235,24 @@ async def process_interview_preparation(
                 },
             )
             raise Retry(defer=delay) from exc
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
         logger.info(
-            "Interview preparation completed",
+            "Interview preparation completed duration_ms=%s queue_wait_ms=%s "
+            "context_retrieval_ms=%s question_generation_ms=%s "
+            "question_generation_attempts=%s question_validation_retry_count=%s "
+            "database_storage_ms=%s status=%s",
+            duration_ms,
+            common_log["queue_wait_ms"],
+            workflow.timings.get("context_retrieval_ms"),
+            workflow.timings.get("question_generation_ms"),
+            workflow.timings.get("question_generation_attempts"),
+            workflow.timings.get("question_validation_retry_count", 0),
+            workflow.timings.get("database_storage_ms"),
+            result.status.value,
             extra={
                 **common_log,
-                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
-                "preparation_duration_ms": round(
-                    (time.perf_counter() - started_at) * 1000, 2
-                ),
+                "duration_ms": duration_ms,
+                "preparation_duration_ms": duration_ms,
                 "context_retrieval_ms": workflow.timings.get("context_retrieval_ms"),
                 "resume_evaluation_ms": None,
                 "question_generation_ms": workflow.timings.get("question_generation_ms"),

@@ -243,11 +243,22 @@ class KnowledgeService:
             status_storage_ms = round(
                 (time.perf_counter() - status_storage_started_at) * 1000, 2
             )
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
             logger.info(
-                "Knowledge document processing completed",
+                "Knowledge document processing completed duration_ms=%s "
+                "pdf_parse_ms=%s text_split_ms=%s embedding_ms=%s "
+                "vector_storage_ms=%s status_storage_ms=%s page_count=%s chunk_count=%s",
+                duration_ms,
+                pdf_parse_ms,
+                text_split_ms,
+                embedding_ms,
+                vector_storage_ms,
+                status_storage_ms,
+                len(pages),
+                len(stored_chunks),
                 extra={
                     **common_log,
-                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "duration_ms": duration_ms,
                     "pdf_parse_ms": pdf_parse_ms,
                     "text_split_ms": text_split_ms,
                     "embedding_ms": embedding_ms,

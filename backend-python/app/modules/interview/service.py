@@ -105,16 +105,23 @@ class InterviewService:
                 source_ids=tuple(citation.source_id for citation in context.citations),
             )
         )
+        role_inference_ms = round(
+            (time.perf_counter() - inference_started_at) * 1000, 2
+        )
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
         logger.info(
-            "Resume role inference completed",
+            "Resume role inference completed duration_ms=%s "
+            "context_retrieval_ms=%s role_inference_ms=%s source_count=%s",
+            duration_ms,
+            context_retrieval_ms,
+            role_inference_ms,
+            len(context.citations),
             extra={
                 "user_id": str(user_id),
                 "knowledge_base_id": str(knowledge_base_id),
-                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "duration_ms": duration_ms,
                 "context_retrieval_ms": context_retrieval_ms,
-                "role_inference_ms": round(
-                    (time.perf_counter() - inference_started_at) * 1000, 2
-                ),
+                "role_inference_ms": role_inference_ms,
                 "source_count": len(context.citations),
             },
         )
