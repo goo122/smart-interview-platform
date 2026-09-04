@@ -1,6 +1,7 @@
 from functools import lru_cache
 from secrets import token_urlsafe
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, PostgresDsn, RedisDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,7 +19,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_env: str = "development"
+    app_env: str = Field(default="development", validation_alias="APP_ENV")
     debug: bool = False
     ai_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
     embedding_provider: Literal["unavailable", "fake", "openai_compatible"] = "unavailable"
@@ -128,7 +129,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_chunking(self) -> "Settings":
         environment = self.app_env.strip().lower()
-        if environment == "production" and (
+        is_production = environment in {"production", "prod"}
+        if is_production and (
             self.ai_provider == "fake"
             or self.embedding_provider == "fake"
             or self.demeanor_analysis_provider == "fake"
@@ -136,6 +138,8 @@ class Settings(BaseSettings):
             or self.text_to_speech_provider == "fake"
         ):
             raise ValueError("fake AI providers are not allowed in production")
+        if is_production:
+            self._validate_production_readiness()
         if self.speech_to_text_provider == "xunfei" and not all(
             self._has_value(value)
             for value in (
@@ -217,6 +221,31 @@ class Settings(BaseSettings):
         if self.report_primary_turn_weight == 0 and self.report_follow_up_turn_weight == 0:
             raise ValueError("at least one report turn weight must be positive")
         return self
+
+    def _validate_production_readiness(self) -> None:
+        if self.debug:
+            raise ValueError("debug mode is not allowed in production")
+        if self.ai_provider != "openai_compatible":
+            raise ValueError("production requires an openai_compatible AI provider")
+        if self.embedding_provider != "openai_compatible":
+            raise ValueError("production requires an openai_compatible embedding provider")
+        if "secret_key" not in self.model_fields_set:
+            raise ValueError("production requires APP_SECRET_KEY to be explicitly configured")
+        normalized_secret = self.secret_key.strip()
+        unsafe_markers = ("replace-me", "change-me", "placeholder", "development-only")
+        if len(normalized_secret) < 32 or any(
+            marker in normalized_secret.lower() for marker in unsafe_markers
+        ):
+            raise ValueError(
+                "production APP_SECRET_KEY must be at least 32 non-placeholder characters"
+            )
+        loopback_hosts = {"localhost", "127.0.0.1", "::1"}
+        if urlsplit(str(self.database_url)).hostname in loopback_hosts:
+            raise ValueError("production database must not use a loopback host")
+        if "local-development-only" in str(self.database_url):
+            raise ValueError("production database must not use the local development password")
+        if urlsplit(str(self.redis_url)).hostname in loopback_hosts:
+            raise ValueError("production Redis must not use a loopback host")
 
     @staticmethod
     def _has_value(value: str | None) -> bool:

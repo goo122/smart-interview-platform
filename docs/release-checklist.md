@@ -5,7 +5,8 @@
 - [x] Docker Desktop 正在运行，`docker version` 和 `docker compose version` 可用；
 - [x] 已从 `backend-python/.env.example` 创建本地 `backend-python/.env`；
 - [x] 未在 `.env`、日志、前端代码或镜像构建上下文中提交真实 Key；
-- [ ] 生产环境没有配置 `APP_AI_PROVIDER=fake` 或 `APP_EMBEDDING_PROVIDER=fake`。
+- [x] 生产配置预检会拒绝 fake/unavailable 核心 Provider、调试模式、弱签名密钥和本机数据库连接；
+- [ ] 已在目标环境运行 `python backend-python/scripts/check_production_config.py` 并通过。
 
 ## Compose
 
@@ -42,6 +43,7 @@
 - Redis 进程退出后 Redis 与 worker 均自动重启并恢复 healthy；恢复后完整 E2E 再次通过。
 - 本地 `.env` 使用真实 provider 类型且已被 Git 和 Docker 构建上下文排除；生产部署变量仍需在目标环境单独复核。
 - Playwright trace 默认关闭，CI 失败产物限定为合成账号的截图、视频和文本上下文，保留 7 天。
+- CI 已增加生产配置契约和已跟踪文件密钥扫描；预检不会连接真实 AI、数据库或 Redis。
 
 ## 质量门禁
 
