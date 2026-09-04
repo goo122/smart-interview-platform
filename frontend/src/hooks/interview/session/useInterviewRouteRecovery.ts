@@ -7,6 +7,9 @@ type UseInterviewRouteRecoveryParams = {
   storedInterviewerSessionId: string | null;
   interviewerSessionId: string | null;
   persistInterviewerSessionId: (sessionId: string | null) => void;
+  getInterviewSession: (sessionId: string) => Promise<{ status?: string }>;
+  waitForFirstQuestion: (sessionId: string, signal?: AbortSignal) => Promise<void>;
+  startInterviewSession: (sessionId: string) => Promise<{ status?: string }>;
   messages: ChatMessage[];
   syncNextQuestion: (
     sessionId: string,
@@ -20,6 +23,9 @@ export function useInterviewRouteRecovery({
   storedInterviewerSessionId,
   interviewerSessionId,
   persistInterviewerSessionId,
+  getInterviewSession,
+  waitForFirstQuestion,
+  startInterviewSession,
   messages,
   syncNextQuestion,
   setInterviewError,
@@ -39,12 +45,38 @@ export function useInterviewRouteRecovery({
       return;
     }
 
-    syncNextQuestion(interviewerSessionId).catch((error) => {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to restore interview state";
-      setInterviewError(message);
+    const controller = new AbortController();
+    void (async () => {
+      const session = await getInterviewSession(interviewerSessionId);
+      if (session.status === "CREATED" || session.status === "PREPARING") {
+        await waitForFirstQuestion(interviewerSessionId, controller.signal);
+        if (controller.signal.aborted) {
+          return;
+        }
+        await startInterviewSession(interviewerSessionId);
+      } else if (session.status === "READY") {
+        await startInterviewSession(interviewerSessionId);
+      }
+      if (!controller.signal.aborted) {
+        await syncNextQuestion(interviewerSessionId);
+      }
+    })().catch((error) => {
+      if (!controller.signal.aborted) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to restore interview state";
+        setInterviewError(message);
+      }
     });
-  }, [interviewerSessionId, messages, setInterviewError, syncNextQuestion]);
+    return () => controller.abort();
+  }, [
+    getInterviewSession,
+    interviewerSessionId,
+    messages,
+    setInterviewError,
+    startInterviewSession,
+    syncNextQuestion,
+    waitForFirstQuestion,
+  ]);
 }

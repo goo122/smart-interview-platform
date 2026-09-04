@@ -15,6 +15,9 @@ const storageState = {
 };
 
 const getCurrentQuestionMock = vi.fn();
+const getInterviewSessionMock = vi.fn();
+const waitForFirstQuestionMock = vi.fn();
+const startInterviewSessionMock = vi.fn();
 const answerInterviewQuestionMock = vi.fn();
 const finishInterviewSessionMock = vi.fn();
 
@@ -43,6 +46,11 @@ vi.mock("@/hooks/interview/session/useInterviewSessionStorage", () => ({
 vi.mock("@/services/interviewService", () => ({
   interviewService: {
     getCurrentQuestion: (...args: unknown[]) => getCurrentQuestionMock(...args),
+    getInterviewSession: (...args: unknown[]) => getInterviewSessionMock(...args),
+    waitForFirstQuestion: (...args: unknown[]) =>
+      waitForFirstQuestionMock(...args),
+    startInterviewSession: (...args: unknown[]) =>
+      startInterviewSessionMock(...args),
     answerInterviewQuestion: (...args: unknown[]) =>
       answerInterviewQuestionMock(...args),
     finishInterviewSession: (...args: unknown[]) =>
@@ -73,6 +81,9 @@ describe("useInterviewSessionFlow", () => {
 
     useParamsMock.mockReturnValue({});
     invalidateQueriesMock.mockResolvedValue(undefined);
+    getInterviewSessionMock.mockResolvedValue({ status: "IN_PROGRESS" });
+    waitForFirstQuestionMock.mockResolvedValue(undefined);
+    startInterviewSessionMock.mockResolvedValue({ status: "IN_PROGRESS" });
     getCurrentQuestionMock.mockResolvedValue({
       isSuccess: true,
       nextQuestion: "Initial question",
@@ -106,6 +117,32 @@ describe("useInterviewSessionFlow", () => {
       );
       expect(getCurrentQuestionMock).toHaveBeenCalledWith("route-session");
     });
+  });
+
+  it("waits for a preparing session before restoring its first question", async () => {
+    useParamsMock.mockReturnValue({
+      sessionId: "preparing-session",
+    });
+    getInterviewSessionMock.mockResolvedValue({ status: "PREPARING" });
+
+    renderSessionFlow();
+
+    await waitFor(() => {
+      expect(waitForFirstQuestionMock).toHaveBeenCalledWith(
+        "preparing-session",
+        expect.any(AbortSignal),
+      );
+      expect(startInterviewSessionMock).toHaveBeenCalledWith(
+        "preparing-session",
+      );
+      expect(getCurrentQuestionMock).toHaveBeenCalledWith("preparing-session");
+    });
+    expect(waitForFirstQuestionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      startInterviewSessionMock.mock.invocationCallOrder[0],
+    );
+    expect(startInterviewSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      getCurrentQuestionMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("does not restore a stored session automatically when the route is empty", async () => {

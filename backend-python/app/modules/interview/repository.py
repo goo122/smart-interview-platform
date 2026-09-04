@@ -769,9 +769,6 @@ class SqlAlchemyInterviewRepository:
         if row is None:
             raise InterviewNotFoundError("Interview session not found")
         current = InterviewStatus(row.status)
-        if current == InterviewStatus.IN_PROGRESS:
-            return _session_to_domain(row)
-        self._state_machine.transition(current, InterviewStatus.IN_PROGRESS)
         question_result = await self._session.execute(
             select(InterviewQuestionModel)
             .where(
@@ -782,26 +779,31 @@ class SqlAlchemyInterviewRepository:
         question = question_result.scalar_one_or_none()
         if question is None:
             raise InvalidInterviewTransitionError("Interview has no starting question")
-        now = utc_now()
-        row.status = InterviewStatus.IN_PROGRESS.value
-        row.started_at = now
-        row.updated_at = now
-        row.version += 1
-        self._session.add(
-            _event_row(
-                row.id,
-                "STATUS_CHANGED",
-                current,
-                InterviewStatus.IN_PROGRESS,
-                {"version": row.version},
-                row.request_id,
-            )
-        )
         existing_turn = await self._session.scalar(
             select(InterviewTurnModel.id)
             .where(InterviewTurnModel.session_id == session_id)
             .limit(1)
         )
+        if current == InterviewStatus.IN_PROGRESS and existing_turn is not None:
+            return _session_to_domain(row)
+        if current != InterviewStatus.IN_PROGRESS:
+            self._state_machine.transition(current, InterviewStatus.IN_PROGRESS)
+        now = utc_now()
+        if current != InterviewStatus.IN_PROGRESS:
+            row.status = InterviewStatus.IN_PROGRESS.value
+            row.started_at = now
+            row.updated_at = now
+            row.version += 1
+            self._session.add(
+                _event_row(
+                    row.id,
+                    "STATUS_CHANGED",
+                    current,
+                    InterviewStatus.IN_PROGRESS,
+                    {"version": row.version},
+                    row.request_id,
+                )
+            )
         if existing_turn is None:
             turn = InterviewTurnModel(
                 id=uuid4(),
