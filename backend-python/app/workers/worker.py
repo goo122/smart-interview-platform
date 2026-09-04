@@ -66,6 +66,11 @@ from app.workers.redis_queue import (
 logger = logging.getLogger(__name__)
 WORKER_HEALTH_KEY = "knowledge-import-worker:health"
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+
 
 def _queue_wait_ms(ctx: dict[str, Any]) -> float | None:
     """Return ARQ queue latency when the worker context provides an enqueue time."""
