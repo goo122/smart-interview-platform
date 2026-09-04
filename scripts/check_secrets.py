@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Fail when tracked repository files contain high-confidence secret signatures."""
 
 from __future__ import annotations
@@ -5,7 +6,6 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
-
 
 PATTERNS = {
     "private key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),

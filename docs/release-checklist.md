@@ -17,6 +17,15 @@
 - [x] API 使用命名卷 `knowledge-storage`，而不是 tmpfs；
 - [x] 未对正式或开发环境执行 `docker compose down -v`（隔离 E2E/集成环境可清理）。
 
+## 预发布环境
+
+- [x] 生产 Compose 模板只向宿主机开放 Caddy 的 80/443，API、PostgreSQL 和 Redis 仅使用内部网络；
+- [x] API 与 worker 使用只读根文件系统，上传文件保存在独立命名卷；
+- [x] 发布预检会验证环境变量、Compose 网络边界和容器内生产配置，且不会连接真实 Provider；
+- [ ] 预发布域名已解析到目标主机，Caddy 已成功签发 HTTPS 证书；
+- [ ] 已验证 PostgreSQL、知识库文件联合备份，并在空白预发布实例完成恢复演练；
+- [ ] 已使用专用测试账号完成限额真实 AI 冒烟并核对供应商账单。
+
 ## API、Nginx 和数据
 
 - [x] `/health` 和 `/health/live` 返回 200；

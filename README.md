@@ -156,4 +156,6 @@ uv run alembic upgrade head --sql
 
 ## 发布验收
 
+生产与预发布环境使用 Caddy 自动 HTTPS、内部数据库网络、配置预检和数据库/知识库联合备份。完整操作见 [预发布与生产部署](docs/production-deployment.md)。
+
 逐项验收项见 [docs/release-checklist.md](docs/release-checklist.md)。当前仓库未包含真实密钥、个人简历、`node_modules`、构建产物、截图或日志。
