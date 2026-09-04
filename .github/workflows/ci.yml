@@ -22,6 +22,19 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/check_secrets.py
+      - run: python -m unittest discover -s scripts/tests
+      - name: Validate production Compose model
+        env:
+          PRODUCTION_ENV_FILE: ./.env.production.example
+        run: >-
+          docker compose --env-file .env.production.example
+          -f docker-compose.yml -f compose.production.yml config --quiet
+      - name: Validate HTTPS edge configuration
+        run: >-
+          docker run --rm --network none -e DOMAIN=ci.invalid
+          -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+          caddy validate --config /etc/caddy/Caddyfile
 
   backend:
     name: Backend quality

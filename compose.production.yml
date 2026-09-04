@@ -1,0 +1,65 @@
+name: interviewplatform-production
+
+x-production-environment: &production-environment
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/ai_interview
+  APP_REDIS_URL: redis://redis:6379/0
+  APP_KNOWLEDGE_STORAGE_DIR: /app/storage
+  APP_EMBEDDING_DIMENSIONS: ${APP_EMBEDDING_DIMENSIONS:-1536}
+  APP_EMBEDDING_BATCH_SIZE: ${APP_EMBEDDING_BATCH_SIZE:-10}
+
+services:
+  migrate:
+    env_file: !override
+      - ${PRODUCTION_ENV_FILE:-./.env.production}
+    environment: *production-environment
+
+  api:
+    env_file: !override
+      - ${PRODUCTION_ENV_FILE:-./.env.production}
+    environment: *production-environment
+    ports: !override []
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+  worker:
+    env_file: !override
+      - ${PRODUCTION_ENV_FILE:-./.env.production}
+    environment: *production-environment
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+  frontend:
+    ports: !override []
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports: !override []
+
+  redis:
+    ports: !override []
+
+  caddy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:

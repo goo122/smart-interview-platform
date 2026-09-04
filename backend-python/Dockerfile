@@ -12,6 +12,7 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then pip install ".[dev]"; else pip install 
 
 COPY app ./app
 COPY alembic ./alembic
+COPY scripts ./scripts
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN useradd --create-home --uid 10001 appuser \

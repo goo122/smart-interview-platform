@@ -1,0 +1,4 @@
+.env.production
+backups/
+__pycache__/
+*.py[cod]
