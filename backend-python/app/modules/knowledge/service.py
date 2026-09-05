@@ -220,20 +220,51 @@ class KnowledgeService:
         try:
             # A stale recovery or redelivered job must not append duplicate chunks.
             await self._vector_store.delete_document(document.id)
+            parse_started_at = time.perf_counter()
             pages = await self._pdf_parser.parse(document.storage_path)
+            pdf_parse_ms = round((time.perf_counter() - parse_started_at) * 1000, 2)
+            split_started_at = time.perf_counter()
             chunks = list(self._text_splitter.split(pages))
+            text_split_ms = round((time.perf_counter() - split_started_at) * 1000, 2)
             if not chunks:
                 raise UnsupportedPdfError("PDF contains no extractable text")
             if len(chunks) > self._settings.rag_max_chunks_per_document:
                 raise ChunkLimitExceededError("PDF contains too many text chunks")
+            embedding_started_at = time.perf_counter()
             stored_chunks = await self._embed_chunks(chunks)
+            embedding_ms = round((time.perf_counter() - embedding_started_at) * 1000, 2)
+            vector_storage_started_at = time.perf_counter()
             await self._vector_store.store_chunks(document.id, stored_chunks)
+            vector_storage_ms = round(
+                (time.perf_counter() - vector_storage_started_at) * 1000, 2
+            )
+            status_storage_started_at = time.perf_counter()
             await self._repository.mark_ready(document.id, len(pages), len(stored_chunks))
+            status_storage_ms = round(
+                (time.perf_counter() - status_storage_started_at) * 1000, 2
+            )
+            duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
             logger.info(
-                "Knowledge document processing completed",
+                "Knowledge document processing completed duration_ms=%s "
+                "pdf_parse_ms=%s text_split_ms=%s embedding_ms=%s "
+                "vector_storage_ms=%s status_storage_ms=%s page_count=%s chunk_count=%s",
+                duration_ms,
+                pdf_parse_ms,
+                text_split_ms,
+                embedding_ms,
+                vector_storage_ms,
+                status_storage_ms,
+                len(pages),
+                len(stored_chunks),
                 extra={
                     **common_log,
-                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "duration_ms": duration_ms,
+                    "pdf_parse_ms": pdf_parse_ms,
+                    "text_split_ms": text_split_ms,
+                    "embedding_ms": embedding_ms,
+                    "vector_storage_ms": vector_storage_ms,
+                    "status_storage_ms": status_storage_ms,
+                    "page_count": len(pages),
                     "chunk_count": len(stored_chunks),
                 },
             )

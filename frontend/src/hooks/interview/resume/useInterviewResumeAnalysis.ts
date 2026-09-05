@@ -230,6 +230,10 @@ export function useInterviewResumeAnalysis({
         const prepared = await prepareInterviewSession(file, {
           requestId: generateRequestId(),
           onPreparationStage: setUploadStage,
+          onSessionCreated: (session) => {
+            setInterviewerSessionId(session.sessionId);
+            hydratedSessionIdRef.current = session.sessionId;
+          },
         });
         applyResumeMetadata(
           buildResumeMetadata({

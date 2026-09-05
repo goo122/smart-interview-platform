@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 
 type InterviewHeaderProps = {
   isReady: boolean;
+  hasSession?: boolean;
+  isRecovering?: boolean;
   currentQuestionNumber: string | null;
   isCurrentQuestionFollowUp: boolean;
   currentFollowUpCount: number;
@@ -17,6 +19,8 @@ type InterviewHeaderProps = {
 
 export default function InterviewHeader({
   isReady,
+  hasSession,
+  isRecovering,
   currentQuestionNumber,
   isCurrentQuestionFollowUp,
   currentFollowUpCount,
@@ -38,7 +42,15 @@ export default function InterviewHeader({
       </div>
       <div className="flex items-center gap-3">
         <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-500">
-          {isReady ? "面试进行中" : "待上传简历"}
+          {isInterviewFinished
+            ? "面试已结束"
+            : isRecovering
+              ? "正在同步面试"
+              : isReady
+                ? "面试进行中"
+                : hasSession
+                  ? "面试暂停"
+                  : "待上传简历"}
         </div>
         {currentQuestionNumber && !isInterviewFinished ? (
           <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-500">
@@ -88,7 +100,11 @@ export default function InterviewHeader({
             disabled={isEndingInterview}
             onClick={onEndInterview}
           >
-            {isEndingInterview ? "处理中..." : "结束面试"}
+            {isEndingInterview
+              ? "处理中..."
+              : isInterviewFinished
+                ? "查看报告"
+                : "结束面试"}
           </Button>
         </div>
       </div>

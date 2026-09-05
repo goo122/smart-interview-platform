@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -22,6 +23,19 @@ from app.workers.redis_queue import (
     enqueue_interview_resume_evaluation_job,
 )
 from app.workers.worker import worker_shutdown
+
+
+def test_queue_wait_ms_uses_arq_enqueue_time() -> None:
+    enqueue_time = datetime.now(UTC) - timedelta(seconds=2)
+
+    result = worker_module._queue_wait_ms({"enqueue_time": enqueue_time})
+
+    assert result is not None
+    assert 1_900 <= result <= 3_000
+
+
+def test_queue_wait_ms_is_optional_outside_arq() -> None:
+    assert worker_module._queue_wait_ms({}) is None
 
 
 class RecordingQueue:
@@ -207,6 +221,9 @@ async def test_preparation_and_resume_evaluation_use_different_database_sessions
         async def claim_preparation(self, *_args: object, **_kwargs: object):
             return session
 
+        async def list_questions(self, _session_id: object):
+            return []
+
     class PreparationWorkflow:
         timings = {
             "context_retrieval_ms": 1.0,
@@ -241,6 +258,7 @@ async def test_preparation_and_resume_evaluation_use_different_database_sessions
         "embedding": object(),
         "interview_question_generator": object(),
         "resume_evaluator": object(),
+        "resume_role_inference": object(),
         "document_task_queue": object(),
     }
 

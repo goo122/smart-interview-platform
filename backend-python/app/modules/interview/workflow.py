@@ -16,12 +16,15 @@ from app.ai.resume import (
     RESUME_EVALUATION_VERSION,
     ResumeEvaluationRequest,
     ResumeEvaluatorPort,
+    ResumeRoleInferencePort,
+    ResumeRoleInferenceRequest,
     StructuredResumeEvaluation,
     UnavailableResumeEvaluator,
 )
 from app.core.exceptions import AppError
 from app.modules.interview.context import InterviewContext, InterviewContextProviderPort
 from app.modules.interview.domain import (
+    AUTO_DETECT_JOB_TITLE,
     InterviewDifficulty,
     InterviewQuestion,
     InterviewQuestionCitation,
@@ -35,6 +38,7 @@ from app.modules.interview.exceptions import (
     InterviewQuestionValidationError,
     RetryableInterviewPreparationError,
 )
+from app.modules.interview.question_bank import select_question_buffer
 from app.modules.interview.repository import InterviewRepository
 from app.workers.queue import (
     InterviewResumeEvaluationJob,
@@ -52,10 +56,14 @@ class InterviewGraphState(TypedDict, total=False):
     generation_request: QuestionGenerationRequest
     generated: GeneratedQuestionSet
     questions: list[InterviewQuestion]
+    existing_questions: list[InterviewQuestion]
     skip: bool
+    question_buffer_ready: bool
     preparation_claimed: bool
     context_retrieval_ms: float
     question_generation_ms: float
+    question_generation_attempts: int
+    question_validation_retry_count: int
     database_storage_ms: float
 
 
@@ -69,13 +77,16 @@ class InterviewPreparationWorkflow:
         generator: InterviewQuestionGeneratorPort,
         resume_evaluator: ResumeEvaluatorPort | None = None,
         resume_evaluation_queue: InterviewResumeEvaluationTaskQueuePort | None = None,
+        role_inference: ResumeRoleInferencePort | None = None,
     ) -> None:
         self._repository = repository
         self._context_provider = context_provider
         self._generator = generator
         self._resume_evaluator = resume_evaluator
         self._resume_evaluation_queue = resume_evaluation_queue
-        self.timings: dict[str, float] = {}
+        self._role_inference = role_inference
+        self.timings: dict[str, object] = {}
+        self._started_at = 0.0
         self._graph = self._build_graph()
 
     async def prepare(
@@ -87,6 +98,7 @@ class InterviewPreparationWorkflow:
         worker_mode: bool = False,
     ) -> InterviewSession:
         self.timings = {}
+        self._started_at = time.perf_counter()
         state: InterviewGraphState = {
             "user_id": user_id,
             "session_id": session_id,
@@ -103,6 +115,16 @@ class InterviewPreparationWorkflow:
                 raise RuntimeError("Interview cancellation could not be persisted") from exc
             raise
         except AppError as exc:
+            buffered_questions = await self._repository.list_questions(session_id)
+            if buffered_questions:
+                if worker_mode:
+                    raise RetryableInterviewPreparationError(
+                        "Remaining interview questions will be retried"
+                    ) from exc
+                buffered = await self._repository.get_for_user(session_id, user_id)
+                if buffered is None:
+                    raise InterviewPreparationError("Interview session not found") from exc
+                return buffered
             return await self._fail(state, exc.code, exc.message)
         except Exception as exc:
             if worker_mode:
@@ -125,6 +147,8 @@ class InterviewPreparationWorkflow:
         builder.add_node("validate_knowledge_base", self._validate_knowledge_base)
         builder.add_node("mark_preparing", self._mark_preparing)
         builder.add_node("retrieve_resume_context", self._retrieve_resume_context)
+        builder.add_node("prepare_question_buffer", self._prepare_question_buffer)
+        builder.add_node("detect_job", self._detect_job)
         builder.add_node("schedule_resume_evaluation", self._schedule_resume_evaluation)
         builder.add_node("build_question_generation_context", self._build_generation_context)
         builder.add_node("generate_questions", self._generate_questions)
@@ -139,9 +163,15 @@ class InterviewPreparationWorkflow:
             self._continue_after_mark_preparing,
             {"continue": "retrieve_resume_context", "end": END},
         )
-        builder.add_edge("retrieve_resume_context", "schedule_resume_evaluation")
+        builder.add_edge("retrieve_resume_context", "prepare_question_buffer")
+        builder.add_edge("prepare_question_buffer", "detect_job")
+        builder.add_edge("detect_job", "schedule_resume_evaluation")
         builder.add_edge("schedule_resume_evaluation", "build_question_generation_context")
-        builder.add_edge("build_question_generation_context", "generate_questions")
+        builder.add_conditional_edges(
+            "build_question_generation_context",
+            self._continue_after_build_generation_context,
+            {"generate": "generate_questions", "end": END},
+        )
         builder.add_edge("generate_questions", "validate_questions")
         builder.add_edge("validate_questions", "persist_questions_and_citations")
         builder.add_edge("persist_questions_and_citations", "mark_ready")
@@ -164,7 +194,7 @@ class InterviewPreparationWorkflow:
 
     async def _mark_preparing(self, state: InterviewGraphState) -> InterviewGraphState:
         if state.get("preparation_claimed"):
-            if state["session"].status.value != "PREPARING":
+            if state["session"].status.value not in {"PREPARING", "READY", "IN_PROGRESS"}:
                 state["skip"] = True
                 return state
             state["skip"] = False
@@ -194,6 +224,66 @@ class InterviewPreparationWorkflow:
         elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
         state["context_retrieval_ms"] = elapsed_ms
         self.timings["context_retrieval_ms"] = elapsed_ms
+        self.timings["retrieved_chunks"] = len(state["context"].citations)
+        self.timings["retrieved_context_chars"] = len(state["context"].prompt)
+        return state
+
+    async def _prepare_question_buffer(
+        self, state: InterviewGraphState
+    ) -> InterviewGraphState:
+        session = state["session"]
+        existing = list(await self._repository.list_questions(session.id))
+        if not existing:
+            buffer = select_question_buffer(
+                session,
+                state["context"],
+                count=min(2, session.question_count),
+            )
+            state["session"] = await self._repository.persist_questions_and_ready(
+                session.id, state["user_id"], buffer
+            )
+            existing = buffer
+        state["existing_questions"] = existing
+        state["question_buffer_ready"] = bool(existing)
+        elapsed_ms = round((utc_now() - session.created_at).total_seconds() * 1000, 2)
+        self.timings["question_ready_first_ms"] = elapsed_ms
+        return state
+
+    async def _detect_job(self, state: InterviewGraphState) -> InterviewGraphState:
+        session = state["session"]
+        if session.job_title != AUTO_DETECT_JOB_TITLE or self._role_inference is None:
+            return state
+        started_at = time.perf_counter()
+        try:
+            inference = await self._role_inference.infer(
+                ResumeRoleInferenceRequest(
+                    resume_context=state["context"].prompt,
+                    source_ids=tuple(
+                        citation.source_id for citation in state["context"].citations
+                    ),
+                )
+            )
+            job_title = inference.recommended_job_title.strip()
+            if job_title:
+                state["session"] = await self._repository.update_job_context(
+                    session.id,
+                    state["user_id"],
+                    job_title,
+                    f"围绕{job_title}的岗位职责、核心技能、项目经验和问题解决能力进行综合评估。",
+                )
+        except Exception:
+            logger.warning(
+                "Background job detection failed; question preparation continues",
+                extra={
+                    "session_id": str(session.id),
+                    "user_id": str(state["user_id"]),
+                },
+                exc_info=True,
+            )
+        finally:
+            self.timings["job_detection_ms"] = round(
+                (time.perf_counter() - started_at) * 1000, 2
+            )
         return state
 
     async def _schedule_resume_evaluation(
@@ -261,25 +351,44 @@ class InterviewPreparationWorkflow:
     async def _build_generation_context(self, state: InterviewGraphState) -> InterviewGraphState:
         session = state["session"]
         context = state["context"]
+        remaining_count = max(session.question_count - len(state["existing_questions"]), 0)
         state["generation_request"] = QuestionGenerationRequest(
             job_title=session.job_title,
             job_description=session.job_description,
             interview_type=session.interview_type.value,
             difficulty=session.difficulty.value,
-            question_count=session.question_count,
+            question_count=remaining_count,
             context_prompt=context.prompt,
             source_ids=tuple(citation.source_id for citation in context.citations),
         )
         return state
 
+    @staticmethod
+    def _continue_after_build_generation_context(state: InterviewGraphState) -> str:
+        return "generate" if state["generation_request"].question_count > 0 else "end"
+
     async def _generate_questions(self, state: InterviewGraphState) -> InterviewGraphState:
         started_at = time.perf_counter()
         last_error: InterviewQuestionValidationError | None = None
-        for _attempt in range(2):
+        for attempt in range(1, 3):
+            state["question_generation_attempts"] = attempt
+            self.timings["question_generation_attempts"] = attempt
+            state["question_validation_retry_count"] = attempt - 1
+            self.timings["question_validation_retry_count"] = attempt - 1
             try:
                 state["generated"] = await self._generator.generate(
                     state["generation_request"]
                 )
+                metrics = getattr(self._generator, "last_metrics", None)
+                if metrics is not None:
+                    self.timings["question_generation_model"] = metrics.model
+                    self.timings["question_generation_ttft_ms"] = metrics.ttft_ms
+                    self.timings["question_generation_input_tokens"] = (
+                        metrics.input_tokens
+                    )
+                    self.timings["question_generation_output_tokens"] = (
+                        metrics.output_tokens
+                    )
             except ValidationError as exc:
                 raise InterviewQuestionValidationError(
                     "Generated question payload is invalid"
@@ -292,6 +401,15 @@ class InterviewPreparationWorkflow:
                 return state
             except InterviewQuestionValidationError as exc:
                 last_error = exc
+                logger.warning(
+                    "Generated interview questions failed validation",
+                    extra={
+                        "session_id": str(state["session_id"]),
+                        "attempt": attempt,
+                        "will_retry": attempt < 2,
+                        "failure_reason": str(exc),
+                    },
+                )
         if last_error is not None:
             raise last_error
         return state
@@ -300,12 +418,19 @@ class InterviewPreparationWorkflow:
         session = state["session"]
         context = state["context"]
         generated = state["generated"]
-        if len(generated.questions) != session.question_count:
+        request = state["generation_request"]
+        if len(generated.questions) != request.question_count:
             raise InterviewQuestionValidationError("Generated question count is invalid")
         citations_by_source = {citation.source_id: citation for citation in context.citations}
-        seen: set[str] = set()
+        seen = {
+            " ".join(question.content.split()).casefold()
+            for question in state["existing_questions"]
+        }
         questions: list[InterviewQuestion] = []
-        for index, generated_question in enumerate(generated.questions, start=1):
+        start_sequence = len(state["existing_questions"]) + 1
+        for index, generated_question in enumerate(
+            generated.questions, start=start_sequence
+        ):
             normalized = " ".join(generated_question.content.split()).casefold()
             if not normalized or normalized in seen:
                 raise InterviewQuestionValidationError("Generated questions must be unique")
@@ -383,7 +508,7 @@ class InterviewPreparationWorkflow:
 
     async def _persist_questions(self, state: InterviewGraphState) -> InterviewGraphState:
         started_at = time.perf_counter()
-        state["session"] = await self._repository.persist_questions_and_ready(
+        state["session"] = await self._repository.append_questions(
             state["session_id"], state["user_id"], state["questions"]
         )
         elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)

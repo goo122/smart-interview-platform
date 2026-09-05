@@ -29,6 +29,8 @@ export function useInterviewPageController() {
       sessionId: sessionFlow.interviewerSessionId,
       error: sessionFlow.interviewError,
       isEnding: sessionFlow.isEndingInterview,
+      isRecovering: sessionFlow.isRecovering,
+      retryRecovery: sessionFlow.retryRecovery,
       currentQuestionNumber: sessionFlow.currentQuestionNumber,
       currentQuestionContent: sessionFlow.currentQuestionContent,
       isCurrentQuestionFollowUp: sessionFlow.isCurrentQuestionFollowUp,

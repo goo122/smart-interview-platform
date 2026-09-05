@@ -1,8 +1,12 @@
+import json
+import logging
+import time
+from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.domain import User
@@ -38,6 +42,7 @@ from app.modules.report.schemas import (
 from app.modules.report.service import InterviewReportService
 
 router = APIRouter(prefix="/xunzhi/v1/interview", tags=["interview"])
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -105,6 +110,7 @@ async def create_session(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[InterviewService, Depends(get_interview_service)],
 ) -> InterviewSessionResponse:
+    started_at = time.perf_counter()
     session = await service.create_session(
         user_id=current_user.id,
         knowledge_base_id=payload.knowledge_base_id,
@@ -116,6 +122,17 @@ async def create_session(
         request_id=payload.request_id,
     )
     evaluation = await service.get_resume_evaluation(current_user.id, session.id)
+    response_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    logger.info(
+        "Interview start response completed interview_start_response_ms=%s",
+        response_ms,
+        extra={
+            "session_id": str(session.id),
+            "user_id": str(current_user.id),
+            "interview_start_response_ms": response_ms,
+            "status": session.status.value,
+        },
+    )
     return InterviewSessionResponse.from_domain(session, evaluation)
 
 
@@ -171,6 +188,32 @@ async def get_session(
     session = await service.get_session(current_user.id, session_id)
     evaluation = await service.get_resume_evaluation(current_user.id, session_id)
     return InterviewSessionResponse.from_domain(session, evaluation)
+
+
+@router.get("/sessions/{session_id}/events/stream", response_class=StreamingResponse)
+async def stream_preparation_events(
+    session_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[InterviewService, Depends(get_interview_service)],
+) -> StreamingResponse:
+    async def event_stream() -> AsyncIterator[str]:
+        async for message in service.stream_preparation_events(
+            current_user.id, session_id
+        ):
+            yield (
+                f"id: {message['id']}\n"
+                f"event: {message['event']}\n"
+                f"data: {json.dumps(message['data'], ensure_ascii=False)}\n\n"
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(
@@ -288,11 +331,15 @@ async def submit_answer(
         answer=payload.answer,
         request_id=payload.request_id,
     )
+    next_turn = await service.next_turn_after_submission(
+        current_user.id, session_id, progress.turn.id
+    )
     return SubmitInterviewAnswerResponse(
         sessionId=progress.session.id,
         turnId=progress.turn.id,
         status=progress.turn.status.value,
         requestId=payload.request_id.strip(),
+        nextTurn=InterviewTurnResponse.from_progress(next_turn) if next_turn else None,
     )
 
 

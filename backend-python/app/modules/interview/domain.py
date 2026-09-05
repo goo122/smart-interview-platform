@@ -4,6 +4,11 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
+AUTO_DETECT_JOB_TITLE = "基于简历的技术面试"
+AUTO_DETECT_JOB_DESCRIPTION = (
+    "围绕候选人简历中的技能、项目经历和问题解决能力进行技术面试。"
+)
+
 
 class InterviewStatus(StrEnum):
     CREATED = "CREATED"

@@ -265,13 +265,52 @@ class AiProviderFactory:
                     timeout=settings.ai_request_timeout_seconds,
                     max_retries=settings.ai_max_retries,
                 )
+            evaluation_model = model
+            if (
+                settings.interview_evaluation_model
+                and settings.interview_evaluation_model != settings.llm_model
+            ):
+                evaluation_model = ChatOpenAI(
+                    api_key=SecretStr(settings.llm_api_key),
+                    base_url=settings.llm_base_url,
+                    model=settings.interview_evaluation_model,
+                    temperature=0,
+                    timeout=settings.ai_request_timeout_seconds,
+                    max_retries=settings.ai_max_retries,
+                )
+            report_model = model
+            if (
+                settings.final_report_model
+                and settings.final_report_model != settings.llm_model
+            ):
+                report_model = ChatOpenAI(
+                    api_key=SecretStr(settings.llm_api_key),
+                    base_url=settings.llm_base_url,
+                    model=settings.final_report_model,
+                    temperature=0,
+                    timeout=settings.ai_request_timeout_seconds,
+                    max_retries=settings.ai_max_retries,
+                )
+            job_detection_model = model
+            if (
+                settings.job_detection_model
+                and settings.job_detection_model != settings.llm_model
+            ):
+                job_detection_model = ChatOpenAI(
+                    api_key=SecretStr(settings.llm_api_key),
+                    base_url=settings.llm_base_url,
+                    model=settings.job_detection_model,
+                    temperature=0,
+                    timeout=settings.ai_request_timeout_seconds,
+                    max_retries=settings.ai_max_retries,
+                )
             chat_model = LangChainChatModelAdapter(model)
             question_generator = LangChainInterviewQuestionGeneratorAdapter(question_model)
-            answer_evaluator = LangChainInterviewAnswerEvaluatorAdapter(model)
-            follow_up_generator = LangChainFollowUpQuestionGeneratorAdapter(model)
-            report_narrative = LangChainInterviewReportNarrativeAdapter(model)
-            resume_evaluator = LangChainResumeEvaluatorAdapter(model)
-            resume_role_inference = LangChainResumeRoleInferenceAdapter(model)
+            answer_evaluator = LangChainInterviewAnswerEvaluatorAdapter(evaluation_model)
+            follow_up_generator = LangChainFollowUpQuestionGeneratorAdapter(evaluation_model)
+            report_narrative = LangChainInterviewReportNarrativeAdapter(report_model)
+            resume_evaluator = LangChainResumeEvaluatorAdapter(evaluation_model)
+            resume_role_inference = LangChainResumeRoleInferenceAdapter(job_detection_model)
         else:
             chat_model = UnavailableChatModel()
             question_generator = UnavailableInterviewQuestionGenerator()

@@ -184,13 +184,9 @@ describe("interviewService.prepareInterviewSessionFromResume", () => {
     const createSessionSpy = vi
       .spyOn(interviewService, "createInterviewSession")
       .mockResolvedValue({ sessionId: "session-1", status: "PREPARING" });
-    const getSessionSpy = vi
-      .spyOn(interviewService, "getInterviewSession")
-      .mockResolvedValue({
-        sessionId: "session-1",
-        status: "READY",
-        canStart: true,
-      } as never);
+    const waitForFirstQuestionSpy = vi
+      .spyOn(interviewService, "waitForFirstQuestion")
+      .mockResolvedValue();
     const startSessionSpy = vi
       .spyOn(interviewService, "startInterviewSession")
       .mockResolvedValue({ sessionId: "session-1", status: "IN_PROGRESS" } as never);
@@ -205,6 +201,10 @@ describe("interviewService.prepareInterviewSessionFromResume", () => {
 
       expect(result.sessionId).toBe("session-1");
       expect(resolveRoleSpy).not.toHaveBeenCalled();
+      expect(waitForFirstQuestionSpy).toHaveBeenCalledWith(
+        "session-1",
+        undefined,
+      );
       expect(createSessionSpy).toHaveBeenCalledWith({
         knowledgeBaseId: "knowledge-1",
         jobTitle: "Java 后端工程师",
@@ -215,13 +215,27 @@ describe("interviewService.prepareInterviewSessionFromResume", () => {
         requestId: "request-1",
       });
       expect(stages).toEqual([0, 1, 2, 2]);
+
+      await interviewService.prepareInterviewSessionFromResume(file);
+
+      expect(resolveRoleSpy).not.toHaveBeenCalled();
+      expect(createSessionSpy).toHaveBeenLastCalledWith({
+        knowledgeBaseId: "knowledge-1",
+        jobTitle: "基于简历的技术面试",
+        jobDescription:
+          "围绕候选人简历中的技能、项目经历和问题解决能力进行技术面试。",
+        interviewType: "TECHNICAL",
+        difficulty: "MEDIUM",
+        questionCount: 5,
+        requestId: undefined,
+      });
     } finally {
       createBaseSpy.mockRestore();
       uploadDocumentSpy.mockRestore();
       listDocumentsSpy.mockRestore();
       resolveRoleSpy.mockRestore();
       createSessionSpy.mockRestore();
-      getSessionSpy.mockRestore();
+      waitForFirstQuestionSpy.mockRestore();
       startSessionSpy.mockRestore();
     }
   });
@@ -350,6 +364,128 @@ describe("interviewService.restoreInterviewSession", () => {
 });
 
 describe("interviewService.answerInterviewQuestion", () => {
+  it("returns the preadvanced next turn without waiting for evaluation", async () => {
+    const postSpy = vi.spyOn(service, "post").mockResolvedValue({
+      sessionId: "session-1",
+      turnId: "turn-1",
+      status: "EVALUATING",
+      requestId: "answer-1",
+      nextTurn: {
+        turnId: "turn-2",
+        sessionId: "session-1",
+        questionId: "question-2",
+        parentTurnId: null,
+        turnType: "PRIMARY",
+        question: "Next question",
+        sequence: 2,
+        followUpDepth: 0,
+        status: "WAITING_ANSWER",
+        canAnswer: true,
+        answer: null,
+        answerRequestId: null,
+        answeredAt: null,
+        evaluation: null,
+        createdAt: "2026-09-04T00:00:00Z",
+        evaluatedAt: null,
+      },
+    });
+    const getTurnSpy = vi.spyOn(interviewService, "getInterviewTurn");
+    const getSessionSpy = vi.spyOn(interviewService, "getInterviewSession");
+    const getCurrentSpy = vi.spyOn(interviewService, "getCurrentInterviewTurn");
+
+    try {
+      const result = await interviewService.answerInterviewQuestion({
+        sessionId: "session-1",
+        turnId: "turn-1",
+        answerContent: "我通过指标验证了异步处理效果。",
+        requestId: "answer-1",
+      });
+
+      expect(result.turnId).toBe("turn-2");
+      expect(result.nextQuestion).toBe("Next question");
+      expect(result.nextQuestionNumber).toBe("2");
+      expect(getTurnSpy).not.toHaveBeenCalled();
+      expect(getSessionSpy).not.toHaveBeenCalled();
+      expect(getCurrentSpy).not.toHaveBeenCalled();
+    } finally {
+      postSpy.mockRestore();
+      getTurnSpy.mockRestore();
+      getSessionSpy.mockRestore();
+      getCurrentSpy.mockRestore();
+    }
+  });
+
+  it("waits for a late-prefetched turn after evaluation finishes", async () => {
+    const completedTurn = {
+      turnId: "turn-1",
+      sessionId: "session-1",
+      questionId: "question-1",
+      parentTurnId: null,
+      turnType: "PRIMARY",
+      question: "First question",
+      sequence: 1,
+      followUpDepth: 0,
+      status: "COMPLETED",
+      canAnswer: false,
+      answer: "answer",
+      answerRequestId: "answer-1",
+      answeredAt: "2026-09-04T00:00:01Z",
+      evaluation: null,
+      createdAt: "2026-09-04T00:00:00Z",
+      evaluatedAt: "2026-09-04T00:00:02Z",
+    };
+    const lateTurn = {
+      ...completedTurn,
+      turnId: "turn-2",
+      questionId: "question-2",
+      question: "Late-prefetched question",
+      sequence: 2,
+      status: "WAITING_ANSWER",
+      canAnswer: true,
+      answer: null,
+      answerRequestId: null,
+      answeredAt: null,
+      evaluatedAt: null,
+    };
+    const postSpy = vi.spyOn(service, "post").mockResolvedValue({
+      sessionId: "session-1",
+      turnId: "turn-1",
+      status: "EVALUATING",
+      requestId: "answer-1",
+      nextTurn: null,
+    });
+    const getTurnSpy = vi
+      .spyOn(interviewService, "getInterviewTurn")
+      .mockResolvedValue(completedTurn as never);
+    const getSessionSpy = vi
+      .spyOn(interviewService, "getInterviewSession")
+      .mockResolvedValue({ status: "IN_PROGRESS" } as never);
+    const getCurrentSpy = vi
+      .spyOn(interviewService, "getCurrentInterviewTurn")
+      .mockRejectedValueOnce(
+        new AppError(ErrorCode.RESOURCE_NOT_FOUND, "not ready"),
+      )
+      .mockResolvedValue(lateTurn as never);
+
+    try {
+      const result = await interviewService.answerInterviewQuestion({
+        sessionId: "session-1",
+        turnId: "turn-1",
+        answerContent: "回答已提交。",
+        requestId: "answer-1",
+      });
+
+      expect(result.turnId).toBe("turn-2");
+      expect(result.nextQuestion).toBe("Late-prefetched question");
+      expect(getCurrentSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      postSpy.mockRestore();
+      getTurnSpy.mockRestore();
+      getSessionSpy.mockRestore();
+      getCurrentSpy.mockRestore();
+    }
+  });
+
   it("rejects empty questionNumber before request", async () => {
     const error = await interviewService
       .answerInterviewQuestion({

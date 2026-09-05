@@ -171,6 +171,22 @@ class InterviewAnswerService:
             evaluation=await self._repository.get_evaluation_for_turn(turn.id, user_id),
         )
 
+    async def next_turn_after_submission(
+        self, user_id: UUID, session_id: UUID, submitted_turn_id: UUID
+    ) -> InterviewProgress | None:
+        session = await self._repository.get_for_user(session_id, user_id)
+        if session is None:
+            raise InterviewNotFoundError("Interview session not found")
+        turn = await self._repository.get_current_turn(session_id, user_id)
+        if turn is None or turn.id == submitted_turn_id:
+            return None
+        return InterviewProgress(
+            session=session,
+            turn=turn,
+            answer=await self._repository.get_answer_for_turn(turn.id, user_id),
+            evaluation=await self._repository.get_evaluation_for_turn(turn.id, user_id),
+        )
+
     async def list_turns(self, user_id: UUID, session_id: UUID) -> Sequence[InterviewProgress]:
         session = await self._repository.get_for_user(session_id, user_id)
         if session is None:

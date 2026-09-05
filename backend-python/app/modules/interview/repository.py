@@ -120,6 +120,14 @@ class InterviewRepository(Protocol):
         self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
     ) -> InterviewSession: ...
 
+    async def append_questions(
+        self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
+    ) -> InterviewSession: ...
+
+    async def update_job_context(
+        self, session_id: UUID, user_id: UUID, job_title: str, job_description: str
+    ) -> InterviewSession: ...
+
     async def mark_failed(
         self, session_id: UUID, user_id: UUID, failure_code: str, failure_message: str
     ) -> InterviewSession: ...
@@ -624,6 +632,148 @@ class SqlAlchemyInterviewRepository:
         await self._session.refresh(row)
         return _session_to_domain(row)
 
+    async def append_questions(
+        self, session_id: UUID, user_id: UUID, questions: Sequence[InterviewQuestion]
+    ) -> InterviewSession:
+        row = await self._locked_row(session_id, user_id)
+        if row is None:
+            raise InterviewNotFoundError("Interview session not found")
+        existing_sequences = set(
+            (
+                await self._session.scalars(
+                    select(InterviewQuestionModel.sequence).where(
+                        InterviewQuestionModel.session_id == session_id
+                    )
+                )
+            ).all()
+        )
+        appended = [
+            question
+            for question in questions
+            if question.sequence not in existing_sequences
+        ]
+        for question in appended:
+            self._session.add(
+                InterviewQuestionModel(
+                    id=question.id,
+                    session_id=question.session_id,
+                    sequence=question.sequence,
+                    content=question.content,
+                    category=question.category,
+                    difficulty=question.difficulty.value,
+                    expected_points=question.expected_points,
+                    source_summary=question.source_summary,
+                    created_at=question.created_at,
+                )
+            )
+        await self._session.flush()
+        for question in appended:
+            self._session.add_all(
+                InterviewQuestionCitationModel(
+                    id=citation.id,
+                    question_id=question.id,
+                    chunk_id=citation.chunk_id,
+                    document_id=citation.document_id,
+                    source_id=citation.source_id,
+                    page_number=citation.page_number,
+                    score=citation.score,
+                    excerpt=citation.excerpt,
+                    ordinal=citation.ordinal,
+                    created_at=citation.created_at,
+                )
+                for citation in question.citations
+            )
+        if appended:
+            now = utc_now()
+            row.prepared_at = now
+            row.updated_at = now
+            row.version += 1
+            self._session.add(
+                _event_row(
+                    row.id,
+                    "QUESTIONS_PREFETCHED",
+                    InterviewStatus(row.status),
+                    InterviewStatus(row.status),
+                    {"question_count": len(existing_sequences) + len(appended)},
+                    f"preparation:{row.id}:prefetched:{len(existing_sequences) + len(appended)}",
+                )
+            )
+            if InterviewStatus(row.status) == InterviewStatus.IN_PROGRESS:
+                active_turn_id = await self._session.scalar(
+                    select(InterviewTurnModel.id)
+                    .where(
+                        InterviewTurnModel.session_id == session_id,
+                        InterviewTurnModel.status.in_(
+                            [TurnStatus.WAITING_ANSWER.value, TurnStatus.EVALUATING.value]
+                        ),
+                    )
+                    .limit(1)
+                )
+                next_question_sequence = row.current_question_index + 2
+                next_question = await self._session.scalar(
+                    select(InterviewQuestionModel).where(
+                        InterviewQuestionModel.session_id == session_id,
+                        InterviewQuestionModel.sequence == next_question_sequence,
+                    )
+                )
+                if active_turn_id is None and next_question is not None:
+                    row.current_question_index += 1
+                    next_turn = InterviewTurnModel(
+                        id=uuid4(),
+                        session_id=session_id,
+                        question_id=next_question.id,
+                        parent_turn_id=None,
+                        sequence=await self._next_turn_sequence(session_id),
+                        turn_type=TurnType.PRIMARY.value,
+                        question_content=next_question.content,
+                        status=TurnStatus.WAITING_ANSWER.value,
+                        follow_up_depth=0,
+                        created_at=now,
+                    )
+                    self._session.add(next_turn)
+                    self._session.add(
+                        _event_row(
+                            session_id,
+                            "NEXT_QUESTION_CREATED",
+                            InterviewStatus.IN_PROGRESS,
+                            InterviewStatus.IN_PROGRESS,
+                            {
+                                "turn_sequence": next_turn.sequence,
+                                "question_sequence": next_question_sequence,
+                            },
+                            f"prefetch:{session_id}:question:{next_question_sequence}",
+                        )
+                    )
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _session_to_domain(row)
+
+    async def update_job_context(
+        self, session_id: UUID, user_id: UUID, job_title: str, job_description: str
+    ) -> InterviewSession:
+        row = await self._locked_row(session_id, user_id)
+        if row is None:
+            raise InterviewNotFoundError("Interview session not found")
+        previous_title = row.job_title
+        now = utc_now()
+        row.job_title = job_title
+        row.job_description = job_description
+        row.updated_at = now
+        row.version += 1
+        self._session.add(
+            _event_row(
+                row.id,
+                "JOB_DETECTED",
+                InterviewStatus(row.status),
+                InterviewStatus(row.status),
+                {"previous_job_title": previous_title, "job_title": job_title},
+                f"job-detection:{row.id}",
+            )
+        )
+        await self._session.commit()
+        await self._session.refresh(row)
+        return _session_to_domain(row)
+
     async def mark_failed(
         self, session_id: UUID, user_id: UUID, failure_code: str, failure_message: str
     ) -> InterviewSession:
@@ -665,9 +815,6 @@ class SqlAlchemyInterviewRepository:
         if row is None:
             raise InterviewNotFoundError("Interview session not found")
         current = InterviewStatus(row.status)
-        if current == InterviewStatus.IN_PROGRESS:
-            return _session_to_domain(row)
-        self._state_machine.transition(current, InterviewStatus.IN_PROGRESS)
         question_result = await self._session.execute(
             select(InterviewQuestionModel)
             .where(
@@ -678,26 +825,31 @@ class SqlAlchemyInterviewRepository:
         question = question_result.scalar_one_or_none()
         if question is None:
             raise InvalidInterviewTransitionError("Interview has no starting question")
-        now = utc_now()
-        row.status = InterviewStatus.IN_PROGRESS.value
-        row.started_at = now
-        row.updated_at = now
-        row.version += 1
-        self._session.add(
-            _event_row(
-                row.id,
-                "STATUS_CHANGED",
-                current,
-                InterviewStatus.IN_PROGRESS,
-                {"version": row.version},
-                row.request_id,
-            )
-        )
         existing_turn = await self._session.scalar(
             select(InterviewTurnModel.id)
             .where(InterviewTurnModel.session_id == session_id)
             .limit(1)
         )
+        if current == InterviewStatus.IN_PROGRESS and existing_turn is not None:
+            return _session_to_domain(row)
+        if current != InterviewStatus.IN_PROGRESS:
+            self._state_machine.transition(current, InterviewStatus.IN_PROGRESS)
+        now = utc_now()
+        if current != InterviewStatus.IN_PROGRESS:
+            row.status = InterviewStatus.IN_PROGRESS.value
+            row.started_at = now
+            row.updated_at = now
+            row.version += 1
+            self._session.add(
+                _event_row(
+                    row.id,
+                    "STATUS_CHANGED",
+                    current,
+                    InterviewStatus.IN_PROGRESS,
+                    {"version": row.version},
+                    row.request_id,
+                )
+            )
         if existing_turn is None:
             turn = InterviewTurnModel(
                 id=uuid4(),
@@ -1302,6 +1454,7 @@ class SqlAlchemyInterviewRepository:
                 None,
             )
         )
+        created_next_turn = False
         if should_follow_up:
             if not evaluation.follow_up_question:
                 raise InvalidInterviewTransitionError("Follow-up question is missing")
@@ -1318,6 +1471,7 @@ class SqlAlchemyInterviewRepository:
                 created_at=now,
             )
             self._session.add(next_turn)
+            created_next_turn = True
             self._session.add(
                 _event_row(
                     session_id,
@@ -1336,20 +1490,7 @@ class SqlAlchemyInterviewRepository:
                     InterviewQuestionModel.sequence == next_sequence,
                 )
             )
-            if question is None:
-                session_row.status = InterviewStatus.COMPLETED.value
-                session_row.finished_at = now
-                self._session.add(
-                    _event_row(
-                        session_id,
-                        "INTERVIEW_COMPLETED",
-                        InterviewStatus.IN_PROGRESS,
-                        InterviewStatus.COMPLETED,
-                        {"completed_sequence": turn_row.sequence},
-                        None,
-                    )
-                )
-            else:
+            if question is not None:
                 session_row.current_question_index += 1
                 next_turn = InterviewTurnModel(
                     id=uuid4(),
@@ -1364,6 +1505,7 @@ class SqlAlchemyInterviewRepository:
                     created_at=now,
                 )
                 self._session.add(next_turn)
+                created_next_turn = True
                 self._session.add(
                     _event_row(
                         session_id,
@@ -1371,6 +1513,34 @@ class SqlAlchemyInterviewRepository:
                         InterviewStatus.IN_PROGRESS,
                         InterviewStatus.IN_PROGRESS,
                         {"turn_sequence": next_turn.sequence, "question_sequence": next_sequence},
+                        None,
+                    )
+                )
+        if not created_next_turn:
+            pending_turn_id = await self._session.scalar(
+                select(InterviewTurnModel.id)
+                .where(
+                    InterviewTurnModel.session_id == session_id,
+                    InterviewTurnModel.id != turn_id,
+                    InterviewTurnModel.status.in_(
+                        [TurnStatus.WAITING_ANSWER.value, TurnStatus.EVALUATING.value]
+                    ),
+                )
+                .limit(1)
+            )
+            all_primary_questions_started = (
+                session_row.current_question_index + 1 >= session_row.question_count
+            )
+            if pending_turn_id is None and all_primary_questions_started:
+                session_row.status = InterviewStatus.COMPLETED.value
+                session_row.finished_at = now
+                self._session.add(
+                    _event_row(
+                        session_id,
+                        "INTERVIEW_COMPLETED",
+                        InterviewStatus.IN_PROGRESS,
+                        InterviewStatus.COMPLETED,
+                        {"completed_sequence": turn_row.sequence},
                         None,
                     )
                 )
@@ -1423,9 +1593,19 @@ class SqlAlchemyInterviewRepository:
         turn_row.evaluation_completed_at = now
         turn_row.evaluation_failure_code = failure_code[:64]
         turn_row.evaluation_failure_message = failure_message[:2000]
-        session_row.status = InterviewStatus.FAILED.value
-        session_row.failure_code = failure_code[:64]
-        session_row.failure_message = failure_message[:2000]
+        later_turn_id = await self._session.scalar(
+            select(InterviewTurnModel.id)
+            .where(
+                InterviewTurnModel.session_id == session_id,
+                InterviewTurnModel.sequence > turn_row.sequence,
+            )
+            .limit(1)
+        )
+        keeps_interview_active = later_turn_id is not None
+        if not keeps_interview_active:
+            session_row.status = InterviewStatus.FAILED.value
+            session_row.failure_code = failure_code[:64]
+            session_row.failure_message = failure_message[:2000]
         session_row.updated_at = now
         session_row.version += 1
         self._session.add(
@@ -1433,21 +1613,22 @@ class SqlAlchemyInterviewRepository:
                 session_id,
                 "TURN_FAILED",
                 InterviewStatus.IN_PROGRESS,
-                InterviewStatus.FAILED,
-                {"turn_sequence": turn_row.sequence, "failure_code": session_row.failure_code},
+                InterviewStatus.IN_PROGRESS if keeps_interview_active else InterviewStatus.FAILED,
+                {"turn_sequence": turn_row.sequence, "failure_code": failure_code[:64]},
                 None,
             )
         )
-        self._session.add(
-            _event_row(
-                session_id,
-                "INTERVIEW_FAILED",
-                InterviewStatus.IN_PROGRESS,
-                InterviewStatus.FAILED,
-                {"failure_code": session_row.failure_code},
-                None,
+        if not keeps_interview_active:
+            self._session.add(
+                _event_row(
+                    session_id,
+                    "INTERVIEW_FAILED",
+                    InterviewStatus.IN_PROGRESS,
+                    InterviewStatus.FAILED,
+                    {"failure_code": session_row.failure_code},
+                    None,
+                )
             )
-        )
         await self._session.commit()
         await self._session.refresh(session_row)
         return _session_to_domain(session_row)

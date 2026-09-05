@@ -1,4 +1,3 @@
-import { INTERVIEW_DEFAULTS } from "@/lib/constants";
 import type { ChatMessage, ChatMessageStatus } from "@/lib/chat";
 import type { AnswerInterviewQuestionResult } from "@/services/interviewService";
 
@@ -66,11 +65,8 @@ export const THINKING_PROGRESS_STAGES = [
   "正在生成反馈结论",
   "正在准备下一题",
 ] as const;
-export const FEEDBACK_STREAM_STEP = 2;
-export const FEEDBACK_STREAM_DELAY_MS = 18;
-export const INTERVIEW_MESSAGE_GAP_MS = 180;
 export const AUTO_SAVE_SUCCESS_TEXT =
-  "面试记录已自动保存，点击“结束面试”即可查看报告。";
+  "面试记录已自动保存，点击“查看报告”即可查看报告。";
 export const AUTO_SAVE_FAILED_TEXT =
   "面试已结束，但自动保存失败。你可以点击“结束面试”重新保存。";
 
@@ -105,8 +101,3 @@ export const buildInterviewProgressPatch = (
       typeof response.totalScore === "number" ? response.totalScore : undefined,
   };
 };
-
-export const isMessageInWelcomeState = (messages: ChatMessage[]) =>
-  messages.length === 1 &&
-  messages[0]?.role === "assistant" &&
-  messages[0]?.content === INTERVIEW_DEFAULTS.assistantWelcomeMessage;

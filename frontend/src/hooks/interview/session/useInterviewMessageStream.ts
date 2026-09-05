@@ -5,8 +5,6 @@ import {
   type ChatMessage,
 } from "@/lib/chat";
 import {
-  FEEDBACK_STREAM_DELAY_MS,
-  FEEDBACK_STREAM_STEP,
   FOLLOW_UP_STREAM_DELAY_MS,
   FOLLOW_UP_STREAM_STEP,
   THINKING_PROGRESS_STAGES,
@@ -213,12 +211,7 @@ export function useInterviewMessageStream() {
 
       lastDisplayedQuestionRef.current = questionKey;
       await appendAssistantMessage(displayText, {
-        fakeStream: true,
         variant: isFollowUp ? CHAT_MESSAGE_VARIANT.followUp : undefined,
-        streamStep: isFollowUp ? FOLLOW_UP_STREAM_STEP : FEEDBACK_STREAM_STEP,
-        streamDelayMs: isFollowUp
-          ? FOLLOW_UP_STREAM_DELAY_MS
-          : FEEDBACK_STREAM_DELAY_MS,
         tts: {
           text: nextQuestion,
           autoPlay: true,

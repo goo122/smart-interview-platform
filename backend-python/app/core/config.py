@@ -68,10 +68,14 @@ class Settings(BaseSettings):
     llm_base_url: str | None = None
     llm_model: str | None = None
     interview_question_model: str | None = None
+    job_detection_model: str | None = None
+    interview_evaluation_model: str | None = None
+    final_report_model: str | None = None
     rag_chunk_size: int = Field(default=800, ge=100, le=10000)
     rag_chunk_overlap: int = Field(default=120, ge=0, le=2000)
     rag_max_chunks_per_document: int = Field(default=1000, ge=1, le=10000)
     rag_top_k: int = Field(default=5, ge=1, le=100)
+    interview_question_rag_top_k: int = Field(default=3, ge=1, le=20)
     rag_max_top_k: int = Field(default=20, ge=1, le=100)
     rag_similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     rag_max_context_tokens: int = Field(default=4000, ge=1, le=32000)
@@ -206,6 +210,8 @@ class Settings(BaseSettings):
             raise ValueError("rag_chunk_overlap must be smaller than rag_chunk_size")
         if self.rag_top_k > self.rag_max_top_k:
             raise ValueError("rag_top_k must not exceed rag_max_top_k")
+        if self.interview_question_rag_top_k > self.rag_max_top_k:
+            raise ValueError("interview_question_rag_top_k must not exceed rag_max_top_k")
         if self.interview_min_answer_length > self.interview_max_answer_length:
             raise ValueError(
                 "interview_min_answer_length must not exceed interview_max_answer_length"

@@ -10,6 +10,8 @@ import InterviewResumeUploadCard from "@/components/interview/InterviewResumeUpl
 import InterviewSketchpadSheet from "@/components/interview/sketchpad/InterviewSketchpadSheet";
 import { useInterviewDemeanorPolling } from "@/hooks/interview/camera/useInterviewDemeanorPolling";
 import { useInterviewPageController } from "@/hooks/interview/useInterviewPageController";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 
 export default function InterviewPage() {
   const cameraPreviewRef = useRef<CameraPreviewHandle | null>(null);
@@ -60,13 +62,15 @@ export default function InterviewPage() {
         header={
           <InterviewHeader
             isReady={isReady}
+            hasSession={Boolean(interview.sessionId)}
+            isRecovering={interview.isRecovering}
             currentQuestionNumber={interview.currentQuestionNumber}
             isCurrentQuestionFollowUp={interview.isCurrentQuestionFollowUp}
             currentFollowUpCount={interview.currentFollowUpCount}
             isInterviewFinished={interview.isFinished}
             totalInterviewScore={interview.totalScore}
             isCameraOpen={camera.isOpen}
-            isEndingInterview={interview.isEnding}
+            isEndingInterview={interview.isEnding || isSubmitting || interview.isRecovering}
             onToggleCamera={camera.handleToggleCamera}
             onOpenSketchpad={handleOpenSketchpad}
             onEndInterview={interview.handleEndInterview}
@@ -74,10 +78,25 @@ export default function InterviewPage() {
         }
         topContent={
           <div className="space-y-4">
+            {interview.isRecovering ? (
+              <p role="status" className="text-sm text-slate-500">
+                正在同步面试进度，等待当前题目准备完成…
+              </p>
+            ) : null}
+            {interview.error && interview.sessionId ? (
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={interview.retryRecovery} disabled={interview.isRecovering}>
+                  重新同步面试
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/interview">返回面试列表</Link>
+                </Button>
+              </div>
+            ) : null}
             <InterviewResumeUploadCard
               fileInputRef={resume.fileInputRef}
               isResumeUploading={resume.isUploading}
-              showUploadButton={!isReady}
+              showUploadButton={!interview.sessionId}
               resumeUploadStage={resume.uploadStage}
               resumeLocalFile={resume.localFile}
               resumeFileUrl={resume.fileUrl}
@@ -113,7 +132,7 @@ export default function InterviewPage() {
             onChange={setInput}
             onSend={handleSend}
             placeholder="输入你的回答，或点击麦克风开始语音作答..."
-            disabled={!isReady || isSubmitting || resume.isUploading}
+            disabled={!isReady || isSubmitting || resume.isUploading || interview.isEnding}
             showDefaultLeading={false}
           />
         }

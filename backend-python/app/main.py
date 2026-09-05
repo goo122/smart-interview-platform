@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import cast
@@ -36,6 +37,11 @@ from app.modules.speech.tts_factory import TextToSpeechProviderFactory
 from app.modules.speech.tts_service import TextToSpeechService
 from app.workers.queue import InlineTaskQueue
 from app.workers.redis_queue import ArqDocumentTaskQueue, ArqInterviewTaskQueue
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 @asynccontextmanager

@@ -1,4 +1,5 @@
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -28,6 +29,25 @@ class GeneratedInterviewQuestion(BaseModel):
 
 class GeneratedQuestionSet(BaseModel):
     questions: list[GeneratedInterviewQuestion] = Field(min_length=1, max_length=20)
+
+
+class InterviewQuestionGeneration(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    category: str = Field(min_length=1, max_length=64)
+    difficulty: str = Field(min_length=1, max_length=16)
+
+
+class InterviewQuestionGenerationSet(BaseModel):
+    questions: list[InterviewQuestionGeneration] = Field(min_length=1, max_length=20)
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionGenerationMetrics:
+    model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    ttft_ms: float | None
+    total_latency_ms: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,49 +116,17 @@ class UnavailableInterviewQuestionGenerator:
         raise RuntimeError("No interview question generator is configured")
 
 
-def _source_reference_key(value: str) -> str:
-    normalized = "".join(character for character in value.strip().upper() if character.isalnum())
-    if normalized.startswith("SOURCE") and normalized[6:].isdigit():
-        return f"S{int(normalized[6:])}"
-    if normalized.startswith("S") and normalized[1:].isdigit():
-        return f"S{int(normalized[1:])}"
-    if normalized.isdigit():
-        return f"S{int(normalized)}"
-    return normalized
-
-
-def _sanitize_question_sources(
-    generated: GeneratedQuestionSet,
-    allowed_source_ids: tuple[str, ...],
-) -> GeneratedQuestionSet:
-    if not allowed_source_ids:
-        return generated
-    allowed_by_key = {
-        _source_reference_key(source_id): source_id for source_id in allowed_source_ids
-    }
-    questions: list[GeneratedInterviewQuestion] = []
-    for question in generated.questions:
-        source_ids: list[str] = []
-        for candidate in question.source_ids:
-            source_id = allowed_by_key.get(_source_reference_key(candidate))
-            if source_id is not None and source_id not in source_ids:
-                source_ids.append(source_id)
-        if not source_ids:
-            # The context is relevance-ranked, so the first allowed source is the
-            # safest real citation when a provider invents or reformats every id.
-            source_ids.append(allowed_source_ids[0])
-        questions.append(question.model_copy(update={"source_ids": source_ids}))
-    return generated.model_copy(update={"questions": questions})
-
-
 class LangChainInterviewQuestionGeneratorAdapter:
     """Adapter for a LangChain model exposing ``with_structured_output``."""
 
     def __init__(self, model: Any) -> None:
         self._model = model
+        self.last_metrics: QuestionGenerationMetrics | None = None
 
     async def generate(self, request: QuestionGenerationRequest) -> GeneratedQuestionSet:
-        structured_model = self._model.with_structured_output(GeneratedQuestionSet)
+        structured_model = self._model.with_structured_output(
+            InterviewQuestionGenerationSet, include_raw=True
+        )
         prompt = (
             "你是严谨的技术面试题生成器。仅依据岗位和参考资料生成结构化题目，不得编造来源。\n"
             f"岗位：{request.job_title}\n"
@@ -146,12 +134,36 @@ class LangChainInterviewQuestionGeneratorAdapter:
             f"面试类型：{request.interview_type}\n"
             f"难度：{request.difficulty}\n"
             f"请生成 {request.question_count} 道互不重复的题目；"
-            f"每题难度必须为 {request.difficulty}，"
-            "expected_points 至少包含一个可核验考察点。\n"
-            f"允许的来源编号：{', '.join(request.source_ids)}。"
-            "source_ids 只能逐字复制这些编号（包括方括号）。\n"
+            f"每题难度必须为 {request.difficulty}。"
+            "只输出 question、category、difficulty，不生成答案、评分规则或追问。\n"
             f"参考资料：\n{request.context_prompt}"
         )
+        started_at = time.perf_counter()
         result = await structured_model.ainvoke(prompt)
-        generated = GeneratedQuestionSet.model_validate(result)
-        return _sanitize_question_sources(generated, request.source_ids)
+        latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        is_wrapped = isinstance(result, dict) and ("raw" in result or "parsed" in result)
+        raw = result.get("raw") if is_wrapped else None
+        parsed = result.get("parsed") if is_wrapped else result
+        usage = getattr(raw, "usage_metadata", None) or {}
+        response_metadata = getattr(raw, "response_metadata", None) or {}
+        self.last_metrics = QuestionGenerationMetrics(
+            model=response_metadata.get("model_name") or response_metadata.get("model"),
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            ttft_ms=None,
+            total_latency_ms=latency_ms,
+        )
+        minimal = InterviewQuestionGenerationSet.model_validate(parsed)
+        source_ids = [request.source_ids[0]] if request.source_ids else []
+        return GeneratedQuestionSet(
+            questions=[
+                GeneratedInterviewQuestion(
+                    content=question.question,
+                    category=question.category,
+                    difficulty=question.difficulty,
+                    expected_points=["说明关键决策、实施过程和验证结果"],
+                    source_ids=source_ids,
+                )
+                for question in minimal.questions
+            ]
+        )

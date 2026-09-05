@@ -6,9 +6,6 @@ import { buildReportSearch } from "@/lib/interviewReportRoute";
 import { CHAT_MESSAGE_VARIANT } from "@/lib/chat";
 import {
   buildInterviewProgressPatch,
-  FEEDBACK_STREAM_DELAY_MS,
-  FEEDBACK_STREAM_STEP,
-  INTERVIEW_MESSAGE_GAP_MS,
   isInterviewResponseFailed,
   type InterviewFlowUser,
 } from "@/hooks/interview/session/interviewSessionFlow.shared";
@@ -29,6 +26,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   const [interviewError, setInterviewError] = useState<string | null>(null);
   const [isEndingInterview, setIsEndingInterview] = useState(false);
   const endingInterviewRef = useRef(false);
+  const submittingAnswerRef = useRef(false);
   const answerRequestRef = useRef<{ key: string; requestId: string } | null>(
     null,
   );
@@ -67,9 +65,6 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     resetMessageStream,
   } = useInterviewMessageStream();
 
-  const isReady =
-    Boolean(interviewerSessionId) && !isInterviewFinished && !isInterviewFailed;
-
   const buildInterviewRoomPath = useCallback(
     (sessionId: string) =>
       `${ROUTES.interviewRoom}/${encodeURIComponent(sessionId)}`,
@@ -101,9 +96,21 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   }, []);
 
   const syncNextQuestion = useCallback(
-    async (sessionId: string, options?: { appendMessage?: boolean }) => {
-      const response = await interviewService.getCurrentQuestion(sessionId);
+    async (
+      sessionId: string,
+      options?: { appendMessage?: boolean; signal?: AbortSignal },
+    ) => {
+      const response = options?.signal
+        ? await interviewService.getCurrentQuestion(sessionId, options.signal)
+        : await interviewService.getCurrentQuestion(sessionId);
+      options?.signal?.throwIfAborted();
       const progressPatch = buildInterviewProgressPatch(response);
+      const pendingAnswer = answerRequestRef.current;
+      const questionKey = `${sessionId}:${progressPatch.currentTurnId || progressPatch.currentQuestionNumber}`;
+      if (pendingAnswer && pendingAnswer.key !== questionKey) {
+        setInput("");
+        answerRequestRef.current = null;
+      }
       applyProgressPatch(progressPatch);
       if (isInterviewResponseFailed(response.isSuccess)) {
         throw new Error(
@@ -129,15 +136,25 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     [appendNextQuestionMessage, applyProgressPatch],
   );
 
-  useInterviewRouteRecovery({
+  const { isRecovering, retryRecovery } = useInterviewRouteRecovery({
     routeSessionId,
     storedInterviewerSessionId,
     interviewerSessionId,
     persistInterviewerSessionId,
-    messages,
+    getInterviewSession: interviewService.getInterviewSession,
+    waitForFirstQuestion: interviewService.waitForFirstQuestion,
+    startInterviewSession: interviewService.startInterviewSession,
     syncNextQuestion,
     setInterviewError,
   });
+
+  const isReady =
+    Boolean(interviewerSessionId && (currentTurnId || currentQuestionNumber)) &&
+    !isRecovering &&
+    !interviewError &&
+    !isInterviewFinished &&
+    !isInterviewFailed &&
+    !isEndingInterview;
 
   const { isAutoSaveFailed, resetAutoSaveAttempt } = useInterviewAutoSave({
     interviewerSessionId,
@@ -161,14 +178,13 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     setInterviewerSessionId,
   ]);
 
-  const pauseBetweenMessages = useCallback(async () => {
-    await new Promise<void>((resolve) => {
-      window.setTimeout(resolve, INTERVIEW_MESSAGE_GAP_MS);
-    });
-  }, []);
-
   const handleSend = useCallback(async () => {
-    if (!isReady || isInterviewSubmitting) {
+    if (
+      !isReady ||
+      isInterviewSubmitting ||
+      submittingAnswerRef.current ||
+      endingInterviewRef.current
+    ) {
       return;
     }
 
@@ -186,6 +202,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     }
 
     setInterviewError(null);
+    submittingAnswerRef.current = true;
     appendUserMessage(nextInput);
     setInput("");
     setIsInterviewSubmitting(true);
@@ -228,17 +245,11 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
 
       if (feedbackText) {
         await appendAssistantMessage(feedbackText, {
-          fakeStream: true,
           variant: CHAT_MESSAGE_VARIANT.feedback,
-          streamStep: FEEDBACK_STREAM_STEP,
-          streamDelayMs: FEEDBACK_STREAM_DELAY_MS,
         });
       }
 
       if (progressPatch.currentQuestionContent) {
-        if (feedbackText) {
-          await pauseBetweenMessages();
-        }
         await appendNextQuestionMessage(
           progressPatch.currentQuestionContent,
           progressPatch.currentQuestionNumber,
@@ -257,8 +268,10 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
           ? error.message
           : "Failed to submit answer, please retry";
       setInterviewError(message);
+      setInput(nextInput);
       appendErrorMessage(message);
     } finally {
+      submittingAnswerRef.current = false;
       setIsInterviewSubmitting(false);
     }
   }, [
@@ -274,7 +287,6 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     interviewerSessionId,
     isInterviewSubmitting,
     isReady,
-    pauseBetweenMessages,
     startThinkingIndicator,
     stopThinkingIndicator,
   ]);
@@ -282,8 +294,9 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
   const handleEndInterview = useCallback(async () => {
     if (
       endingInterviewRef.current ||
+      submittingAnswerRef.current ||
+      isRecovering ||
       isEndingInterview ||
-      (isInterviewFinished && !isAutoSaveFailed) ||
       isInterviewFailed
     ) {
       return;
@@ -300,7 +313,9 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     setIsEndingInterview(true);
 
     try {
-      await interviewService.finishInterviewSession(reportSessionId);
+      if (!isInterviewFinished || isAutoSaveFailed) {
+        await interviewService.finishInterviewSession(reportSessionId);
+      }
       await invalidateInterviewRecords();
 
       stopThinkingIndicator();
@@ -334,6 +349,7 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     interviewerSessionId,
     invalidateInterviewRecords,
     isEndingInterview,
+    isRecovering,
     isInterviewFailed,
     isInterviewFinished,
     isAutoSaveFailed,
@@ -349,6 +365,8 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     input,
     setInput,
     isReady,
+    isRecovering,
+    retryRecovery,
     isInterviewSubmitting,
     interviewError,
     isEndingInterview,

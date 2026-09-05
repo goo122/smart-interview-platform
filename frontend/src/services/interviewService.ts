@@ -1,4 +1,5 @@
 import service, { assertRequestAuthorized, buildApiUrl } from "@/lib/request";
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { AppError, ErrorCode } from "@/lib/errors";
 import { knowledgeApi } from "@/features/knowledge/api";
 import type {
@@ -65,6 +66,7 @@ export interface PrepareInterviewSessionOptions {
   requestId?: string;
   signal?: AbortSignal;
   onPreparationStage?: (stage: 0 | 1 | 2) => void;
+  onSessionCreated?: (session: InterviewSessionResponse) => void;
   jobTitle?: string;
   jobDescription?: string;
   interviewType?: InterviewType;
@@ -272,6 +274,14 @@ export interface AnswerInterviewQuestionResult {
   failed?: boolean;
 }
 
+interface SubmitInterviewAnswerResponsePayload {
+  sessionId: string;
+  turnId: string;
+  status: string;
+  requestId: string;
+  nextTurn?: InterviewTurnResponse | null;
+}
+
 type AnswerInterviewQuestionJsonPayload = {
   questionNumber: string;
   answerContent?: string;
@@ -289,7 +299,10 @@ const wait = async (milliseconds: number, signal?: AbortSignal) => {
     throw new DOMException("The operation was aborted", "AbortError");
   }
   await new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(resolve, milliseconds);
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
     const onAbort = () => {
       window.clearTimeout(timer);
       reject(new DOMException("The operation was aborted", "AbortError"));
@@ -306,7 +319,9 @@ const pollUntil = async <T>(
 ) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt <= timeoutMs) {
+    signal?.throwIfAborted();
     const value = await load();
+    signal?.throwIfAborted();
     if (isReady(value)) {
       return value;
     }
@@ -861,6 +876,53 @@ export const interviewService = {
       { knowledgeBaseId },
       { timeout: INTERVIEW_LONG_TIMEOUT_MS },
     ),
+  waitForFirstQuestion: async (
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const path = `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/events/stream`;
+    const token = assertRequestAuthorized(path);
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abortFromCaller, { once: true });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        void fetchEventSource(buildApiUrl(path), {
+          method: "GET",
+          credentials: "same-origin",
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          signal: controller.signal,
+          openWhenHidden: true,
+          onmessage(message) {
+            if (message.event === "question_ready") {
+              controller.abort();
+              resolve();
+              return;
+            }
+            if (message.event === "generation_failed") {
+              const payload = JSON.parse(message.data) as {
+                failureMessage?: string;
+              };
+              controller.abort();
+              reject(new Error(payload.failureMessage || "面试题准备失败，请稍后重试"));
+            }
+          },
+          onerror(error) {
+            controller.abort();
+            reject(error);
+            throw error;
+          },
+        }).catch((error: unknown) => {
+          if (!controller.signal.aborted) {
+            reject(error);
+          }
+        });
+      });
+    } finally {
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
+  },
   prepareInterviewSessionFromResume: async (
     file: File,
     options: PrepareInterviewSessionOptions = {},
@@ -902,7 +964,10 @@ export const interviewService = {
           jobTitle: providedJobTitle,
           jobDescription: providedJobDescription,
         }
-      : await interviewService.resolveInterviewRole(knowledgeBase.id);
+      : {
+          jobTitle: "基于简历的技术面试",
+          jobDescription: "围绕候选人简历中的技能、项目经历和问题解决能力进行技术面试。",
+        };
     const created = await interviewService.createInterviewSession({
       knowledgeBaseId: knowledgeBase.id,
       jobTitle: resolvedRole.jobTitle,
@@ -916,22 +981,14 @@ export const interviewService = {
       (created as CreateInterviewSessionResult | InterviewSessionResponse)
         .sessionId,
     );
-    const readySession = await pollUntil(
-      () => interviewService.getInterviewSession(sessionId),
-      (session) => {
-        if (session.status === "FAILED") {
-          throw new Error(session.failureMessage || "面试题准备失败，请稍后重试");
-        }
-        return session.status === "READY";
-      },
-      INTERVIEW_READY_TIMEOUT_MS,
-      options.signal,
-    );
+    options.onSessionCreated?.(created as InterviewSessionResponse);
+    await interviewService.waitForFirstQuestion(sessionId, options.signal);
+    const readySession = await interviewService.startInterviewSession(sessionId);
     options.onPreparationStage?.(2);
-    if (!readySession.canStart) {
-      throw new Error("面试题暂未准备完成，请稍后刷新页面");
+    if (readySession.status !== "IN_PROGRESS") {
+      throw new Error("第一道题暂未准备完成，请稍后刷新页面");
     }
-    return interviewService.startInterviewSession(sessionId);
+    return readySession;
   },
   getInterviewSession: async (sessionId: string) =>
     service.get<InterviewSessionResponse>(
@@ -1108,8 +1165,8 @@ export const interviewService = {
         debounceMs: 250,
         key: `interview-answer:${params.sessionId}:${params.turnId}`,
       };
-      await service.post<
-        { sessionId: string; turnId: string; status: string; requestId: string },
+      const submission = await service.post<
+        SubmitInterviewAnswerResponsePayload,
         { turnId: string; answer: string; requestId: string }
       >(
         `/xunzhi/v1/interview/sessions/${encodeURIComponent(params.sessionId)}/answers`,
@@ -1119,6 +1176,10 @@ export const interviewService = {
           requestPolicy: answerRequestPolicy,
         },
       );
+
+      if (submission.nextTurn) {
+        return normalizeInterviewTurn(submission.nextTurn);
+      }
 
       const evaluatedTurn = await pollUntil(
         () => interviewService.getInterviewTurn(params.sessionId, params.turnId!),
@@ -1154,8 +1215,41 @@ export const interviewService = {
         if (!shouldFallbackToLegacyPath(error)) {
           throw error;
         }
+        const recovered = await pollUntil(
+          async () => {
+            const currentSession = await interviewService.getInterviewSession(
+              params.sessionId,
+            );
+            if (["COMPLETED", "FAILED", "CANCELLED"].includes(currentSession.status)) {
+              return { session: currentSession, turn: null };
+            }
+            try {
+              return {
+                session: currentSession,
+                turn: await interviewService.getCurrentInterviewTurn(params.sessionId),
+              };
+            } catch (nextError) {
+              if (!shouldFallbackToLegacyPath(nextError)) {
+                throw nextError;
+              }
+              return { session: currentSession, turn: null };
+            }
+          },
+          (state) =>
+            state.turn !== null ||
+            ["COMPLETED", "FAILED", "CANCELLED"].includes(state.session.status),
+          INTERVIEW_READY_TIMEOUT_MS,
+        );
+        if (recovered.turn) {
+          return {
+            ...normalizeInterviewTurn(recovered.turn),
+            feedback: evaluatedTurn.evaluation?.feedback,
+            score: evaluatedTurn.evaluation?.overallScore,
+            totalScore: evaluatedTurn.evaluation?.overallScore,
+          };
+        }
         return normalizeInterviewTurn(evaluatedTurn, {
-          finished: false,
+          finished: recovered.session.status === "COMPLETED",
           totalScore: evaluatedTurn.evaluation?.overallScore,
         });
       }
@@ -1219,19 +1313,57 @@ export const interviewService = {
     );
     return normalizeInterviewAnswer(response);
   },
-  getCurrentQuestion: async (sessionId: string) => {
-    try {
-      const response = await interviewService.getCurrentInterviewTurn(sessionId);
-      return normalizeInterviewTurn(response);
-    } catch (error) {
-      if (shouldFallbackToLegacyPath(error)) {
-        const response = await service.get<AnswerInterviewQuestionResult>(
-          `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/current-question`,
-        );
-        return normalizeInterviewAnswer(response);
-      }
-      throw error;
-    }
+  getCurrentQuestion: async (
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<AnswerInterviewQuestionResult> => {
+    const result = await pollUntil(
+      async (): Promise<AnswerInterviewQuestionResult | null> => {
+        let session: InterviewSessionResponse;
+        try {
+          session = await interviewService.getInterviewSession(sessionId);
+        } catch (error) {
+          if (
+            error instanceof AppError &&
+            error.code === ErrorCode.RESOURCE_NOT_FOUND
+          ) {
+            throw new Error("面试不存在或无权访问，请返回面试列表。", { cause: error });
+          }
+          throw error;
+        }
+        if (session.status === "COMPLETED") {
+          return { isSuccess: true, finished: true, nextQuestion: null };
+        }
+        if (["FAILED", "CANCELLED"].includes(session.status)) {
+          return {
+            isSuccess: false,
+            failed: true,
+            nextQuestion: null,
+            errorMessage: session.status === "CANCELLED"
+              ? "面试已取消，请返回面试列表。"
+              : "本次面试处理失败，请返回面试列表。",
+          };
+        }
+        try {
+          const turn = await interviewService.getCurrentInterviewTurn(sessionId);
+          if (turn.status === "FAILED") return normalizeInterviewTurn(turn);
+          return turn.status === "WAITING_ANSWER" && turn.canAnswer
+            ? normalizeInterviewTurn(turn)
+            : null;
+        } catch (error) {
+          // Prefetch may create the next turn after the previous evaluation commits.
+          if (
+            error instanceof AppError &&
+            error.code === ErrorCode.RESOURCE_NOT_FOUND
+          ) return null;
+          throw error;
+        }
+      },
+      (value) => value !== null,
+      INTERVIEW_READY_TIMEOUT_MS,
+      signal,
+    );
+    return result!;
   },
   evaluateInterviewDemeanor: async (
     params: EvaluateInterviewDemeanorParams,
