@@ -88,7 +88,11 @@ export default function InterviewHeader({
             disabled={isEndingInterview}
             onClick={onEndInterview}
           >
-            {isEndingInterview ? "处理中..." : "结束面试"}
+            {isEndingInterview
+              ? "处理中..."
+              : isInterviewFinished
+                ? "查看报告"
+                : "结束面试"}
           </Button>
         </div>
       </div>

@@ -487,7 +487,7 @@ describe("useInterviewSessionFlow", () => {
     expect(storageState.clearStoredSession).not.toHaveBeenCalled();
   });
 
-  it("does not call finish again for an already completed session", async () => {
+  it("opens the report without finishing again for an already completed session", async () => {
     useParamsMock.mockReturnValue({
       sessionId: "session-1",
     });
@@ -508,6 +508,15 @@ describe("useInterviewSessionFlow", () => {
     });
 
     expect(finishInterviewSessionMock).toHaveBeenCalledTimes(1);
-    expect(navigateMock).not.toHaveBeenCalled();
+    expect(storageState.setInterviewerSessionId).toHaveBeenCalledWith(null);
+    expect(storageState.clearStoredSession).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith(
+      `${ROUTES.interviewReport}?sessionId=session-1`,
+      {
+        state: {
+          sessionId: "session-1",
+        },
+      },
+    );
   });
 });

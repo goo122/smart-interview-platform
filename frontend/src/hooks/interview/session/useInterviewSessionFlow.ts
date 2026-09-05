@@ -286,7 +286,6 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     if (
       endingInterviewRef.current ||
       isEndingInterview ||
-      (isInterviewFinished && !isAutoSaveFailed) ||
       isInterviewFailed
     ) {
       return;
@@ -303,7 +302,9 @@ export function useInterviewSessionFlow(user: InterviewFlowUser) {
     setIsEndingInterview(true);
 
     try {
-      await interviewService.finishInterviewSession(reportSessionId);
+      if (!isInterviewFinished || isAutoSaveFailed) {
+        await interviewService.finishInterviewSession(reportSessionId);
+      }
       await invalidateInterviewRecords();
 
       stopThinkingIndicator();
