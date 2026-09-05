@@ -299,7 +299,10 @@ const wait = async (milliseconds: number, signal?: AbortSignal) => {
     throw new DOMException("The operation was aborted", "AbortError");
   }
   await new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(resolve, milliseconds);
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
     const onAbort = () => {
       window.clearTimeout(timer);
       reject(new DOMException("The operation was aborted", "AbortError"));
@@ -316,7 +319,9 @@ const pollUntil = async <T>(
 ) => {
   const startedAt = Date.now();
   while (Date.now() - startedAt <= timeoutMs) {
+    signal?.throwIfAborted();
     const value = await load();
+    signal?.throwIfAborted();
     if (isReady(value)) {
       return value;
     }
@@ -1308,19 +1313,57 @@ export const interviewService = {
     );
     return normalizeInterviewAnswer(response);
   },
-  getCurrentQuestion: async (sessionId: string) => {
-    try {
-      const response = await interviewService.getCurrentInterviewTurn(sessionId);
-      return normalizeInterviewTurn(response);
-    } catch (error) {
-      if (shouldFallbackToLegacyPath(error)) {
-        const response = await service.get<AnswerInterviewQuestionResult>(
-          `/xunzhi/v1/interview/sessions/${encodeURIComponent(sessionId)}/current-question`,
-        );
-        return normalizeInterviewAnswer(response);
-      }
-      throw error;
-    }
+  getCurrentQuestion: async (
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<AnswerInterviewQuestionResult> => {
+    const result = await pollUntil(
+      async (): Promise<AnswerInterviewQuestionResult | null> => {
+        let session: InterviewSessionResponse;
+        try {
+          session = await interviewService.getInterviewSession(sessionId);
+        } catch (error) {
+          if (
+            error instanceof AppError &&
+            error.code === ErrorCode.RESOURCE_NOT_FOUND
+          ) {
+            throw new Error("面试不存在或无权访问，请返回面试列表。", { cause: error });
+          }
+          throw error;
+        }
+        if (session.status === "COMPLETED") {
+          return { isSuccess: true, finished: true, nextQuestion: null };
+        }
+        if (["FAILED", "CANCELLED"].includes(session.status)) {
+          return {
+            isSuccess: false,
+            failed: true,
+            nextQuestion: null,
+            errorMessage: session.status === "CANCELLED"
+              ? "面试已取消，请返回面试列表。"
+              : "本次面试处理失败，请返回面试列表。",
+          };
+        }
+        try {
+          const turn = await interviewService.getCurrentInterviewTurn(sessionId);
+          if (turn.status === "FAILED") return normalizeInterviewTurn(turn);
+          return turn.status === "WAITING_ANSWER" && turn.canAnswer
+            ? normalizeInterviewTurn(turn)
+            : null;
+        } catch (error) {
+          // Prefetch may create the next turn after the previous evaluation commits.
+          if (
+            error instanceof AppError &&
+            error.code === ErrorCode.RESOURCE_NOT_FOUND
+          ) return null;
+          throw error;
+        }
+      },
+      (value) => value !== null,
+      INTERVIEW_READY_TIMEOUT_MS,
+      signal,
+    );
+    return result!;
   },
   evaluateInterviewDemeanor: async (
     params: EvaluateInterviewDemeanorParams,

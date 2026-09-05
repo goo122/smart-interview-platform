@@ -115,7 +115,7 @@ describe("useInterviewSessionFlow", () => {
       expect(storageState.setInterviewerSessionId).toHaveBeenCalledWith(
         "route-session",
       );
-      expect(getCurrentQuestionMock).toHaveBeenCalledWith("route-session");
+      expect(getCurrentQuestionMock).toHaveBeenCalledWith("route-session", expect.any(AbortSignal));
     });
   });
 
@@ -135,7 +135,7 @@ describe("useInterviewSessionFlow", () => {
       expect(startInterviewSessionMock).toHaveBeenCalledWith(
         "preparing-session",
       );
-      expect(getCurrentQuestionMock).toHaveBeenCalledWith("preparing-session");
+      expect(getCurrentQuestionMock).toHaveBeenCalledWith("preparing-session", expect.any(AbortSignal));
     });
     expect(waitForFirstQuestionMock.mock.invocationCallOrder[0]).toBeLessThan(
       startInterviewSessionMock.mock.invocationCallOrder[0],
@@ -285,15 +285,7 @@ describe("useInterviewSessionFlow", () => {
     });
 
     expect(answerInterviewQuestionMock).not.toHaveBeenCalled();
-    expect(result.current.interviewError).toBe(
-      "当前题号缺失，请先等待题目加载完成后再提交。",
-    );
-    expect(
-      result.current.messages.some(
-        (message) =>
-          message.content === "当前题号缺失，请先等待题目加载完成后再提交。",
-      ),
-    ).toBe(true);
+    expect(result.current.isReady).toBe(false);
   });
 
   it("stops the thinking indicator and appends an error message when answer submission fails", async () => {
@@ -343,6 +335,69 @@ describe("useInterviewSessionFlow", () => {
       await result.current.handleSend();
     });
     expect(answerInterviewQuestionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps submission disabled until recovery finishes and can retry a lost connection", async () => {
+    useParamsMock.mockReturnValue({ sessionId: "session-1" });
+    getCurrentQuestionMock.mockRejectedValueOnce(new Error("Network disconnected"));
+    const { result } = renderSessionFlow();
+    expect(result.current.isReady).toBe(false);
+    await waitFor(() => expect(result.current.interviewError).toBe("Network disconnected"));
+    expect(result.current.isReady).toBe(false);
+    act(() => result.current.retryRecovery());
+    await waitFor(() => expect(result.current.isReady).toBe(true));
+    expect(result.current.interviewError).toBeNull();
+    expect(answerInterviewQuestionMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unconfirmed answer and its request id when syncing and retrying", async () => {
+    useParamsMock.mockReturnValue({ sessionId: "session-1" });
+    answerInterviewQuestionMock.mockRejectedValueOnce(new Error("Network disconnected"));
+    const { result } = renderSessionFlow();
+    await waitFor(() => expect(result.current.isReady).toBe(true));
+    act(() => result.current.setInput("My unsent answer"));
+    await act(async () => { await result.current.handleSend(); });
+    expect(result.current.input).toBe("My unsent answer");
+    const requestId = answerInterviewQuestionMock.mock.calls[0][0].requestId;
+    act(() => result.current.retryRecovery());
+    await waitFor(() => expect(result.current.isReady).toBe(true));
+    await act(async () => { await result.current.handleSend(); });
+    expect(answerInterviewQuestionMock.mock.calls[1][0].requestId).toBe(requestId);
+  });
+
+  it("shows the full next question immediately even with a long feedback", async () => {
+    useParamsMock.mockReturnValue({ sessionId: "session-1" });
+    const feedback = "评".repeat(500);
+    answerInterviewQuestionMock.mockResolvedValue({ isSuccess: true, feedback, nextQuestion: "Ready question", nextQuestionNumber: "Q2", finished: false });
+    const { result } = renderSessionFlow();
+    await waitFor(() => expect(result.current.messages.some((m) => m.content === "Initial question")).toBe(true));
+    vi.useFakeTimers();
+    act(() => result.current.setInput("My answer"));
+    let pending: Promise<void>;
+    await act(async () => {
+      pending = result.current.handleSend();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.messages.some((m) => m.content === feedback)).toBe(true);
+    expect(result.current.messages.some((m) => m.content === "Ready question")).toBe(true);
+    expect(result.current.isInterviewSubmitting).toBe(false);
+    await act(async () => { await vi.runAllTimersAsync(); await pending; });
+  });
+
+  it("blocks duplicate answers and ending while submission is pending", async () => {
+    useParamsMock.mockReturnValue({ sessionId: "session-1" });
+    let resolveAnswer!: (value: unknown) => void;
+    answerInterviewQuestionMock.mockImplementation(() => new Promise((resolve) => { resolveAnswer = resolve; }));
+    const { result } = renderSessionFlow();
+    await waitFor(() => expect(result.current.messages.some((m) => m.content === "Initial question")).toBe(true));
+    act(() => result.current.setInput("Only one answer"));
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => { first = result.current.handleSend(); second = result.current.handleSend(); });
+    expect(answerInterviewQuestionMock).toHaveBeenCalledTimes(1);
+    await act(async () => { await result.current.handleEndInterview(); });
+    expect(finishInterviewSessionMock).not.toHaveBeenCalled();
+    await act(async () => { resolveAnswer({ isSuccess: true, nextQuestion: "Next", nextQuestionNumber: "Q2" }); await Promise.all([first, second]); });
   });
 
   it("auto-finishes only once after the interview is finished", async () => {

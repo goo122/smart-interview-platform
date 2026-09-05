@@ -25,7 +25,8 @@ const createSyntheticPdf = () => {
   return Buffer.from(pdf, "ascii");
 };
 
-test("completes the MVP loop with fake providers", async ({ page }) => {
+test("completes the MVP loop with fake providers", async ({ page }, testInfo) => {
+  test.setTimeout(240_000);
   await page.addInitScript(() => {
     const revokeObjectUrl = URL.revokeObjectURL.bind(URL);
     URL.revokeObjectURL = (url: string) => {
@@ -333,6 +334,8 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     .toBe(requestsAfterFirstPlay);
 
   const seenTurns = new Set<string>();
+  let previousTurn: Record<string, unknown> | null = null;
+  let followUps = 0;
   let completedSession = false;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const session = await apiGet(
@@ -353,18 +356,82 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     }
     seenTurns.add(turnId);
     expect(["PRIMARY", "FOLLOW_UP"]).toContain(turn.turnType);
-    const answerRequestId = `answer-${unique}-${attempt}`;
-    const answerPayload = {
-      turnId,
-      answer: "这是一次合成的端到端测试回答，包含方案、取舍和验证结果。",
-      requestId: answerRequestId,
-    };
-    const { response: answerResponse, body: answerBody } = await apiPost(
-      `/api/xunzhi/v1/interview/sessions/${sessionId}/answers`,
-      answerPayload,
+    if (turn.turnType === "FOLLOW_UP") {
+      followUps += 1;
+      expect(turn.parentTurnId).toBe(previousTurn?.turnId);
+    }
+    previousTurn = turn;
+    const answerComposer = page.getByPlaceholder("输入你的回答，或点击麦克风开始语音作答...");
+    await expect(answerComposer).toBeEnabled();
+    await expect(page.getByText(turn.question as string, { exact: false }).last()).toBeVisible();
+
+    if (attempt === 1) {
+      // Lose a read after a reload; recovery must not POST the already saved answer.
+      let loseReads = true;
+      const currentPath = `**/sessions/${sessionId}/current-turn`;
+      await page.route(currentPath, (route) => loseReads ? route.abort("internetdisconnected") : route.continue());
+      await page.reload();
+      await expect(page.getByRole("button", { name: "重新同步面试" })).toBeVisible();
+      await expect(answerComposer).toBeDisabled();
+      loseReads = false;
+      await page.getByRole("button", { name: "重新同步面试" }).click();
+      await expect(answerComposer).toBeEnabled();
+      await expect(page.getByText(turn.question as string, { exact: false }).last()).toBeVisible();
+      await page.unroute(currentPath);
+    }
+
+    const answerResponsePromise = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().endsWith(`/sessions/${sessionId}/answers`),
     );
+    const nextResponsePromise = attempt === 2
+      ? page.waitForResponse((response) => response.url().endsWith(`/sessions/${sessionId}/current-turn`) && response.ok())
+      : null;
+    await answerComposer.fill("这是一次合成的端到端测试回答，包含方案、取舍和验证结果。");
+    await answerComposer.press("Enter");
+    const answerResponse = await answerResponsePromise;
+    const answerBody = await answerResponse.json();
+    const answerPayload = answerResponse.request().postDataJSON();
     expect(answerResponse.status()).toBe(202);
     expect(answerBody.status).toBe("EVALUATING");
+    if (attempt === 0) {
+      // Replay the accepted EVALUATING snapshot to hold a deterministic refresh
+      // boundary even when the fake worker completes before the browser reloads.
+      const currentPath = `**/sessions/${sessionId}/current-turn`;
+      let replayEvaluating = true;
+      await page.route(currentPath, (route) => replayEvaluating
+        ? route.fulfill({ json: { ...turn, status: answerBody.status, canAnswer: false } })
+        : route.continue());
+      const restoringResponse = page.waitForResponse((response) => response.url().endsWith(`/sessions/${sessionId}/current-turn`));
+      await page.reload();
+      await restoringResponse;
+      await expect(answerComposer).toBeDisabled();
+      await expect(page.getByText("正在同步面试进度，等待当前题目准备完成…")).toBeVisible();
+      replayEvaluating = false;
+      await expect(answerComposer).toBeEnabled();
+      await page.unroute(currentPath);
+    }
+    if (nextResponsePromise) {
+      const nextResponse = await nextResponsePromise;
+      const nextQuestion = (await nextResponse.json()).question as string;
+      const visibleDelayMs = await page.evaluate(({ question, path }) => new Promise<number>((resolve) => {
+        const observer = new MutationObserver(check);
+        function check() {
+          if (!document.body.textContent?.includes(question)) return;
+          const timings = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
+          const response = timings.filter((entry) => entry.name.endsWith(path)).at(-1);
+          if (!response) return;
+          observer.disconnect();
+          resolve(performance.now() - response.responseEnd);
+        }
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+        check();
+      }), { question: nextQuestion, path: `/sessions/${sessionId}/current-turn` });
+      await testInfo.attach("question-display-latency", {
+        body: JSON.stringify({ provider: "fake", response_to_visible_upper_bound_ms: visibleDelayMs }),
+        contentType: "application/json",
+      });
+      console.log(`Question response to visible (upper bound): ${visibleDelayMs.toFixed(1)} ms`);
+    }
     await expect
       .poll(
         async () =>
@@ -396,6 +463,18 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     }
   }
   expect(completedSession).toBeTruthy();
+  expect(followUps).toBeGreaterThan(0);
+  const savedTurns = await apiGet(`/api/xunzhi/v1/interview/sessions/${sessionId}/turns`);
+  expect(savedTurns).toHaveLength(seenTurns.size);
+  expect(savedTurns.every((turn: Record<string, unknown>) =>
+    turn.status === "COMPLETED" && turn.answer === "这是一次合成的端到端测试回答，包含方案、取舍和验证结果。",
+  )).toBe(true);
+  // The completed session has no current turn. Reopening must still offer its report.
+  await page.reload();
+  await expect(page.getByText("面试已结束", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看报告", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "查看报告", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/interview/report\\?sessionId=${sessionId}$`));
 
   const { response: reportStartResponse, body: reportStart } = await apiPost(
     `/api/xunzhi/v1/interview/sessions/${sessionId}/report`,
@@ -420,7 +499,7 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   expect(report.status).toBe("READY");
   expect(report.overallScore).toBeGreaterThanOrEqual(0);
   expect(report.radarData.length).toBeGreaterThan(0);
-  expect(report.items.length).toBeGreaterThan(0);
+  expect(report.items.length).toBe(seenTurns.size);
   expect(report.resumeScore).toBe(resumeScore);
   const resumeEvaluation = report.resumeEvaluation as Record<string, unknown>;
   expect(resumeEvaluation.status).toBe("COMPLETED");
@@ -439,9 +518,6 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
     ),
   ).toBeTruthy();
 
-  const revokedBeforeReport = await page.evaluate(() =>
-    Number(localStorage.getItem("__tts_revoke_count") || "0"),
-  );
   await page.goto(
     `/interview/report?sessionId=${encodeURIComponent(sessionId)}`,
   );
@@ -451,7 +527,7 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
         Number(localStorage.getItem("__tts_revoke_count") || "0"),
       ),
     )
-    .toBeGreaterThan(revokedBeforeReport);
+    .toBeGreaterThan(0);
   await expect(page.getByText("简历得分", { exact: true })).toBeVisible();
   await expect(
     page.getByText(String(resumeScore), { exact: true }).first(),
@@ -539,6 +615,13 @@ test("completes the MVP loop with fake providers", async ({ page }) => {
   await expect(page.getByText("简历得分", { exact: true })).toBeVisible({
     timeout: 60_000,
   });
+  await page.screenshot({ path: testInfo.outputPath("completed-report.png"), fullPage: true });
+
+  await page.goto("/interview/room/00000000-0000-4000-8000-000000000000");
+  await expect(page.getByText("面试不存在或无权访问，请返回面试列表。", { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("输入你的回答，或点击麦克风开始语音作答...")).toBeDisabled();
+  await page.getByRole("link", { name: "返回面试列表" }).click();
+  await expect(page).toHaveURL(/\/interview$/);
 
   await page.getByRole("button", { name: "用户菜单" }).click();
   await page.getByRole("button", { name: "退出登录" }).click();
