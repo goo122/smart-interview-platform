@@ -946,11 +946,7 @@ class SqlAlchemyInterviewRepository:
         skipped_sequences: list[int] = []
         for turn_row in turn_rows:
             turn_status = TurnStatus(turn_row.status)
-            if turn_status not in {
-                TurnStatus.DEFERRED,
-                TurnStatus.WAITING_ANSWER,
-                TurnStatus.EVALUATING,
-            }:
+            if turn_status not in {TurnStatus.WAITING_ANSWER, TurnStatus.EVALUATING}:
                 continue
             self._state_machine.transition_turn(turn_status, TurnStatus.SKIPPED)
             turn_row.status = TurnStatus.SKIPPED.value
@@ -1194,67 +1190,6 @@ class SqlAlchemyInterviewRepository:
         session_row.version += 1
         session_row.updated_at = now
         self._session.add(answer_row)
-        deferred_turn = await self._session.scalar(
-            select(InterviewTurnModel)
-            .where(
-                InterviewTurnModel.session_id == session_id,
-                InterviewTurnModel.status == TurnStatus.DEFERRED.value,
-            )
-            .order_by(InterviewTurnModel.sequence.asc())
-            .with_for_update()
-            .limit(1)
-        )
-        if deferred_turn is not None:
-            self._state_machine.transition_turn(
-                TurnStatus.DEFERRED, TurnStatus.WAITING_ANSWER
-            )
-            deferred_turn.status = TurnStatus.WAITING_ANSWER.value
-            self._session.add(
-                _event_row(
-                    session_id,
-                    "FOLLOW_UP_ACTIVATED",
-                    InterviewStatus.IN_PROGRESS,
-                    InterviewStatus.IN_PROGRESS,
-                    {"turn_sequence": deferred_turn.sequence},
-                    f"answer:{answer_row.id}:follow-up",
-                )
-            )
-        else:
-            next_question_sequence = session_row.current_question_index + 2
-            next_question = await self._session.scalar(
-                select(InterviewQuestionModel).where(
-                    InterviewQuestionModel.session_id == session_id,
-                    InterviewQuestionModel.sequence == next_question_sequence,
-                )
-            )
-            if next_question is not None:
-                session_row.current_question_index += 1
-                next_turn = InterviewTurnModel(
-                    id=uuid4(),
-                    session_id=session_id,
-                    question_id=next_question.id,
-                    parent_turn_id=None,
-                    sequence=await self._next_turn_sequence(session_id),
-                    turn_type=TurnType.PRIMARY.value,
-                    question_content=next_question.content,
-                    status=TurnStatus.WAITING_ANSWER.value,
-                    follow_up_depth=0,
-                    created_at=now,
-                )
-                self._session.add(next_turn)
-                self._session.add(
-                    _event_row(
-                        session_id,
-                        "NEXT_QUESTION_CREATED",
-                        InterviewStatus.IN_PROGRESS,
-                        InterviewStatus.IN_PROGRESS,
-                        {
-                            "turn_sequence": next_turn.sequence,
-                            "question_sequence": next_question_sequence,
-                        },
-                        f"answer:{answer_row.id}:next-question",
-                    )
-                )
         self._session.add(
             _event_row(
                 session_id,
@@ -1519,24 +1454,10 @@ class SqlAlchemyInterviewRepository:
                 None,
             )
         )
-        waiting_later_turn_id = await self._session.scalar(
-            select(InterviewTurnModel.id)
-            .where(
-                InterviewTurnModel.session_id == session_id,
-                InterviewTurnModel.sequence > turn_row.sequence,
-                InterviewTurnModel.status == TurnStatus.WAITING_ANSWER.value,
-            )
-            .limit(1)
-        )
         created_next_turn = False
         if should_follow_up:
             if not evaluation.follow_up_question:
                 raise InvalidInterviewTransitionError("Follow-up question is missing")
-            follow_up_status = (
-                TurnStatus.DEFERRED
-                if waiting_later_turn_id is not None
-                else TurnStatus.WAITING_ANSWER
-            )
             next_turn = InterviewTurnModel(
                 id=uuid4(),
                 session_id=session_id,
@@ -1545,7 +1466,7 @@ class SqlAlchemyInterviewRepository:
                 sequence=await self._next_turn_sequence(session_id),
                 turn_type=TurnType.FOLLOW_UP.value,
                 question_content=evaluation.follow_up_question,
-                status=follow_up_status.value,
+                status=TurnStatus.WAITING_ANSWER.value,
                 follow_up_depth=turn_row.follow_up_depth + 1,
                 created_at=now,
             )
@@ -1554,18 +1475,14 @@ class SqlAlchemyInterviewRepository:
             self._session.add(
                 _event_row(
                     session_id,
-                    (
-                        "FOLLOW_UP_DEFERRED"
-                        if follow_up_status == TurnStatus.DEFERRED
-                        else "FOLLOW_UP_CREATED"
-                    ),
+                    "FOLLOW_UP_CREATED",
                     InterviewStatus.IN_PROGRESS,
                     InterviewStatus.IN_PROGRESS,
                     {"turn_sequence": next_turn.sequence, "parent_sequence": turn_row.sequence},
                     None,
                 )
             )
-        elif waiting_later_turn_id is None:
+        else:
             next_sequence = session_row.current_question_index + 2
             question = await self._session.scalar(
                 select(InterviewQuestionModel).where(
@@ -1606,11 +1523,7 @@ class SqlAlchemyInterviewRepository:
                     InterviewTurnModel.session_id == session_id,
                     InterviewTurnModel.id != turn_id,
                     InterviewTurnModel.status.in_(
-                        [
-                            TurnStatus.DEFERRED.value,
-                            TurnStatus.WAITING_ANSWER.value,
-                            TurnStatus.EVALUATING.value,
-                        ]
+                        [TurnStatus.WAITING_ANSWER.value, TurnStatus.EVALUATING.value]
                     ),
                 )
                 .limit(1)

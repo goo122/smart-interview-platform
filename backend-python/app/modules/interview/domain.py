@@ -46,7 +46,6 @@ class TurnType(StrEnum):
 
 
 class TurnStatus(StrEnum):
-    DEFERRED = "DEFERRED"
     WAITING_ANSWER = "WAITING_ANSWER"
     EVALUATING = "EVALUATING"
     COMPLETED = "COMPLETED"

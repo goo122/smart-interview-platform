@@ -24,9 +24,6 @@ class InterviewStateMachine:
     }
 
     _allowed_turn: dict[TurnStatus, frozenset[TurnStatus]] = {
-        TurnStatus.DEFERRED: frozenset(
-            {TurnStatus.WAITING_ANSWER, TurnStatus.SKIPPED}
-        ),
         TurnStatus.WAITING_ANSWER: frozenset({TurnStatus.EVALUATING, TurnStatus.SKIPPED}),
         TurnStatus.EVALUATING: frozenset(
             {TurnStatus.COMPLETED, TurnStatus.FAILED, TurnStatus.SKIPPED}

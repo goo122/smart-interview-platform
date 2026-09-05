@@ -834,12 +834,10 @@ async def test_arq_worker_evaluates_answer_without_interrupting_preadvanced_turn
         assert current_turn.status == TurnStatus.COMPLETED
         assert current_turn.evaluation_attempt_count == 1
         turns = await repository.list_turns(interview.id, user_id)
-        assert len(turns) == 3
+        assert len(turns) == 2
+        assert turns[1].turn_type == TurnType.FOLLOW_UP
         assert turns[1].status == TurnStatus.WAITING_ANSWER
-        assert turns[1].parent_turn_id is None
-        assert turns[2].turn_type == TurnType.FOLLOW_UP
-        assert turns[2].status == TurnStatus.DEFERRED
-        assert turns[2].parent_turn_id == turn.id
+        assert turns[1].parent_turn_id == turn.id
 
         duplicate = await arq_redis.enqueue_job(
             INTERVIEW_ANSWER_EVALUATION_FUNCTION,
@@ -861,8 +859,7 @@ async def test_arq_worker_evaluates_answer_without_interrupting_preadvanced_turn
         events = await repository.list_events(interview.id)
         assert evaluations == 1
         assert sum(event.event_type == "ANSWER_EVALUATED" for event in events) == 1
-        assert sum(event.event_type == "FOLLOW_UP_CREATED" for event in events) == 0
-        assert sum(event.event_type == "FOLLOW_UP_DEFERRED" for event in events) == 1
+        assert sum(event.event_type == "FOLLOW_UP_CREATED" for event in events) == 1
     finally:
         await arq_redis.aclose()
         await session.rollback()
@@ -1190,9 +1187,10 @@ async def test_real_langgraph_answer_evaluation_and_preadvanced_completion(
             answer="我负责异步架构设计并验证了性能指标。",
             request_id="answer-flow-1",
         )
-        next_turn = await answer_service.current_turn(user_id, created.id)
-        assert next_turn.turn.status == TurnStatus.WAITING_ANSWER
-        assert next_turn.turn.parent_turn_id is None
+        follow_up_turn = await answer_service.current_turn(user_id, created.id)
+        assert follow_up_turn.turn.status == TurnStatus.WAITING_ANSWER
+        assert follow_up_turn.turn.turn_type == TurnType.FOLLOW_UP
+        assert follow_up_turn.turn.parent_turn_id == first_turn.turn.id
         first_completed = await answer_service.get_turn(user_id, first_turn.turn.id)
         assert first_completed.evaluation is not None
 
@@ -1213,19 +1211,19 @@ async def test_real_langgraph_answer_evaluation_and_preadvanced_completion(
         await answer_service.submit_answer(
             user_id=user_id,
             session_id=created.id,
-            turn_id=next_turn.turn.id,
+            turn_id=follow_up_turn.turn.id,
             answer="我补充了技术取舍、边界和上线结果。",
-            request_id="answer-flow-2",
+            request_id="answer-flow-follow-up",
         )
-        follow_up_turn = await answer_service.current_turn(user_id, created.id)
-        assert follow_up_turn.turn.turn_type == TurnType.FOLLOW_UP
-        assert follow_up_turn.turn.parent_turn_id == first_turn.turn.id
+        second_turn = await answer_service.current_turn(user_id, created.id)
+        assert second_turn.turn.turn_type == TurnType.PRIMARY
+        assert second_turn.turn.question_id is not None
         await answer_service.submit_answer(
             user_id=user_id,
             session_id=created.id,
-            turn_id=follow_up_turn.turn.id,
+            turn_id=second_turn.turn.id,
             answer="我进一步说明了指标口径、边界条件和故障恢复策略。",
-            request_id="answer-flow-follow-up",
+            request_id="answer-flow-2",
         )
         final_turn = await answer_service.current_turn(user_id, created.id)
         assert final_turn.turn.turn_type == TurnType.PRIMARY
@@ -1244,8 +1242,7 @@ async def test_real_langgraph_answer_evaluation_and_preadvanced_completion(
         event_types = [event.event_type for event in events]
         assert "ANSWER_SUBMITTED" in event_types
         assert "ANSWER_EVALUATED" in event_types
-        assert "FOLLOW_UP_DEFERRED" in event_types
-        assert "FOLLOW_UP_ACTIVATED" in event_types
+        assert "FOLLOW_UP_CREATED" in event_types
         assert "INTERVIEW_COMPLETED" in event_types
     finally:
         await session.rollback()
